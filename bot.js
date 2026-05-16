@@ -80,7 +80,6 @@ FullPacketParser.prototype._transform = function (chunk, enc, cb) {
   try {
     _origTransform.call(this, chunk, enc, cb)
   } catch (e) {
-    logEvent('parse-error', e.message)
     cb()
   }
 }
