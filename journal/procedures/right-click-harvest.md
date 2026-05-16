@@ -1,0 +1,90 @@
+---
+type: procedure
+name: right_click_harvest
+aliases: [right_click, activate_harvest]
+location: wheat_field
+status: confirmed
+confirmed: true
+first_tested: 2026-05-14
+---
+
+# Right-Click Harvest
+
+A single-action harvest+replant technique. **Confirmed working** on the SE corner wheat at (-279, 64, 565), day 41328. The only wheat harvest method (brute dig+replant removed 2026-05-14).
+
+> **Status:** technique is proven and **wired as the sole chat handler** (2026-05-14). When the user says "Roz, harvest the wheat / north / south," the bot runs `runHarvestRightClick`.
+
+## Implementation in bot.js
+
+`runHarvestRightClick({ half = 'all', user })` mirrors the structure of `runHarvest` but:
+- Uses `bot.activateBlock(block)` instead of `bot.dig(block)`.
+- **Does not filter by metadata** — immature wheat is a safe no-op.
+- **Walks tiles in clockwise nautilus order from the SE corner** via the helper `orderNautilusCCW(tiles)` (added 2026-05-14; named "CCW" but the actual path is clockwise — west along south, north up west, east across north, south down east). `findBlocks` returns distance-sorted results, which walks the field randomly and creates more drop misses; the nautilus pass keeps the bot moving along contiguous neighbors.
+- Pathfinds **range=1** (adjacent) before each activation so drops land in pickup radius. Drops still escape sometimes; the sweep catches them.
+- Replaces the 8-point sweep with a **full-coverage boustrophedon** sweep of the harvested half (every farmland tile).
+- No separate replant phase — the activation handles it.
+
+## CCW nautilus ordering
+
+`orderNautilusCCW(tiles)` produces this walking sequence (south-half wheat shown):
+
+```
+1.  Walk west along south edge (z=565):  (-279,565) → ... → (-287,565)
+2.  Walk north along west edge (x=-287): (-287,564) (-287,563) (-287,562)
+3.  Walk east along north edge (z=562):  (-286,562) → ... → (-279,562)
+4.  Walk south along east edge (x=-279): (-279,563) (-279,564)  (← inner ring)
+5.  Walk west along inner south (z=564): (-280,564) → ... → (-286,564)
+6.  Inner z=563 row east: (-280,563) → ... → (-286,563)
+7.  Spiral exhausted — ordering complete.
+```
+
+For the south half (9 wide × 4 tall, z=562..565), this visits 36 tiles in a single connected path.
+
+Control command: `./bot-ctl '{"action":"harvest_right_click","args":{"half":"north"}}'`.
+
+Chat trigger: any phrase matching the existing `harvest` rule (`harvest the wheat`, `harvest the south half`, etc.) routes here.
+
+## What it does
+
+One `activate_block` (right-click) on a mature wheat crop:
+- Drops **1 wheat** directly into inventory (no ground drop — bypasses pickup logic).
+- Drops **2 wheat_seeds** directly into inventory.
+- Replants the crop in place at age 0 (block name stays `wheat`, but it resets to growing).
+
+A single `activate_block` harvests **and** replants in one call — no separate dig or replant phase needed.
+
+## First-test evidence (2026-05-14, day 41328)
+
+Pre-activation inventory: `wheat=0, wheat_seeds=79`.
+Action: `./bot-ctl '{"action":"activate_block","args":{"x":-279,"y":64,"z":565}}'` → server reply `{"ok":true,"name":"wheat"}`.
+Post-activation: `wheat=1, wheat_seeds=81`. Block at (-279, 64, 565) still reports `name: wheat`. Item entities within radius 4: **none** (drops went straight to inventory).
+
+## Server-side mechanism
+
+This is mod behavior, not vanilla 1.12.2 — vanilla wheat doesn't respond to right-click. One of the 227 Forge mods on Marcadia binds a "harvest crop" handler to the use-block event for mature crops.
+
+## Confirmed behaviors (after south-half nautilus run, 2026-05-14)
+
+- **Right-click on immature wheat is a safe no-op.** Activating a block with `metadata != 7` returns `{ok: true, name: "wheat"}` with no inventory change and no block-state change. **The harvest loop does NOT need to filter by metadata — just activate every wheat tile. Mature tiles harvest, immature tiles do nothing.** Confirmed by user, 2026-05-14.
+- **Drops DO sometimes hit the ground.** The earlier "no ground drop" observation from the single-tile SE corner test was a special case — the bot was standing right on top of it. In a moving harvest run, the bot activates a tile faster than its pickup radius covers each drop, and some land on dirt. **A post-harvest sweep is still required** to reconcile the missing drops.
+- **No rate limit observed.** 27 activations across the south half, ~1.2s per tile (mostly pathfind time, not activation). No server rejects, no transaction errors.
+
+## Next questions to answer
+
+- Does it work on **potatoes** at the potato patch? (If yes, [[harvest-potatoes]] gets the same upgrade.)
+- Does it work on **carrots**? (Field unknown — we haven't seen carrots yet.)
+- Can the bot be moved closer to each tile **before** activating to eliminate the ground-drop gap? Standing within 1 block of the target seems to put drops directly into inventory; standing 2-3 blocks away lets some drop on dirt.
+
+## Implementation path
+
+To use this in a procedure:
+
+1. Iterate target tiles (filter to mature: `metadata == 7` for wheat).
+2. For each, ensure the block is within reach (~4 blocks of the bot).
+3. `activate_block x y z` — already exposed via `bot-ctl`, no `bot.js` change needed.
+4. Read inventory delta to confirm. (No `find_blocks` re-check needed since the block stays as `wheat`.)
+5. If the bot needs to move to reach the next tile, walk; the [[nautilus-sweep-pattern]] is the proposed traversal.
+
+## Related
+- [[nautilus-sweep-pattern]] — companion movement pattern
+- [[../observations/_log]] — session log

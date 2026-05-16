@@ -1,0 +1,29 @@
+#!/bin/bash
+# Stop the running bot cleanly. Run from the minecraft directory.
+# The node process IS the bot — there's no separate server to stop.
+# Sends a graceful quit over the control socket, then force-kills as a fallback.
+
+cd "$(dirname "$0")"
+
+if ./bot-ctl '{"action":"quit"}' 2>/dev/null | grep -q '"ok":true'; then
+  echo "sent quit; waiting for clean exit..."
+  for i in 1 2 3 4 5; do
+    sleep 1
+    if ! lsof -i :25580 >/dev/null 2>&1; then
+      echo "bot stopped cleanly"
+      exit 0
+    fi
+  done
+  echo "still running after 5s, force-killing node process"
+else
+  echo "control socket unreachable; force-killing any running bot.js process"
+fi
+
+pkill -f "node bot.js" 2>/dev/null
+sleep 1
+if lsof -i :25580 >/dev/null 2>&1; then
+  echo "WARNING: something still listening on :25580"
+  lsof -i :25580
+  exit 1
+fi
+echo "bot stopped"

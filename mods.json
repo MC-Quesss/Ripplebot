@@ -1,0 +1,910 @@
+[
+  {
+    "modid": "minecraft",
+    "version": "1.12.2"
+  },
+  {
+    "modid": "mcp",
+    "version": "9.42"
+  },
+  {
+    "modid": "FML",
+    "version": "8.0.99.99"
+  },
+  {
+    "modid": "forge",
+    "version": "14.23.5.2858"
+  },
+  {
+    "modid": "advmachinespatchcore",
+    "version": "1.0"
+  },
+  {
+    "modid": "advsolarpatch",
+    "version": "1.2.1"
+  },
+  {
+    "modid": "openmodscore",
+    "version": "0.12.2"
+  },
+  {
+    "modid": "foamfixcore",
+    "version": "7.7.4"
+  },
+  {
+    "modid": "randompatches",
+    "version": "1.12.2-1.22.1.10"
+  },
+  {
+    "modid": "fastbench",
+    "version": "1.7.3"
+  },
+  {
+    "modid": "actuallyadditions",
+    "version": "1.12.2-r152"
+  },
+  {
+    "modid": "baubles",
+    "version": "1.5.2"
+  },
+  {
+    "modid": "actuallybaubles",
+    "version": "1.1"
+  },
+  {
+    "modid": "ic2",
+    "version": "2.8.221-ex112"
+  },
+  {
+    "modid": "advanced_machines",
+    "version": "61.0.1"
+  },
+  {
+    "modid": "advanced_solar_panels",
+    "version": "4.3.0"
+  },
+  {
+    "modid": "advmachinespatch",
+    "version": "1.0"
+  },
+  {
+    "modid": "appliedenergistics2",
+    "version": "rv6-stable-7"
+  },
+  {
+    "modid": "endercore",
+    "version": "1.12.2-0.5.76"
+  },
+  {
+    "modid": "crafttweaker",
+    "version": "4.1.20"
+  },
+  {
+    "modid": "mtlib",
+    "version": "3.0.7"
+  },
+  {
+    "modid": "modtweaker",
+    "version": "4.0.19"
+  },
+  {
+    "modid": "jei",
+    "version": "4.16.1.302"
+  },
+  {
+    "modid": "thaumcraft",
+    "version": "6.1.BETA26"
+  },
+  {
+    "modid": "codechickenlib",
+    "version": "3.2.3.358"
+  },
+  {
+    "modid": "redstoneflux",
+    "version": "2.1.1"
+  },
+  {
+    "modid": "cofhcore",
+    "version": "4.6.6"
+  },
+  {
+    "modid": "brandonscore",
+    "version": "2.4.20"
+  },
+  {
+    "modid": "cofhworld",
+    "version": "1.4.0"
+  },
+  {
+    "modid": "thermalfoundation",
+    "version": "2.6.7"
+  },
+  {
+    "modid": "draconicevolution",
+    "version": "2.3.28"
+  },
+  {
+    "modid": "thermalexpansion",
+    "version": "5.5.7"
+  },
+  {
+    "modid": "enderio",
+    "version": "5.3.70"
+  },
+  {
+    "modid": "mantle",
+    "version": "1.12-1.3.3.55"
+  },
+  {
+    "modid": "chisel",
+    "version": "MC1.12.2-1.0.2.45"
+  },
+  {
+    "modid": "enderiointegrationtic",
+    "version": "5.3.70"
+  },
+  {
+    "modid": "quark",
+    "version": "r1.6-179"
+  },
+  {
+    "modid": "twilightforest",
+    "version": "3.11.1021"
+  },
+  {
+    "modid": "tconstruct",
+    "version": "1.12.2-2.13.0.183"
+  },
+  {
+    "modid": "p455w0rdslib",
+    "version": "2.3.161"
+  },
+  {
+    "modid": "ae2wtlib",
+    "version": "1.0.34"
+  },
+  {
+    "modid": "akashictome",
+    "version": "1.2-12"
+  },
+  {
+    "modid": "appleskin",
+    "version": "1.0.14"
+  },
+  {
+    "modid": "architecturecraft",
+    "version": "@VERSION@"
+  },
+  {
+    "modid": "aroma1997core",
+    "version": "2.0.0.2.b167"
+  },
+  {
+    "modid": "aroma1997sdimension",
+    "version": "2.0.0.2.b89"
+  },
+  {
+    "modid": "astralsorcery",
+    "version": "1.10.27"
+  },
+  {
+    "modid": "morphtool",
+    "version": "1.2-21"
+  },
+  {
+    "modid": "autoreglib",
+    "version": "1.3-32"
+  },
+  {
+    "modid": "badwithernocookiereloaded",
+    "version": "1.12.2-3.4.18"
+  },
+  {
+    "modid": "base",
+    "version": "3.14.0"
+  },
+  {
+    "modid": "bdlib",
+    "version": "1.14.3.12"
+  },
+  {
+    "modid": "bedpatch",
+    "version": "2.2"
+  },
+  {
+    "modid": "betterbuilderswands",
+    "version": "0.13.2"
+  },
+  {
+    "modid": "bibliocraft",
+    "version": "2.4.6"
+  },
+  {
+    "modid": "buildcraftlib",
+    "version": "7.99.24.8"
+  },
+  {
+    "modid": "buildcraftcore",
+    "version": "7.99.24.8"
+  },
+  {
+    "modid": "buildcraftenergy",
+    "version": "7.99.24.8"
+  },
+  {
+    "modid": "natura",
+    "version": "1.12.2-4.3.2.69"
+  },
+  {
+    "modid": "forestry",
+    "version": "5.8.2.422"
+  },
+  {
+    "modid": "binniecore",
+    "version": "2.5.1.203"
+  },
+  {
+    "modid": "binniedesign",
+    "version": "2.5.1.203"
+  },
+  {
+    "modid": "genetics",
+    "version": "2.5.1.203"
+  },
+  {
+    "modid": "botany",
+    "version": "2.5.1.203"
+  },
+  {
+    "modid": "extrabees",
+    "version": "2.5.1.203"
+  },
+  {
+    "modid": "extratrees",
+    "version": "2.5.1.203"
+  },
+  {
+    "modid": "biomesoplenty",
+    "version": "7.0.1.2445"
+  },
+  {
+    "modid": "blockcraftery",
+    "version": "1.12.2-1.3.1"
+  },
+  {
+    "modid": "guideapi",
+    "version": "1.12-2.1.8-63"
+  },
+  {
+    "modid": "bloodmagic",
+    "version": "1.12.2-2.4.3-105"
+  },
+  {
+    "modid": "bookshelf",
+    "version": "2.3.590"
+  },
+  {
+    "modid": "botania",
+    "version": "r1.10-364"
+  },
+  {
+    "modid": "buildcraftbuilders",
+    "version": "7.99.24.8"
+  },
+  {
+    "modid": "buildcrafttransport",
+    "version": "7.99.24.8"
+  },
+  {
+    "modid": "buildcraftsilicon",
+    "version": "7.99.24.8"
+  },
+  {
+    "modid": "theoneprobe",
+    "version": "1.4.28"
+  },
+  {
+    "modid": "buildcraftcompat",
+    "version": "7.99.24.8"
+  },
+  {
+    "modid": "buildcraftfactory",
+    "version": "7.99.24.8"
+  },
+  {
+    "modid": "buildcraftrobotics",
+    "version": "7.99.24.8"
+  },
+  {
+    "modid": "careerbees",
+    "version": "1.0"
+  },
+  {
+    "modid": "cctweaked",
+    "version": "1.89.2"
+  },
+  {
+    "modid": "computercraft",
+    "version": "1.89.2"
+  },
+  {
+    "modid": "chameleon",
+    "version": "1.12-4.1.3"
+  },
+  {
+    "modid": "chesttransporter",
+    "version": "2.8.8"
+  },
+  {
+    "modid": "chiselsandbits",
+    "version": "14.33"
+  },
+  {
+    "modid": "clumps",
+    "version": "3.1.2"
+  },
+  {
+    "modid": "compactsolars",
+    "version": "1.12.2-5.0.18.341"
+  },
+  {
+    "modid": "asielib",
+    "version": "1.0.0"
+  },
+  {
+    "modid": "railcraft",
+    "version": "12.0.0"
+  },
+  {
+    "modid": "computronics",
+    "version": "1.6.6"
+  },
+  {
+    "modid": "conarm",
+    "version": "1.2.5.10"
+  },
+  {
+    "modid": "cookingforblockheads",
+    "version": "6.5.0"
+  },
+  {
+    "modid": "crafttweakerjei",
+    "version": "2.0.3"
+  },
+  {
+    "modid": "danknull",
+    "version": "1.7.101"
+  },
+  {
+    "modid": "darkutils",
+    "version": "1.8.230"
+  },
+  {
+    "modid": "eleccore",
+    "version": "1.9.453"
+  },
+  {
+    "modid": "mcjtylib_ng",
+    "version": "3.5.4"
+  },
+  {
+    "modid": "rftools",
+    "version": "7.73"
+  },
+  {
+    "modid": "deepresonance",
+    "version": "1.8.0"
+  },
+  {
+    "modid": "diethopper",
+    "version": "1.1"
+  },
+  {
+    "modid": "dirt2path",
+    "version": "1.7.1"
+  },
+  {
+    "modid": "enderiobase",
+    "version": "5.3.70"
+  },
+  {
+    "modid": "enderioconduits",
+    "version": "5.3.70"
+  },
+  {
+    "modid": "enderioconduitsappliedenergistics",
+    "version": "5.3.70"
+  },
+  {
+    "modid": "enderioconduitsopencomputers",
+    "version": "5.3.70"
+  },
+  {
+    "modid": "refinedstorage",
+    "version": "1.6.16"
+  },
+  {
+    "modid": "enderioconduitsrefinedstorage",
+    "version": "5.3.70"
+  },
+  {
+    "modid": "enderiointegrationforestry",
+    "version": "5.3.70"
+  },
+  {
+    "modid": "enderiointegrationticlate",
+    "version": "5.3.70"
+  },
+  {
+    "modid": "enderioinvpanel",
+    "version": "5.3.70"
+  },
+  {
+    "modid": "ftblib",
+    "version": "5.4.7.2"
+  },
+  {
+    "modid": "enderiomachines",
+    "version": "5.3.70"
+  },
+  {
+    "modid": "enderiopowertools",
+    "version": "5.3.70"
+  },
+  {
+    "modid": "enderstorage",
+    "version": "2.4.6.137"
+  },
+  {
+    "modid": "immersiveengineering",
+    "version": "0.12-98"
+  },
+  {
+    "modid": "engineersdoors",
+    "version": "0.9.1"
+  },
+  {
+    "modid": "reborncore",
+    "version": "3.19.5"
+  },
+  {
+    "modid": "engineersworkshop",
+    "version": "1.0.9.40"
+  },
+  {
+    "modid": "valkyrielib",
+    "version": "1.12.2-2.0.20.1"
+  },
+  {
+    "modid": "environmentaltech",
+    "version": "1.12.2-2.0.20.1"
+  },
+  {
+    "modid": "etlunar",
+    "version": "1.12.2-2.0.20.1"
+  },
+  {
+    "modid": "gunpowderlib",
+    "version": "1.12.2-1.1"
+  },
+  {
+    "modid": "exchangers",
+    "version": "1.12.2-2.10.1"
+  },
+  {
+    "modid": "extrautils2",
+    "version": "1.0"
+  },
+  {
+    "modid": "zerocore",
+    "version": "1.12.2-0.1.2.9"
+  },
+  {
+    "modid": "bigreactors",
+    "version": "1.12.2-0.4.5.68"
+  },
+  {
+    "modid": "fencejumper",
+    "version": "1.0.5"
+  },
+  {
+    "modid": "flatcoloredblocks",
+    "version": "mc1.12-6.8"
+  },
+  {
+    "modid": "mcmultipart",
+    "version": "2.5.3"
+  },
+  {
+    "modid": "sonarcore",
+    "version": "5.0.19"
+  },
+  {
+    "modid": "fluxnetworks",
+    "version": "4.1.0"
+  },
+  {
+    "modid": "foamfix",
+    "version": "0.10.14-1.12.2"
+  },
+  {
+    "modid": "forgelin",
+    "version": "1.8.4"
+  },
+  {
+    "modid": "forgemultipartcbe",
+    "version": "2.6.2.83"
+  },
+  {
+    "modid": "microblockcbe",
+    "version": "2.6.2.83"
+  },
+  {
+    "modid": "minecraftmultipartcbe",
+    "version": "2.6.2.83"
+  },
+  {
+    "modid": "ftbbackups",
+    "version": "1.1.0.1"
+  },
+  {
+    "modid": "ftbguides",
+    "version": "1.0.2.33"
+  },
+  {
+    "modid": "ftbutilities",
+    "version": "5.4.1.131"
+  },
+  {
+    "modid": "gendustry",
+    "version": "1.6.5.8"
+  },
+  {
+    "modid": "gravisuite",
+    "version": "3.1.1"
+  },
+  {
+    "modid": "harvest",
+    "version": "1.12-1.2.8-25"
+  },
+  {
+    "modid": "immersivecables",
+    "version": "1.3.2"
+  },
+  {
+    "modid": "immersivepetroleum",
+    "version": "1.1.10"
+  },
+  {
+    "modid": "teslacorelib",
+    "version": "1.0.18"
+  },
+  {
+    "modid": "industrialforegoing",
+    "version": "1.12.2-1.12.2"
+  },
+  {
+    "modid": "initialinventory",
+    "version": "2.0.2"
+  },
+  {
+    "modid": "harvestcraft",
+    "version": "1.12.2zb"
+  },
+  {
+    "modid": "rustic",
+    "version": "1.1.7"
+  },
+  {
+    "modid": "integrationforegoing",
+    "version": "1.12.2-1.11"
+  },
+  {
+    "modid": "inventorytweaks",
+    "version": "1.63+release.109.220f184"
+  },
+  {
+    "modid": "ironbackpacks",
+    "version": "1.12.2-3.0.8-12"
+  },
+  {
+    "modid": "ironchest",
+    "version": "1.12.2-7.0.67.844"
+  },
+  {
+    "modid": "jeibees",
+    "version": "0.9.0.5"
+  },
+  {
+    "modid": "journeymap",
+    "version": "1.12.2-5.7.1"
+  },
+  {
+    "modid": "jee",
+    "version": "1.0.8"
+  },
+  {
+    "modid": "letsencryptcraft",
+    "version": "@VERSION@"
+  },
+  {
+    "modid": "longfallboots",
+    "version": "1.2.1a"
+  },
+  {
+    "modid": "lostcities",
+    "version": "2.0.22"
+  },
+  {
+    "modid": "magicbees",
+    "version": "1.0"
+  },
+  {
+    "modid": "minetogether",
+    "version": "2.4.5"
+  },
+  {
+    "modid": "minetogetherserver",
+    "version": "2.4.5"
+  },
+  {
+    "modid": "morpheus",
+    "version": "1.12.2-3.5.106"
+  },
+  {
+    "modid": "mrtjpcore",
+    "version": "2.1.4.43"
+  },
+  {
+    "modid": "naturescompass",
+    "version": "1.8.5"
+  },
+  {
+    "modid": "nice",
+    "version": "0.4.0"
+  },
+  {
+    "modid": "neid",
+    "version": "1.5.4.4"
+  },
+  {
+    "modid": "notenoughwands",
+    "version": "1.8.1"
+  },
+  {
+    "modid": "openmods",
+    "version": "0.12.2"
+  },
+  {
+    "modid": "openblocks",
+    "version": "1.8.1"
+  },
+  {
+    "modid": "patchouli",
+    "version": "1.0-23.6"
+  },
+  {
+    "modid": "placebo",
+    "version": "1.6.0"
+  },
+  {
+    "modid": "shetiphiancore",
+    "version": "3.5.9"
+  },
+  {
+    "modid": "platforms",
+    "version": "1.4.6"
+  },
+  {
+    "modid": "plethora-core",
+    "version": "1.2.3"
+  },
+  {
+    "modid": "plethora",
+    "version": "1.2.3"
+  },
+  {
+    "modid": "projectred-core",
+    "version": "4.9.4.120"
+  },
+  {
+    "modid": "projectred-compat",
+    "version": "1.0"
+  },
+  {
+    "modid": "projectred-integration",
+    "version": "4.9.4.120"
+  },
+  {
+    "modid": "projectred-transmission",
+    "version": "4.9.4.120"
+  },
+  {
+    "modid": "projectred-fabrication",
+    "version": "4.9.4.120"
+  },
+  {
+    "modid": "projectred-illumination",
+    "version": "4.9.4.120"
+  },
+  {
+    "modid": "projectred-expansion",
+    "version": "4.9.4.120"
+  },
+  {
+    "modid": "projectred-relocation",
+    "version": "4.9.4.120"
+  },
+  {
+    "modid": "projectred-transportation",
+    "version": "4.9.4.120"
+  },
+  {
+    "modid": "projectred-exploration",
+    "version": "4.9.4.120"
+  },
+  {
+    "modid": "quickleafdecay",
+    "version": "1.2.4"
+  },
+  {
+    "modid": "rangedpumps",
+    "version": "0.5"
+  },
+  {
+    "modid": "rebornstorage",
+    "version": "1.0.0"
+  },
+  {
+    "modid": "redstonearsenal",
+    "version": "2.6.6"
+  },
+  {
+    "modid": "refinedstorageaddons",
+    "version": "0.4.5"
+  },
+  {
+    "modid": "xreliquary",
+    "version": "1.12.2-1.3.4.796"
+  },
+  {
+    "modid": "rftoolscontrol",
+    "version": "2.0.2"
+  },
+  {
+    "modid": "rftoolspower",
+    "version": "1.2.0"
+  },
+  {
+    "modid": "shadowmc",
+    "version": "3.8.0"
+  },
+  {
+    "modid": "simplevoidworld",
+    "version": "1.2.0.9"
+  },
+  {
+    "modid": "thermaldynamics",
+    "version": "2.5.6"
+  },
+  {
+    "modid": "simplyjetpacks",
+    "version": "1.12.2-2.2.20.0"
+  },
+  {
+    "modid": "snad",
+    "version": "1.12.1-1.7.09.16a"
+  },
+  {
+    "modid": "soulshardsrespawn",
+    "version": "1.12.2-1.1.1-13"
+  },
+  {
+    "modid": "stevescarts",
+    "version": "2.4.32.137"
+  },
+  {
+    "modid": "storagedrawers",
+    "version": "5.2.2"
+  },
+  {
+    "modid": "storagedrawersextra",
+    "version": "@VERSION@"
+  },
+  {
+    "modid": "tcinventoryscan",
+    "version": "2.0.10"
+  },
+  {
+    "modid": "thermalcultivation",
+    "version": "0.3.6"
+  },
+  {
+    "modid": "thermalinnovation",
+    "version": "0.3.6"
+  },
+  {
+    "modid": "thutcore",
+    "version": "5.21.0"
+  },
+  {
+    "modid": "thutcore_compat",
+    "version": "1.0"
+  },
+  {
+    "modid": "thuttech",
+    "version": "6.1.6"
+  },
+  {
+    "modid": "tinkertoolleveling",
+    "version": "1.12.2-1.1.0.DEV.b23e769"
+  },
+  {
+    "modid": "topaddons",
+    "version": "1.12.2-1.13.0"
+  },
+  {
+    "modid": "torchmaster",
+    "version": "1.8.5.0"
+  },
+  {
+    "modid": "translocators",
+    "version": "2.5.2.81"
+  },
+  {
+    "modid": "universalmodifiers",
+    "version": "1.12.2-1.0.16.1"
+  },
+  {
+    "modid": "wanionlib",
+    "version": "1.12.2-2.9"
+  },
+  {
+    "modid": "waystones",
+    "version": "4.1.0"
+  },
+  {
+    "modid": "wct",
+    "version": "3.12.97"
+  },
+  {
+    "modid": "woot",
+    "version": "1.12.2-1.4.11"
+  },
+  {
+    "modid": "xnet",
+    "version": "1.8.2"
+  },
+  {
+    "modid": "xtones",
+    "version": "1.2.2"
+  },
+  {
+    "modid": "yabba",
+    "version": "1.1.2.54"
+  },
+  {
+    "modid": "phosphor-lighting",
+    "version": "1.12.2-0.2.7"
+  },
+  {
+    "modid": "industrialwires",
+    "version": "1.7-35"
+  },
+  {
+    "modid": "eleccoreloader",
+    "version": "1.9.453"
+  },
+  {
+    "modid": "mysticallib",
+    "version": "1.12.2-1.13.0"
+  },
+  {
+    "modid": "teslacorelib_registries",
+    "version": "1.0.18"
+  },
+  {
+    "modid": "unidict",
+    "version": "1.12.2-3.0.10"
+  }
+]

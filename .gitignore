@@ -1,0 +1,12 @@
+node_modules/
+.env
+
+# Runtime logs (contain usernames and chat history)
+bot.log
+mentions.log
+
+# macOS metadata
+.DS_Store
+
+# Obsidian editor state
+.obsidian/
