@@ -26,7 +26,7 @@ function logEvent (kind, msg) {
 
 let forgeMods = []
 if (useForge) {
-  const modsPath = path.join(__dirname, 'mods.json')
+  const modsPath = path.join(__dirname, 'data', 'mods.json')
   if (!fs.existsSync(modsPath)) {
     console.error(`[error] ${modsPath} not found. Run 'node ping.js' first.`)
     process.exit(1)
