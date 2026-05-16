@@ -2907,6 +2907,9 @@ bot.on('login', () => {
   nickRe = new RegExp(`(^|\\W)${NICKNAME}($|\\W)`, 'i')
   logEvent('nickname', `responding to "${NICKNAME}"`)
 })
+bot.on('message', (jsonMsg) => {
+  logEvent('raw-msg', jsonMsg.toString())
+})
 const LOVE_RE = /\bi love you\b/i
 bot.on('chat', (username, message) => {
   if (username === bot.username) return
