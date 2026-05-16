@@ -35,16 +35,21 @@ if (useForge) {
   logEvent('forge', `loaded ${forgeMods.length} mods from mods.json`)
 }
 
+// --- Error resilience for modded 1.12.2 Forge servers ---
+// 1. Suppress harmless zlib "problem inflating" warnings from minecraft-protocol's
+//    decompression layer. These are cosmetic — not crashes — but noisy.
 const origError = console.error
 console.error = (...args) => {
   if (typeof args[0] === 'string' && args[0].startsWith('problem inflating')) return
   origError.apply(console, args)
 }
+// 2. Safety nets for anything that slips past the FullPacketParser patch below
+//    (e.g. async rejects in plugin code, modded packets on other code paths).
 process.on('uncaughtException', (err) => {
-  logEvent('swallowed', err.message)
+  logEvent('uncaught', err.message)
 })
 process.on('unhandledRejection', (err) => {
-  logEvent('swallowed', err?.message || String(err))
+  logEvent('unhandled-reject', err?.message || String(err))
 })
 
 logEvent('connect', `${host}:${port} auth=${auth} version=${version} forge=${useForge}`)
@@ -63,6 +68,22 @@ const clientOpts = {
 
 const client = mc.createClient(clientOpts)
 if (useForge) forgeHandshake(client, { forgeMods })
+
+// 3. THE REAL FIX: On modded 1.12.2, entity_metadata packets contain data that
+//    mineflayer's entities plugin can't handle (throws TypeError). The error
+//    propagates back through push() into _transform and destroys the deserializer
+//    stream in Node 18+. Wrapping _transform catches errors from both protodef
+//    parsing AND downstream listeners triggered by push().
+const { FullPacketParser } = require('protodef/src/serializer')
+const _origTransform = FullPacketParser.prototype._transform
+FullPacketParser.prototype._transform = function (chunk, enc, cb) {
+  try {
+    _origTransform.call(this, chunk, enc, cb)
+  } catch (e) {
+    logEvent('parse-error', e.message)
+    cb()
+  }
+}
 
 // Track real position from raw protocol packets — mineflayer's state gets stuck
 // on heavily-modded 1.12.2 servers, so we shadow it here.
@@ -2906,9 +2927,6 @@ bot.on('login', () => {
   if (!NICKNAME) NICKNAME = bot.username
   nickRe = new RegExp(`(^|\\W)${NICKNAME}($|\\W)`, 'i')
   logEvent('nickname', `responding to "${NICKNAME}"`)
-})
-bot.on('message', (jsonMsg) => {
-  logEvent('raw-msg', jsonMsg.toString())
 })
 const LOVE_RE = /\bi love you\b/i
 bot.on('chat', (username, message) => {
