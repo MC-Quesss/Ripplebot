@@ -254,7 +254,7 @@ bot.on('spawn', () => {
 // Handlers are tried in order. First match wins and suppresses the
 // mentions.log fallback. Each returns true if it handled the message,
 // false/undefined to let later handlers try.
-const NICKNAME = 'Roz' // display nickname; chat directed at this name is dispatched
+let NICKNAME = process.env.MC_NICKNAME || null // resolved after login if not set
 let followTarget = null // username currently being followed, or null
 
 function posStr (p) { return `${p.x.toFixed(0)}, ${p.y.toFixed(0)}, ${p.z.toFixed(0)}` }
@@ -2898,7 +2898,12 @@ const CHAT_HANDLERS = [
   },
 ]
 
-const nickRe = new RegExp(`(^|\\W)${NICKNAME}($|\\W)`, 'i')
+let nickRe = null
+bot.on('login', () => {
+  if (!NICKNAME) NICKNAME = bot.username
+  nickRe = new RegExp(`(^|\\W)${NICKNAME}($|\\W)`, 'i')
+  logEvent('nickname', `responding to "${NICKNAME}"`)
+})
 const LOVE_RE = /\bi love you\b/i
 bot.on('chat', (username, message) => {
   if (username === bot.username) return
@@ -2914,8 +2919,8 @@ bot.on('chat', (username, message) => {
     logEvent('chat-handled', `love <- <${username}> ${message}`)
     return
   }
-  if (!nickRe.test(message)) return
-  // Message is addressed to Roz — try the dispatcher
+  if (!nickRe || !nickRe.test(message)) return
+  // Message is addressed by nickname — try the dispatcher
   const stripped = message.replace(nickRe, ' ').trim()
   for (const rule of CHAT_HANDLERS) {
     if (rule.pattern.test(stripped)) {
