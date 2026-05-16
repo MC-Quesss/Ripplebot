@@ -43,6 +43,9 @@ console.error = (...args) => {
 process.on('uncaughtException', (err) => {
   logEvent('swallowed', err.message)
 })
+process.on('unhandledRejection', (err) => {
+  logEvent('swallowed', err?.message || String(err))
+})
 
 logEvent('connect', `${host}:${port} auth=${auth} version=${version} forge=${useForge}`)
 
