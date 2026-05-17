@@ -214,7 +214,7 @@ function startAutoSleep () {
     tryAutoGreet()
     tryAutoSleep()
     tossTrash().catch(() => {})
-  }, 15000)
+  }, 5000)
 }
 
 // Auto-greet: say a greeting when another player comes within range.
@@ -396,6 +396,7 @@ async function clearHand () {
 
 const TRASH_ITEMS = new Set(['poisonous_potato'])
 async function tossTrash () {
+  if (insideHouse()) return // don't litter indoors
   for (const it of bot.inventory.items()) {
     if (TRASH_ITEMS.has(it.name)) {
       try {
@@ -2664,7 +2665,6 @@ async function runDepositNamed (names) {
 // Uses win.deposit for known items and two-click for unknown/modded items.
 const STASH_ALL_KEEP = { wheat_seeds: 32, baked_potato: 16 }
 async function runStashAll () {
-  await tossTrash()
   const inv = bot.inventory.items()
   if (!inv.length) { bot.chat('Pockets already empty.'); return }
   bot.chat('Stashing everything…')
@@ -2702,6 +2702,7 @@ async function runStashAll () {
     for (let i = invStart; i < win.slots.length; i++) {
       const it = win.slots[i]
       if (!it) continue
+      if (TRASH_ITEMS.has(it.name)) continue // skip trash; tossed when outside
 
       const keepLimit = STASH_ALL_KEEP[it.name] ?? 0
       let depositCount = it.count
