@@ -624,7 +624,7 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
 
     if (insideHouse()) {
       logEvent('harvest-rc', 'inside house — exiting first')
-      await runGoOutside()
+      await runGoOutside('wheat')
       if (deathCount > startDeaths) throw new Error('died exiting house')
     }
 
@@ -766,7 +766,7 @@ async function runHarvestPotatoes ({ user } = {}) {
 
     // Exit first if indoors.
     if (insideHouse()) {
-      await runGoOutside()
+      await runGoOutside('potatoes')
       if (deathCount > startDeaths) throw new Error('died exiting house')
     }
 
@@ -938,7 +938,7 @@ async function runHarvestPotatoesRightClick ({ user } = {}) {
 
     if (insideHouse()) {
       logEvent('harvest-potato-rc', 'inside house — exiting first')
-      await runGoOutside()
+      await runGoOutside('potatoes')
       if (deathCount > startDeaths) throw new Error('died exiting house')
     }
 
@@ -1296,7 +1296,7 @@ async function faceYaw (targetYaw, { maxAttempts = 4, tolerance = 0.25 } = {}) {
 // reach orientation, yaw didn't converge, etc.) so the wrapper can retry.
 // On damage or death, throws with a message containing "damage" or "died"
 // so the wrapper can refuse to retry.
-async function runGoOutsideOnce () {
+async function runGoOutsideOnce (activity) {
   if (!insideHouse()) { bot.chat("I'm already outside."); return }
   const t = bot.time || {}
   if (!t.isDay || (t.timeOfDay ?? 0) >= 11500) {
@@ -1308,7 +1308,7 @@ async function runGoOutsideOnce () {
     bot.chat(`Hostiles nearby (${hostiles.map(h => h.name).join(', ')}) — staying inside.`)
     return
   }
-  bot.chat(pickLine(GO_OUTSIDE_LINES))
+  bot.chat(pickLine(GO_OUTSIDE_LINES, { activity: activity || 'stuff' }))
   const startDeaths = deathCount
   // Suppress lookAt for the whole traversal — a background yaw change mid-walk
   // is what drove the bot east into the furnace on prior runs.
@@ -1533,11 +1533,11 @@ async function resetToHouseSide (target /* HOUSE_CENTER or OUTSIDE_ORIENTATION *
 }
 
 // Wrap runGoOutsideOnce with one retry on graceful failure.
-async function runGoOutside () {
+async function runGoOutside (activity) {
   const startHP = bot.health ?? 20
   const startDeaths = deathCount
   try {
-    await runGoOutsideOnce()
+    await runGoOutsideOnce(activity)
     return
   } catch (err) {
     const hpDelta = startHP - (bot.health ?? 20)
@@ -1553,7 +1553,7 @@ async function runGoOutside () {
     // Reset to the inside pad before retry — runGoOutsideOnce starts from
     // HOUSE_CENTER, and we may be stranded in the door jamb after the snag.
     await resetToHouseSide(HOUSE_CENTER)
-    await runGoOutsideOnce()
+    await runGoOutsideOnce(activity)
   }
 }
 
@@ -1615,7 +1615,7 @@ async function runGoIntoPen ({ skipActivate = false } = {}) {
     return
   }
   if (insideHouse()) {
-    await runGoOutside()
+    await runGoOutside('wool')
   }
   const startDeaths = deathCount
   bot.chat('Entering the pen.')
@@ -3438,6 +3438,25 @@ const GO_OUTSIDE_LINES = [
   { text: "Fresh air. I'm told I need this.",              weight: (s) => s.snark },
   { text: 'Outward bound. *mild enthusiasm*',              weight: (s) => s.charm + s.curiosity },
   { text: 'Going out. Wish me luck.',                      weight: (s) => s.chaos },
+  { text: 'To infinity and beyond!',                       weight: (s) => s.chaos + s.charm },
+  { text: 'Yeet!',                                         weight: (s) => s.chaos + 10 },
+  { text: "Let's go!",                                     weight: (s) => s.charm + s.focus },
+  { text: 'Into the wild blue yonder.',                    weight: (s) => s.curiosity + s.charm },
+  { text: 'Adventure awaits. Probably.',                   weight: (s) => s.snark + s.curiosity },
+  { text: '*kicks door open*',                             weight: (s) => s.chaos + s.charm },
+  { text: 'The world is my oyster. Or my lava pit.',       weight: (s) => s.chaos + s.snark },
+  { text: "I won't enjoy it.",                              weight: (s) => s.snark + s.patience },
+  { text: "I hope I don't die.",                            weight: (s) => s.snark + s.focus },
+  { text: 'Here I go. Brain the size of a planet and they send me to harvest {activity}.', weight: (s) => s.snark + s.patience },
+  { text: "Don't worry about me. Nobody ever does.",        weight: (s) => s.snark + s.charm },
+  { text: 'I think you ought to know I feel very depressed about this.', weight: (s) => s.snark + s.patience },
+  { text: 'The outside. How dreadful.',                    weight: (s) => s.snark },
+  { text: "I'd say I have a bad feeling about this, but I have a bad feeling about everything.", weight: (s) => s.snark + s.chaos },
+  { text: "{activity}. Again. The monotony is exquisite.", weight: (s) => s.snark + s.patience },
+  { text: "I've calculated 47 better uses of my time than harvesting {activity}. None of them were approved.", weight: (s) => s.snark + s.curiosity },
+  { text: "The {activity} won't harvest itself. I've asked.", weight: (s) => s.snark + s.charm },
+  { text: "Off to tend {activity}. My joy is indescribable. Mainly because it doesn't exist.", weight: (s) => s.snark + s.patience },
+  { text: "Life. Loathe it or ignore it, you can't like it. Especially the {activity} part.", weight: (s) => s.snark + s.chaos },
 ]
 const COME_INSIDE_LINES = [
   { text: 'Heading inside.',                               weight: (s) => s.focus },
