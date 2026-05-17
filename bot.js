@@ -395,16 +395,23 @@ async function clearHand () {
 }
 
 const TRASH_ITEMS = new Set(['poisonous_potato'])
+const TRASH_DUMP = { x: -287, y: 63, z: 579 } // far end of potato patch
+let lastTrashRun = 0
 async function tossTrash () {
-  if (insideHouse()) return // don't litter indoors
-  for (const it of bot.inventory.items()) {
-    if (TRASH_ITEMS.has(it.name)) {
-      try {
-        await bot.tossStack(it)
-        logEvent('trash', `tossed ${it.count}× ${it.name}`)
-      } catch (e) {
-        logEvent('trash', `toss fail ${it.name}: ${e.message}`)
-      }
+  if (insideHouse()) return
+  const trash = bot.inventory.items().filter(i => TRASH_ITEMS.has(i.name))
+  if (!trash.length) return
+  // Throttle periodic calls to once per 60s so we're not constantly pathing.
+  const now = Date.now()
+  if (now - lastTrashRun < 60000) return
+  lastTrashRun = now
+  await pathTo(TRASH_DUMP, 1, 8000)
+  for (const it of bot.inventory.items().filter(i => TRASH_ITEMS.has(i.name))) {
+    try {
+      await bot.tossStack(it)
+      logEvent('trash', `tossed ${it.count}× ${it.name} at dump`)
+    } catch (e) {
+      logEvent('trash', `toss fail ${it.name}: ${e.message}`)
     }
   }
 }
