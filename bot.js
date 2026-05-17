@@ -1308,7 +1308,9 @@ async function runGoOutsideOnce (activity) {
     bot.chat(`Hostiles nearby (${hostiles.map(h => h.name).join(', ')}) — staying inside.`)
     return
   }
-  bot.chat(pickLine(GO_OUTSIDE_LINES, { activity: activity || 'stuff' }))
+  const act = activity || 'stuff'
+  const itself = act === 'potatoes' ? 'themselves' : 'itself'
+  bot.chat(pickLine(GO_OUTSIDE_LINES, { activity: act, itself }))
   const startDeaths = deathCount
   // Suppress lookAt for the whole traversal — a background yaw change mid-walk
   // is what drove the bot east into the furnace on prior runs.
@@ -3454,7 +3456,7 @@ const GO_OUTSIDE_LINES = [
   { text: "I'd say I have a bad feeling about this, but I have a bad feeling about everything.", weight: (s) => s.snark + s.chaos + 50 },
   { text: "{activity}. Again. The monotony is exquisite.", weight: (s) => s.snark + s.patience + 50 },
   { text: "I've calculated 47 better uses of my time than harvesting {activity}. None of them were approved.", weight: (s) => s.snark + s.curiosity + 50 },
-  { text: "The {activity} won't harvest itself. I've asked.", weight: (s) => s.snark + s.charm + 50 },
+  { text: "The {activity} won't harvest {itself}. I've asked.", weight: (s) => s.snark + s.charm + 50 },
   { text: "Off to tend {activity}. My joy is indescribable. Mainly because it doesn't exist.", weight: (s) => s.snark + s.patience + 50 },
   { text: "Life. Loathe it or ignore it, you can't like it. Especially the {activity} part.", weight: (s) => s.snark + s.chaos + 50 },
 ]
