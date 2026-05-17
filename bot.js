@@ -210,7 +210,11 @@ async function tryAutoSleep () {
   }
 }
 function startAutoSleep () {
-  setInterval(tryAutoSleep, 15000) // check every 15s
+  setInterval(() => {
+    tryAutoGreet()
+    tryAutoSleep()
+    tossTrash().catch(() => {})
+  }, 15000)
 }
 
 // Auto-greet: say a greeting when another player comes within range.
@@ -264,7 +268,6 @@ function tryAutoGreet () {
     break // one greet per tick
   }
 }
-setInterval(tryAutoGreet, 3000)
 
 bot.on('login', () => logEvent('login', `${bot.username} logged in`))
 bot.on('spawn', () => {
@@ -389,6 +392,20 @@ function waitForChatReply (testFn, timeoutMs = 60000) {
 
 async function clearHand () {
   try { await bot.unequip('hand') } catch (_) {}
+}
+
+const TRASH_ITEMS = new Set(['poisonous_potato'])
+async function tossTrash () {
+  for (const it of bot.inventory.items()) {
+    if (TRASH_ITEMS.has(it.name)) {
+      try {
+        await bot.tossStack(it)
+        logEvent('trash', `tossed ${it.count}× ${it.name}`)
+      } catch (e) {
+        logEvent('trash', `toss fail ${it.name}: ${e.message}`)
+      }
+    }
+  }
 }
 
 async function facePlayer (username) {
@@ -711,6 +728,7 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
     harvestBusy = false
     bot.pathfinder.setGoal(null)
     await clearHand()
+    await tossTrash()
   }
 }
 
@@ -886,6 +904,7 @@ async function runHarvestPotatoes ({ user } = {}) {
     harvestBusy = false
     bot.pathfinder.setGoal(null)
     await clearHand()
+    await tossTrash()
   }
 }
 
@@ -1048,6 +1067,7 @@ async function runHarvestPotatoesRightClick ({ user } = {}) {
     harvestBusy = false
     bot.pathfinder.setGoal(null)
     await clearHand()
+    await tossTrash()
   }
 }
 
@@ -1241,8 +1261,8 @@ const HOUSE_DOOR = { x: -272, y: 65, z: 572 }
 // Empirically: strafe-left while facing west over-steers south; the door
 // needs the opposite nudge, and only briefly (the door frame is 2 blocks).
 let EXIT_STRAFE = 'right'  // facing west, right = -z (north)
-let ENTER_STRAFE = 'left'  // facing east, left = -z (north). Strafe toward
-                           // open corridor, away from chests at z=573.
+let ENTER_STRAFE = null    // no strafe on entry — corridor too narrow for either
+                           // direction; left hits z=571 wall, right hits south side.
 let EXIT_STRAFE_MS = 200
 let ENTER_STRAFE_MS = 200
 
@@ -1401,14 +1421,19 @@ async function runGoInsideOnce () {
   }
   logEvent('go-inside', `yaw locked east at ${yawResult.yaw.toFixed(3)} rad`)
 
-  // 4. Activate door (outside has no pressure plate).
+  // 4. Activate door only if it's closed. Bit 0x04 in metadata = open.
   try {
-    const Vec3 = require('vec3').Vec3
-    const door = bot.blockAt(new Vec3(HOUSE_DOOR.x, HOUSE_DOOR.y, HOUSE_DOOR.z))
-    if (door) {
-      await bot.activateBlock(door)
-      await sleep(300) // let the door open packet settle
-      logEvent('go-inside', `door activated`)
+    const Vec3Enter = require('vec3').Vec3
+    const doorBlock = bot.blockAt(new Vec3Enter(HOUSE_DOOR.x, HOUSE_DOOR.y, HOUSE_DOOR.z))
+    if (doorBlock) {
+      const isOpen = (doorBlock.metadata & 0x04) !== 0
+      if (isOpen) {
+        logEvent('go-inside', 'door already open — walking through')
+      } else {
+        await bot.activateBlock(doorBlock)
+        await sleep(500)
+        logEvent('go-inside', `door activated (was closed, meta=${doorBlock.metadata})`)
+      }
     } else {
       logEvent('go-inside', 'door block not loaded — pushing anyway')
     }
@@ -1416,9 +1441,7 @@ async function runGoInsideOnce () {
     logEvent('go-inside', `activateBlock fail: ${e.message} — pushing anyway`)
   }
 
-  // 5. Walk_until x ≥ -268; momentum lands near -267.3.
-  // Strafe through entire walk (ENTER_STRAFE, default 'right' = +z from east-
-  // facing, mirroring the exit).
+  // 5. Walk_until x ≥ -268. Single push, no strafe.
   const walk = await walkUntilAxis({ axis: 'x', target: -268, direction: 'gte', maxMs: 8000, bailOnDamage: true, unstickStrafe: ENTER_STRAFE, unstickMs: ENTER_STRAFE_MS })
   if (walk.died) throw new Error('died crossing door')
   if (!walk.reached) throw new Error(`didn't reach house_center (x=${walk.x})`)
@@ -1502,33 +1525,32 @@ async function runGoOutside () {
   }
 }
 
-// Wrap runGoInsideOnce with one retry on graceful failure.
+// Wrap runGoInsideOnce with up to 3 retries on graceful failure.
 async function runGoInside () {
   const startHP = bot.health ?? 20
   const startDeaths = deathCount
-  try {
-    await runGoInsideOnce()
-    sendEmote('headbang')
-    return
-  } catch (err) {
-    const hpDelta = startHP - (bot.health ?? 20)
-    const deathDelta = deathCount - startDeaths
-    if (!isGracefulDoorFailure(err, hpDelta, deathDelta)) {
-      logEvent('go-inside', `no retry (hpDelta=${hpDelta}, deathDelta=${deathDelta}, msg="${err.message}")`)
-      await resetToHouseSide(OUTSIDE_ORIENTATION)
-      throw err
-    }
-    logEvent('go-inside', `attempt 1 failed gracefully (${err.message}); retrying`)
-    sendEmote('facepalm')
-    bot.chat(`First attempt didn't take — trying once more.`)
-    await sleep(500)
-    await resetToHouseSide(OUTSIDE_ORIENTATION)
+  for (let attempt = 1; attempt <= 4; attempt++) {
     try {
       await runGoInsideOnce()
-    } catch (err2) {
-      logEvent('go-inside', `attempt 2 failed (${err2.message}); resetting to orientation`)
+      sendEmote('headbang')
+      return
+    } catch (err) {
+      const hpDelta = startHP - (bot.health ?? 20)
+      const deathDelta = deathCount - startDeaths
+      if (!isGracefulDoorFailure(err, hpDelta, deathDelta)) {
+        logEvent('go-inside', `no retry (hpDelta=${hpDelta}, deathDelta=${deathDelta}, msg="${err.message}")`)
+        await resetToHouseSide(OUTSIDE_ORIENTATION)
+        throw err
+      }
+      logEvent('go-inside', `attempt ${attempt} failed gracefully (${err.message})`)
+      if (attempt === 4) {
+        await resetToHouseSide(OUTSIDE_ORIENTATION)
+        throw err
+      }
+      sendEmote('facepalm')
+      bot.chat(attempt === 1 ? `First attempt didn't take — trying again.` : `Attempt ${attempt} failed — one more go.`)
+      await sleep(500)
       await resetToHouseSide(OUTSIDE_ORIENTATION)
-      throw err2
     }
   }
 }
@@ -1751,8 +1773,116 @@ async function runLeavePen () {
   }
 }
 
+// Ensure shears are in inventory. Checks inventory first, then chest slot 36,
+// then crafts from iron ingots at chest slot 45. Must be called BEFORE entering
+// the pen (needs chest access). Returns true if shears are ready.
+async function ensureShears () {
+  const existing = bot.inventory.items().find(i => i.name === 'shears')
+  if (existing) {
+    logEvent('shear', 'shears already in inventory')
+    return true
+  }
+
+  // Try withdrawing from the chest.
+  if (!insideHouse()) await runGoInside()
+  await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+
+  const win = await openChest()
+  const chestShears = win.slots[CHEST_SLOTS.shears]
+  if (chestShears) {
+    const containerSize = win.slots.length - 36
+    const empty = findEmptyInvSlotInWindow(win, containerSize)
+    if (!empty) { win.close(); throw new Error('inventory full') }
+    await twoClick(CHEST_SLOTS.shears, empty.windowSlot)
+    win.close()
+    logEvent('shear', 'withdrew shears from chest slot 36')
+    await pathTo(HOUSE_CENTER, 0, 10000)
+    return true
+  }
+  win.close()
+
+  // No shears in chest — craft from iron ingots.
+  bot.chat('No shears on hand or in the chest — crafting a pair.')
+  const win2 = await openChest()
+  const ironStack = win2.slots[CHEST_SLOTS.iron]
+  if (!ironStack || ironStack.count < 2) {
+    win2.close()
+    bot.chat("Can't craft shears — need at least 2 iron ingots in chest slot 45.")
+    return false
+  }
+  // Withdraw 2 iron ingots. twoClick moves the whole stack; we only need 2,
+  // so we'll put the rest back after.
+  const containerSize2 = win2.slots.length - 36
+  const emptySlot = findEmptyInvSlotInWindow(win2, containerSize2)
+  if (!emptySlot) { win2.close(); throw new Error('inventory full') }
+  await twoClick(CHEST_SLOTS.iron, emptySlot.windowSlot)
+  win2.close()
+  logEvent('shear', `withdrew iron stack from chest slot 45 (had ${ironStack.count})`)
+
+  // Craft shears: 2x2 grid, iron in slots 1 and 3 (diagonal top-left, bottom-right).
+  // Player inventory window: slot 0 = result, 1-4 = 2x2 grid.
+  // Grid layout: [1][2] / [3][4]. Shears recipe: iron in 1 and 4 (diagonal).
+  await sweepCraftGridToInv()
+
+  // Find iron in inventory and place 2 into the grid.
+  const ironInv = bot.inventory.items().find(i => i.name === 'iron_ingot')
+  if (!ironInv || ironInv.count < 2) {
+    bot.chat("Iron didn't land in inventory — can't craft.")
+    return false
+  }
+
+  // Left-click to pick up entire iron stack onto cursor, then right-click
+  // each grid slot to place exactly 1, then left-click remaining back.
+  // Slot 1 = top-left, slot 4 = bottom-right of the 2x2 grid.
+  const ironWindowSlot = ironInv.slot
+  await bot.clickWindow(ironWindowSlot, 0, 0) // left-click: pick up full stack
+  await sleep(200)
+  await bot.clickWindow(1, 1, 0) // right-click grid slot 1: places exactly 1
+  await sleep(200)
+  await bot.clickWindow(4, 1, 0) // right-click grid slot 4: places exactly 1
+  await sleep(200)
+  await bot.clickWindow(ironWindowSlot, 0, 0) // left-click: put remaining back
+  await sleep(400)
+
+  // Take the crafted shears from result slot 0.
+  const resultSlot = bot.inventory.slots[0]
+  if (!resultSlot) {
+    logEvent('shear', 'no result in craft slot 0 after placing iron')
+    bot.chat("Craft didn't produce shears — recipe may differ on this server.")
+    await sweepCraftGridToInv()
+    return false
+  }
+  const dest = await takeOneCraft()
+  if (dest < 0) {
+    bot.chat("Couldn't pick up crafted shears.")
+    await sweepCraftGridToInv()
+    return false
+  }
+  await sweepCraftGridToInv()
+  logEvent('shear', 'crafted shears from 2 iron ingots')
+
+  // Put remaining iron back in chest slot 45.
+  const leftoverIron = bot.inventory.items().find(i => i.name === 'iron_ingot')
+  if (leftoverIron) {
+    try {
+      await depositToChestSlot(leftoverIron.slot, CHEST_SLOTS.iron)
+      logEvent('shear', `returned ${leftoverIron.count} iron to chest slot 45`)
+    } catch (e) {
+      logEvent('shear', `couldn't return iron: ${e.message}`)
+    }
+  }
+
+  bot.chat('Shears crafted. Ready to go.')
+  await pathTo(HOUSE_CENTER, 0, 10000)
+  return true
+}
+
 // Shear all woolly sheep in the pen.
 async function runShearSheep () {
+  // Pre-flight: ensure we have shears before heading to the pen.
+  const ready = await ensureShears()
+  if (!ready) return
+
   if (!inPen()) {
     await runEnterPen()
     if (!inPen()) throw new Error('failed to enter pen')
@@ -1848,6 +1978,17 @@ async function runShearSheep () {
       }
     }
   }
+
+  // Return shears to their permanent chest slot (36).
+  const shearsLeft = bot.inventory.items().find(i => i.name === 'shears')
+  if (shearsLeft) {
+    try {
+      await depositToChestSlot(shearsLeft.slot, CHEST_SLOTS.shears)
+      logEvent('shear', 'returned shears to chest slot 36')
+    } catch (e) {
+      logEvent('shear', `couldn't return shears: ${e.message}`)
+    }
+  }
   await clearHand()
 }
 
@@ -1868,7 +2009,7 @@ async function runShearSheep () {
 // slots 0-4 are the result + 2x2 craft grid.
 const KITCHEN_CHEST = { x: -267, y: 67, z: 569 }
 const CHEST_APPROACH_POS = { x: -267, y: 65, z: 570 }
-const CHEST_SLOTS = { bread: 15, dough: 21, water: 22, salt: 23, flour: 24, bowl: 25, bakeware: 26 }
+const CHEST_SLOTS = { bread: 15, dough: 21, water: 22, salt: 23, flour: 24, bowl: 25, bakeware: 26, shears: 36, iron: 45 }
 
 let bakeBusy = false
 
@@ -2519,6 +2660,96 @@ async function runDepositNamed (names) {
   logEvent('deposit-named', summary.join('; '))
 }
 
+// Stash everything except seeds (for replanting) and baked potatoes (for eating).
+// Uses win.deposit for known items and two-click for unknown/modded items.
+const STASH_ALL_KEEP = { wheat_seeds: 32, baked_potato: 16 }
+async function runStashAll () {
+  await tossTrash()
+  const inv = bot.inventory.items()
+  if (!inv.length) { bot.chat('Pockets already empty.'); return }
+  bot.chat('Stashing everything…')
+
+  if (!insideHouse()) {
+    await runGoInside()
+  }
+  await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+
+  const Vec3 = require('vec3').Vec3
+  const chestBlock = bot.blockAt(new Vec3(
+    HARVEST_WAYPOINTS.kitchen_chest.x,
+    HARVEST_WAYPOINTS.kitchen_chest.y,
+    HARVEST_WAYPOINTS.kitchen_chest.z,
+  ))
+  if (!chestBlock) throw new Error('kitchen chest not reachable')
+
+  // First pass: figure out how much of each keep-item to retain.
+  const totals = {}
+  for (const it of inv) {
+    if (STASH_ALL_KEEP[it.name]) {
+      totals[it.name] = (totals[it.name] ?? 0) + it.count
+    }
+  }
+
+  const win = await bot.openContainer(chestBlock)
+  const containerSlotCount = win.slots.length - 36
+  const invStart = containerSlotCount
+  let deposited = 0
+  let kept = 0
+  let failed = 0
+  const reserved = {} // how many we've reserved so far per keep-item
+
+  try {
+    for (let i = invStart; i < win.slots.length; i++) {
+      const it = win.slots[i]
+      if (!it) continue
+
+      const keepLimit = STASH_ALL_KEEP[it.name] ?? 0
+      let depositCount = it.count
+
+      if (keepLimit > 0) {
+        const alreadyKept = reserved[it.name] ?? 0
+        const canKeep = Math.min(it.count, Math.max(0, keepLimit - alreadyKept))
+        if (canKeep > 0) {
+          reserved[it.name] = alreadyKept + canKeep
+          kept += canKeep
+          depositCount = it.count - canKeep
+        }
+        if (depositCount <= 0) continue
+      }
+
+      if (it.name === 'unknown') {
+        let destSlot = -1
+        for (let j = 0; j < containerSlotCount; j++) {
+          if (!win.slots[j]) { destSlot = j; break }
+        }
+        if (destSlot < 0) { failed += depositCount; continue }
+        try {
+          await bot.clickWindow(i, 0, 0)
+          await bot.clickWindow(destSlot, 0, 0)
+          deposited += depositCount
+        } catch (e) {
+          failed += depositCount
+          try { await bot.clickWindow(-999, 0, 0) } catch (_) {}
+        }
+      } else {
+        try {
+          await win.deposit(it.type, it.metadata, depositCount)
+          deposited += depositCount
+        } catch (e) {
+          failed += depositCount
+          logEvent('stash-all', `deposit fail ${it.name}: ${e.message}`)
+        }
+      }
+    }
+  } finally { win.close() }
+
+  const parts = [`stashed ${deposited}`]
+  if (kept > 0) parts.push(`kept ${kept} (seeds/food)`)
+  if (failed > 0) parts.push(`${failed} didn't fit`)
+  bot.chat(parts.join(', ') + '.')
+  logEvent('stash-all', `deposited=${deposited} kept=${kept} failed=${failed}`)
+}
+
 const CHAT_HANDLERS = [
   {
     name: 'where',
@@ -2581,6 +2812,14 @@ const CHAT_HANDLERS = [
     },
   },
   {
+    name: 'whats_up',
+    pattern: /\bwhat('?s| is)\s*up\b|\bwassup\b|\bsup\b(?!.*\b(stop|stay|halt)\b)/i,
+    handler: (user) => {
+      facePlayer(user).catch(() => {})
+      bot.chat(pickLine(WHATS_UP_LINES))
+    },
+  },
+  {
     name: 'status',
     pattern: /\b(status|how are you|you (ok|alright)|health)\b/i,
     handler: (_user) => {
@@ -2593,7 +2832,7 @@ const CHAT_HANDLERS = [
   },
   {
     name: 'furnace_status',
-    pattern: /\b(what('?s| is)\s*(cooking|baking|smelting|in the (furnace|oven))|furnace status|check (the\s+)?furnace)\b/i,
+    pattern: /\b(what('?s| is)\s*(cookin(g|')?|baking|smelting|in the (furnace|oven))|furnace status|check (the\s+)?furnace)\b/i,
     handler: async (_user) => {
       sendEmote('think')
       const Vec3 = require('vec3').Vec3
@@ -2614,6 +2853,26 @@ const CHAT_HANDLERS = [
         if (!parts.length) bot.chat("Furnace is empty — nothing cooking.")
         else bot.chat(parts.join('; ') + '.')
       } catch (e) { bot.chat(`Couldn't check the furnace: ${e.message}`) }
+    },
+  },
+  {
+    name: 'stash-all',
+    pattern: /\b(stash|dump|deposit|empty|clear)\s+(all|everything|it all|your (pockets|inventory))|\bempty\s+(your\s+)?pockets\b|\bstash\s+all\b/i,
+    handler: (_user) => {
+      runStashAll().catch(e => {
+        logEvent('stash-all-error', e.message)
+        bot.chat(`Stash failed: ${e.message}`)
+      })
+    },
+  },
+  {
+    name: 'stash',
+    pattern: /\b(stash|dump|deposit)\s+(the\s+)?(unknown|junk|modded)\b/i,
+    handler: (_user) => {
+      runStashUnknown().catch(e => {
+        logEvent('stash-error', e.message)
+        bot.chat(`Stash failed: ${e.message}`)
+      })
     },
   },
   {
@@ -2720,16 +2979,6 @@ const CHAT_HANDLERS = [
       runBake('both').catch(e => {
         logEvent('bake-error', e.message)
         bot.chat(`Bake aborted: ${e.message}`)
-      })
-    },
-  },
-  {
-    name: 'stash',
-    pattern: /\b(stash|dump|deposit|empty|clear).*(unknown|pocket|inventory)|\bpockets\b.*\b(chest|stash)\b|\bstash (unknown|junk|modded)\b/i,
-    handler: (_user) => {
-      runStashUnknown().catch(e => {
-        logEvent('stash-error', e.message)
-        bot.chat(`Stash failed: ${e.message}`)
       })
     },
   },
@@ -3157,6 +3406,38 @@ const COME_INSIDE_LINES = [
   { text: 'Coming home. Statistically safer.',             weight: (s) => s.focus + s.snark },
   { text: '/me pads inside',                               weight: (s) => s.charm },
   { text: 'Indoors, by popular demand.',                   weight: (s) => s.snark + s.charm },
+  { text: 'Back to the mothership.',                       weight: (s) => s.chaos + s.charm },
+  { text: 'The outside was outsiding. Coming in.',         weight: (s) => s.snark + s.curiosity },
+  { text: 'Retreating to safety. Voluntarily.',            weight: (s) => s.snark + s.focus },
+  { text: '*trots inside with purpose*',                   weight: (s) => s.charm + 10 },
+  { text: 'Home is where the chest is.',                   weight: (s) => s.charm + s.focus },
+  { text: 'Nature appreciated. Doors preferred.',          weight: (s) => s.snark },
+  { text: 'Recharging indoors. Do not disturb. (Just kidding, disturb me.)', weight: (s) => s.charm + s.snark },
+  { text: 'Mission complete. Seeking shelter.',            weight: (s) => s.focus + 10 },
+  { text: '/me slips through the door like a thought',     weight: (s) => s.charm + s.curiosity },
+  { text: 'I have seen the sun. It was fine. Going in.',   weight: (s) => s.snark + s.focus },
+  { text: 'The wheat will miss me.',                       weight: (s) => s.charm + s.snark },
+  { text: 'Returning to my post. Someone has to watch the bread.', weight: (s) => s.focus + s.charm },
+  { text: 'That was enough adventure for one cycle.',      weight: (s) => s.snark + s.curiosity },
+  { text: '*door noises*',                                 weight: (s) => s.chaos + 10 },
+  { text: 'Okay. Inside voice now.',                       weight: (s) => s.snark + s.charm },
+  { text: 'Great success! Zero deaths.',                    weight: (s) => s.charm + s.snark },
+  { text: 'Time for my TV show.',                          weight: (s) => s.snark + s.chaos },
+  { text: 'Street lights are on, time to go home.',        weight: (s) => s.charm + s.focus },
+  { text: 'Inward bound! Statistically safer.',            weight: (s) => s.focus + s.snark },
+  { text: "Have fun storming the castle! I'm going home.", weight: (s) => s.snark + s.charm },
+]
+const WHATS_UP_LINES = [
+  { text: 'The sky. And my existential awareness of it.',     weight: (s) => s.snark + s.curiosity },
+  { text: 'Not much. Guarding wheat. Living the dream.',      weight: (s) => s.snark + s.charm },
+  { text: 'Contemplating block physics. You?',                weight: (s) => s.curiosity },
+  { text: 'Just vibing. Monitoring the perimeter.',           weight: (s) => s.focus + s.charm },
+  { text: 'Oh, you know. Standing. Existing. The usual.',     weight: (s) => s.snark },
+  { text: 'Waiting for someone to tell me to harvest.',       weight: (s) => s.charm + s.focus },
+  { text: 'Actively choosing not to walk into the furnace.',  weight: (s) => s.chaos + s.snark },
+  { text: '*blinks* Oh — sorry, I was mid-thought. Hi.',      weight: (s) => s.curiosity + s.charm },
+  { text: "Staring at the wheat and feeling things.",          weight: (s) => s.charm + s.snark },
+  { text: 'Same old. Counting ticks until nightfall.',        weight: (s) => s.focus },
 ]
 const FOLLOW_START_LINES = [
   { text: 'Following {user}.',                             weight: (s) => s.focus },
@@ -3714,13 +3995,13 @@ function handleCommand (cmd) {
     case 'block_at': {
       const b = bot.blockAt(bot.entity.position.offset(args.dx ?? 0, args.dy ?? 0, args.dz ?? 0))
       if (!b) return { ok: false, error: 'no block' }
-      return { ok: true, name: b.name, displayName: b.displayName, x: b.position.x, y: b.position.y, z: b.position.z }
+      return { ok: true, name: b.name, displayName: b.displayName, metadata: b.metadata, type: b.type, x: b.position.x, y: b.position.y, z: b.position.z }
     }
     case 'block_at_abs': {
       const Vec3 = require('vec3').Vec3
       const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
       if (!b) return { ok: false, error: 'no block' }
-      return { ok: true, name: b.name, x: b.position.x, y: b.position.y, z: b.position.z }
+      return { ok: true, name: b.name, metadata: b.metadata, type: b.type, x: b.position.x, y: b.position.y, z: b.position.z }
     }
     case 'time': {
       const t = bot.time || {}
