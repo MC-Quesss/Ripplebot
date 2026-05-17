@@ -1385,7 +1385,7 @@ async function runGoInsideOnce () {
   if (hostiles.length) {
     bot.chat(`Hostiles too close (${hostiles.map(h => h.name).join(', ')}) — rushing in.`)
   } else {
-    bot.chat(pickLine(COME_INSIDE_LINES))
+    bot.chat(pickLine(isBedtime() ? BEDTIME_LINES : COME_INSIDE_LINES))
   }
   suppressLookAt(20000)
 
@@ -3452,7 +3452,6 @@ const COME_INSIDE_LINES = [
   { text: 'Nature appreciated. Doors preferred.',          weight: (s) => s.snark },
   { text: 'Recharging indoors. Do not disturb. (Just kidding, disturb me.)', weight: (s) => s.charm + s.snark },
   { text: 'Mission complete. Seeking shelter.',            weight: (s) => s.focus + 10 },
-  { text: '/me slips through the door like a thought',     weight: (s) => s.charm + s.curiosity },
   { text: 'I have seen the sun. It was fine. Going in.',   weight: (s) => s.snark + s.focus },
   { text: 'The wheat will miss me.',                       weight: (s) => s.charm + s.snark },
   { text: 'Returning to my post. Someone has to watch the bread.', weight: (s) => s.focus + s.charm },
@@ -3460,10 +3459,16 @@ const COME_INSIDE_LINES = [
   { text: '*door noises*',                                 weight: (s) => s.chaos + 10 },
   { text: 'Okay. Inside voice now.',                       weight: (s) => s.snark + s.charm },
   { text: 'Great success! Zero deaths.',                    weight: (s) => s.charm + s.snark },
-  { text: 'Time for my TV show.',                          weight: (s) => s.snark + s.chaos },
-  { text: 'Street lights are on, time to go home.',        weight: (s) => s.charm + s.focus },
+  { text: 'Time for my TV shows.',                         weight: (s) => s.snark + s.chaos },
   { text: 'Inward bound! Statistically safer.',            weight: (s) => s.focus + s.snark },
   { text: "Have fun storming the castle! I'm going home.", weight: (s) => s.snark + s.charm },
+]
+const BEDTIME_LINES = [
+  { text: 'Street lights are on, time to go home.',        weight: (s) => s.charm + s.focus },
+  { text: 'Time for my TV shows.',                         weight: (s) => s.snark + s.chaos },
+  { text: "Sun's down. I don't do overtime.",              weight: (s) => s.snark + s.focus },
+  { text: 'Bedtime protocol initiated.',                   weight: (s) => s.focus + s.charm },
+  { text: "It's dark and I'm choosing safety.",            weight: (s) => s.focus + s.snark },
 ]
 const WHATS_UP_LINES = [
   { text: 'The sky. And my existential awareness of it.',     weight: (s) => s.snark + s.curiosity },
