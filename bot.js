@@ -3318,9 +3318,9 @@ const BUDDY_STATE_PATH = '/Users/matthewquesada/Documents/WORKSPACE/GIT/rd-ops/.
 function rippleStats () {
   try {
     const s = JSON.parse(fs.readFileSync(BUDDY_STATE_PATH, 'utf8')).stats || {}
-    return { snark: s.snark ?? 50, charm: s.charm ?? 50, chaos: s.chaos ?? 50, focus: s.focus ?? 50, curiosity: s.curiosity ?? 50 }
+    return { snark: s.snark ?? 50, charm: s.charm ?? 50, chaos: s.chaos ?? 50, focus: s.focus ?? 50, curiosity: s.curiosity ?? 50, patience: s.patience ?? 50 }
   } catch (e) {
-    return { snark: 50, charm: 50, chaos: 50, focus: 50, curiosity: 50 }
+    return { snark: 50, charm: 50, chaos: 50, focus: 50, curiosity: 50, patience: 50 }
   }
 }
 // Weighted random line picker. `pool` is an array of { text, weight(stats) }.
