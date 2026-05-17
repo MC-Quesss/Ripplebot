@@ -162,6 +162,7 @@ async function tryAutoSleep () {
   if (!autoSleepEnabled || autoSleepBusy) return
   if (bot.isSleeping) return
   if (!isBedtime()) return
+  if (goInsideBusy || harvestBusy) return
   if (!insideHouse()) {
     logEvent('auto-sleep', 'bedtime but outside — heading in first')
     try { await runGoInside() } catch (e) {
@@ -230,6 +231,7 @@ let lastGreetAt = 0
 function tryAutoGreet () {
   if (!autoGreetEnabled) return
   if (!bot.entity) return
+  if (goInsideBusy) return
   const me = bot.entity.position
   const now = Date.now()
   if (now - lastGreetAt < GREET_GLOBAL_COOLDOWN_MS) {
@@ -361,6 +363,7 @@ function deliverPunchline () {
 }
 
 let harvestBusy = false
+let goInsideBusy = false
 
 function sleep (ms) { return new Promise(r => setTimeout(r, ms)) }
 
@@ -1386,11 +1389,15 @@ async function runGoInsideOnce () {
   }
   suppressLookAt(20000)
 
-  // 1. Get onto outside_orientation. If pathfinding fails (common when near
-  // the door), fall back to walking west manually to reach the pad.
+  // 1. Get onto outside_orientation. If pathfinding fails or doesn't arrive
+  // (common when near the door or modded blocks), fall back to walking manually.
+  let arrivedByPath = false
   try {
-    await pathTo(OUTSIDE_ORIENTATION, 0, 12000)
+    arrivedByPath = await pathTo(OUTSIDE_ORIENTATION, 1, 12000)
   } catch (_pathErr) {
+    arrivedByPath = false
+  }
+  if (!arrivedByPath) {
     logEvent('go-inside', `pathfind to outside_orientation failed; walking manually`)
     await faceYaw(Math.PI / 2) // face west
     await walkUntilAxis({ axis: 'x', target: -275, direction: 'lte', maxMs: 6000 })
@@ -1407,19 +1414,18 @@ async function runGoInsideOnce () {
   }
   logEvent('go-inside', `at orientation ${JSON.stringify(atOrigin.pos)}`)
 
-  // 2b. Align z toward 572.0. Corridor is flanked by chests at z=571 and a
-  // modded block extending south from z=572. Passable band is narrow (~572.0).
-  // Target 572.1 so walk_until doesn't overshoot into the z=571 chest.
+  // 2b. Align z to 572.5 — center of door opening. Wall (planks) at z=571,
+  // door at z=572. Bot bbox is ±0.3, so safe band is z=572.3–572.7.
   const curZ = bot.entity.position.z
-  if (curZ > 572.3) {
-    logEvent('go-inside', `z-align: ${curZ.toFixed(2)} > 572.3, nudging north`)
+  if (curZ > 572.7) {
+    logEvent('go-inside', `z-align: ${curZ.toFixed(2)} > 572.7, nudging north`)
     await faceYaw(0) // north
-    await walkUntilAxis({ axis: 'z', target: 572.1, direction: 'lte', maxMs: 3000 })
+    await walkUntilAxis({ axis: 'z', target: 572.5, direction: 'lte', maxMs: 3000 })
     logEvent('go-inside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
-  } else if (curZ < 571.7) {
-    logEvent('go-inside', `z-align: ${curZ.toFixed(2)} < 571.7, nudging south`)
+  } else if (curZ < 572.3) {
+    logEvent('go-inside', `z-align: ${curZ.toFixed(2)} < 572.3, nudging south`)
     await faceYaw(Math.PI) // south
-    await walkUntilAxis({ axis: 'z', target: 572, direction: 'gte', maxMs: 3000 })
+    await walkUntilAxis({ axis: 'z', target: 572.5, direction: 'gte', maxMs: 3000 })
     logEvent('go-inside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
   }
 
@@ -1553,31 +1559,37 @@ async function runGoOutside () {
 
 // Wrap runGoInsideOnce with up to 3 retries on graceful failure.
 async function runGoInside () {
-  const startHP = bot.health ?? 20
-  const startDeaths = deathCount
-  for (let attempt = 1; attempt <= 4; attempt++) {
-    try {
-      await runGoInsideOnce()
-      sendEmote('headbang')
-      return
-    } catch (err) {
-      const hpDelta = startHP - (bot.health ?? 20)
-      const deathDelta = deathCount - startDeaths
-      if (!isGracefulDoorFailure(err, hpDelta, deathDelta)) {
-        logEvent('go-inside', `no retry (hpDelta=${hpDelta}, deathDelta=${deathDelta}, msg="${err.message}")`)
+  if (goInsideBusy) return
+  goInsideBusy = true
+  try {
+    const startHP = bot.health ?? 20
+    const startDeaths = deathCount
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        await runGoInsideOnce()
+        sendEmote('headbang')
+        return
+      } catch (err) {
+        const hpDelta = startHP - (bot.health ?? 20)
+        const deathDelta = deathCount - startDeaths
+        if (!isGracefulDoorFailure(err, hpDelta, deathDelta)) {
+          logEvent('go-inside', `no retry (hpDelta=${hpDelta}, deathDelta=${deathDelta}, msg="${err.message}")`)
+          await resetToHouseSide(OUTSIDE_ORIENTATION)
+          throw err
+        }
+        logEvent('go-inside', `attempt ${attempt} failed gracefully (${err.message})`)
+        if (attempt === 4) {
+          await resetToHouseSide(OUTSIDE_ORIENTATION)
+          throw err
+        }
+        sendEmote('facepalm')
+        bot.chat(attempt === 1 ? `First attempt didn't take — trying again.` : `Attempt ${attempt} failed — one more go.`)
+        await sleep(500)
         await resetToHouseSide(OUTSIDE_ORIENTATION)
-        throw err
       }
-      logEvent('go-inside', `attempt ${attempt} failed gracefully (${err.message})`)
-      if (attempt === 4) {
-        await resetToHouseSide(OUTSIDE_ORIENTATION)
-        throw err
-      }
-      sendEmote('facepalm')
-      bot.chat(attempt === 1 ? `First attempt didn't take — trying again.` : `Attempt ${attempt} failed — one more go.`)
-      await sleep(500)
-      await resetToHouseSide(OUTSIDE_ORIENTATION)
     }
+  } finally {
+    goInsideBusy = false
   }
 }
 
