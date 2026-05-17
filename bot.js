@@ -1339,11 +1339,21 @@ async function runGoOutsideOnce () {
   logEvent('go-outside', `yaw locked west at ${yawResult.yaw.toFixed(3)} rad`)
   sendEmote('cheer')
 
-  // 4. Walk_until x ≤ -275, bailing on HP drop or death.
-  // Strafe held through the whole walk clears the door jamb (forward-only
-  // snags the bot on the frame). Configurable via EXIT_STRAFE so we can
-  // A/B 'left' vs 'right' without code edits — see go_outside_test ctl action.
+  // 4. Monkey-patch door collision out, then walk through.
+  const Vec3Exit = require('vec3').Vec3
+  const origGetBlockExit = bot.world.getBlock.bind(bot.world)
+  bot.world.getBlock = (pos) => {
+    const b = origGetBlockExit(pos)
+    if (b && Math.floor(pos.x) === HOUSE_DOOR.x && Math.floor(pos.z) === HOUSE_DOOR.z &&
+        pos.y >= HOUSE_DOOR.y && pos.y <= HOUSE_DOOR.y + 1) {
+      b.shapes = []
+    }
+    return b
+  }
+
   const walk = await walkUntilAxis({ axis: 'x', target: -275, direction: 'lte', maxMs: 8000, bailOnDamage: true, unstickStrafe: EXIT_STRAFE, unstickMs: EXIT_STRAFE_MS })
+
+  bot.world.getBlock = origGetBlockExit
   if (walk.died) throw new Error('died crossing door')
   if (walk.hpDrop) {
     logEvent('go-outside', `HP dropping mid-walk (${bot.health}/20) — retreating to bed`)
@@ -1423,9 +1433,9 @@ async function runGoInsideOnce () {
   logEvent('go-inside', `yaw locked east at ${yawResult.yaw.toFixed(3)} rad`)
 
   // 4. Activate door only if it's closed. Bit 0x04 in metadata = open.
+  const Vec3Enter = require('vec3').Vec3
+  const doorBlock = bot.blockAt(new Vec3Enter(HOUSE_DOOR.x, HOUSE_DOOR.y, HOUSE_DOOR.z))
   try {
-    const Vec3Enter = require('vec3').Vec3
-    const doorBlock = bot.blockAt(new Vec3Enter(HOUSE_DOOR.x, HOUSE_DOOR.y, HOUSE_DOOR.z))
     if (doorBlock) {
       const isOpen = (doorBlock.metadata & 0x04) !== 0
       if (isOpen) {
@@ -1442,8 +1452,23 @@ async function runGoInsideOnce () {
     logEvent('go-inside', `activateBlock fail: ${e.message} — pushing anyway`)
   }
 
-  // 5. Walk_until x ≥ -268. Single push, no strafe.
+  // 5. Monkey-patch getBlock to zero out the door's collision shapes so
+  //    physics doesn't block forward movement through the open door.
+  const origGetBlock = bot.world.getBlock.bind(bot.world)
+  bot.world.getBlock = (pos) => {
+    const b = origGetBlock(pos)
+    if (b && Math.floor(pos.x) === HOUSE_DOOR.x && Math.floor(pos.z) === HOUSE_DOOR.z &&
+        pos.y >= HOUSE_DOOR.y && pos.y <= HOUSE_DOOR.y + 1) {
+      b.shapes = []
+    }
+    return b
+  }
+
+  // 6. Walk_until x ≥ -268. Single push, no strafe.
   const walk = await walkUntilAxis({ axis: 'x', target: -268, direction: 'gte', maxMs: 8000, bailOnDamage: true, unstickStrafe: ENTER_STRAFE, unstickMs: ENTER_STRAFE_MS })
+
+  // Restore original getBlock.
+  bot.world.getBlock = origGetBlock
   if (walk.died) throw new Error('died crossing door')
   if (!walk.reached) throw new Error(`didn't reach house_center (x=${walk.x})`)
 
