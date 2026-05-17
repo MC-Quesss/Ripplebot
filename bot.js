@@ -213,7 +213,6 @@ function startAutoSleep () {
   setInterval(() => {
     tryAutoGreet()
     tryAutoSleep()
-    tossTrash().catch(() => {})
   }, 5000)
 }
 
@@ -396,15 +395,9 @@ async function clearHand () {
 
 const TRASH_ITEMS = new Set(['poisonous_potato'])
 const TRASH_DUMP = { x: -287, y: 63, z: 579 } // far end of potato patch
-let lastTrashRun = 0
 async function tossTrash () {
-  if (insideHouse()) return
   const trash = bot.inventory.items().filter(i => TRASH_ITEMS.has(i.name))
   if (!trash.length) return
-  // Throttle periodic calls to once per 60s so we're not constantly pathing.
-  const now = Date.now()
-  if (now - lastTrashRun < 60000) return
-  lastTrashRun = now
   await pathTo(TRASH_DUMP, 1, 8000)
   for (const it of bot.inventory.items().filter(i => TRASH_ITEMS.has(i.name))) {
     try {
@@ -705,7 +698,8 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
       }
     }
 
-    // Re-enter house and deposit.
+    // Toss trash while still outside, then re-enter house and deposit.
+    await tossTrash()
     if (!insideHouse()) {
       await runGoInside()
       if (deathCount > startDeaths) throw new Error('died entering house')
@@ -736,7 +730,6 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
     harvestBusy = false
     bot.pathfinder.setGoal(null)
     await clearHand()
-    await tossTrash()
   }
 }
 
@@ -867,7 +860,8 @@ async function runHarvestPotatoes ({ user } = {}) {
       logEvent('harvest-potato', `replanted ${replanted}/${farmlandBelow.length}`)
     }
 
-    // Come inside before depositing.
+    // Toss trash while still outside, then come inside before depositing.
+    await tossTrash()
     if (!insideHouse()) {
       await runGoInside()
       if (deathCount > startDeaths) throw new Error('died entering house')
@@ -912,7 +906,6 @@ async function runHarvestPotatoes ({ user } = {}) {
     harvestBusy = false
     bot.pathfinder.setGoal(null)
     await clearHand()
-    await tossTrash()
   }
 }
 
@@ -1019,6 +1012,7 @@ async function runHarvestPotatoesRightClick ({ user } = {}) {
       await pathTo({ x: Math.max(pos.x, SAFE_X_MIN), y: pos.y, z: pos.z }, 1, 4000).catch(() => {})
     }
 
+    await tossTrash()
     if (!insideHouse()) {
       await runGoInside()
       if (deathCount > startDeaths) throw new Error('died entering house')
@@ -1075,7 +1069,6 @@ async function runHarvestPotatoesRightClick ({ user } = {}) {
     harvestBusy = false
     bot.pathfinder.setGoal(null)
     await clearHand()
-    await tossTrash()
   }
 }
 
