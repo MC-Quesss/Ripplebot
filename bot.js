@@ -15,7 +15,6 @@ const auth = process.env.MC_AUTH || 'offline'
 const version = process.env.MC_VERSION || '1.12.2'
 const useForge = process.env.MC_FORGE === 'true'
 const ctrlPort = parseInt(process.env.BOT_CTRL_PORT || '25580', 10)
-const BOT_FRIENDS = new Set((process.env.BOT_FRIENDS || '').split(',').map(s => s.trim()).filter(Boolean))
 const logPath = path.join(__dirname, 'bot.log')
 
 const logStream = fs.createWriteStream(logPath, { flags: 'a' })
@@ -314,11 +313,10 @@ function evaluateFollowChain (targetUsername) {
   if (!targetEntity) return { entity: null, chainPos: 0 }
   const targetPos = targetEntity.position
   const botsInChain = []
-  for (const friendName of BOT_FRIENDS) {
-    const friendEntity = findPlayerEntity(friendName)
-    if (!friendEntity) continue
-    const dist = friendEntity.position.distanceTo(targetPos)
-    if (dist <= 12) botsInChain.push({ username: friendName, entity: friendEntity, dist })
+  for (const [name, p] of Object.entries(bot.players)) {
+    if (name === bot.username || name === targetUsername || !p.entity) continue
+    const dist = p.entity.position.distanceTo(targetPos)
+    if (dist <= 8) botsInChain.push({ username: name, entity: p.entity, dist })
   }
   botsInChain.sort((a, b) => a.dist - b.dist || a.username.localeCompare(b.username))
   const myDist = bot.entity.position.distanceTo(targetPos)
