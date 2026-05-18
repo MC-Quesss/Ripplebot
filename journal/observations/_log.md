@@ -344,6 +344,14 @@ Added `orderNautilusCCW(tiles)` helper in bot.js. Algorithm: walk west along the
 
 **Confirmed working via chat trigger:** user reported "Roz is doing it" after the rewire — chat-triggered right-click harvest now follows the canonical CCW nautilus pattern. No critique on the run, no further changes requested. **The chat-driven farming loop is now feature-complete for wheat.**
 
+## 2026-05-17 — Fix follow-me targeting bug
+
+**Bug:** `findPlayerEntity` had a nearest-player fallback (lines 428-437) that returned the closest entity when the exact username wasn't loaded in `bot.players`. On a multi-bot server, "follow me" from a player whose entity wasn't chunk-loaded caused the bot to follow the other bot instead of the commanding player.
+
+**Fix:** Removed the nearest-player fallback. Function now returns `null` if exact username lookup fails. All 4 callers already handle `null` gracefully (chat follow → `CANT_SEE_LINES`, sticky tick → stops follow, ctl follow → error response, `facePlayer` → `faceNearestPlayer` fallback).
+
+**Root cause:** the fallback was originally added for single-player convenience (so "follow me" worked even if mineflayer hadn't loaded the entity by name). On a multi-bot server, the "closest player" heuristic silently picks the wrong target.
+
 ## 2026-05-14 — End-of-session summary (day 41330)
 
 Big session. Captured here so a future me can scan the highlights without re-reading every log entry.

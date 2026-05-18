@@ -418,27 +418,85 @@ async function tossTrash () {
   }
 }
 
+// Nickname → real username resolution.
+// On modded 1.12.2, chat packets contain only the display name (nickname), but
+// bot.players is keyed by the real username from player_info. We build the map
+// programmatically from two sources:
+// (1) Raw chat packet JSON — server chat plugins embed the real username in
+//     clickEvent/hoverEvent fields (e.g. "/msg Quesss" or "Quesss" in hover).
+// (2) player_info displayName updates from the protocol.
+const nicknameMap = new Map() // lowercase nickname → real username
+
+// Extract nickname→username mapping from raw chat JSON components
+client.on('chat', (packet) => {
+  try {
+    const raw = packet.message
+    const json = typeof raw === 'string' ? JSON.parse(raw) : raw
+    extractNicknamesFromComponent(json)
+  } catch (e) { /* not valid JSON or no useful data — ignore */ }
+})
+
+function extractNicknamesFromComponent (component) {
+  if (!component) return
+  // Recursively walk the component tree looking for nodes with clickEvent or insertion
+  // that contain a real username, while the visible text (in .extra) is a nickname.
+  const walk = (node) => {
+    if (!node || typeof node !== 'object') return
+    // This node has a clickEvent with /msg — the real username is there.
+    // The display name (nickname) is in this node's .extra[].text
+    const click = node.clickEvent?.value
+    const insertion = node.insertion
+    let realName = null
+    if (click) {
+      const match = click.match(/^\/(?:msg|tell|w)\s+(\w+)\s?$/)
+      if (match) realName = match[1]
+    }
+    if (!realName && insertion && /^\w{3,16}$/.test(insertion)) {
+      realName = insertion
+    }
+    if (realName) {
+      // The visible nickname is in nested extra text
+      const displayParts = (node.extra || []).map(e => e.text).filter(Boolean).join('')
+      const displayText = displayParts || node.text
+      if (displayText && displayText.toLowerCase() !== realName.toLowerCase() && displayText.length <= 20) {
+        nicknameMap.set(displayText.toLowerCase(), realName)
+      }
+    }
+    // Recurse
+    if (Array.isArray(node.extra)) node.extra.forEach(walk)
+  }
+  walk(component)
+  if (Array.isArray(component.extra)) component.extra.forEach(walk)
+}
+
+// Also learn from player_info displayName updates
+bot.on('playerUpdated', (oldPlayer, newPlayer) => {
+  if (newPlayer.username === bot.username) return
+  const display = newPlayer.displayName?.toString()
+  if (display && display.toLowerCase() !== newPlayer.username.toLowerCase()) {
+    nicknameMap.set(display.toLowerCase(), newPlayer.username)
+    logEvent('nickname-learned', `"${display}" → ${newPlayer.username} (from player_info)`)
+  }
+})
+
+function resolveUsername (chatName) {
+  if (bot.players[chatName]) return chatName
+  const lower = chatName.toLowerCase()
+  for (const name of Object.keys(bot.players)) {
+    if (name.toLowerCase() === lower) return name
+  }
+  return nicknameMap.get(lower) || null
+}
+
 function findPlayerEntity (username) {
-  const direct = bot.players[username]?.entity
-  if (direct) return direct
-  const lower = username.toLowerCase()
-  for (const [name, p] of Object.entries(bot.players)) {
-    if (name.toLowerCase() === lower && p.entity) return p.entity
-  }
-  const me = bot.entity?.position
-  if (!me) return null
-  let closest = null
-  let closestDist = Infinity
-  for (const [name, p] of Object.entries(bot.players)) {
-    if (name === bot.username || !p.entity) continue
-    const d = p.entity.position.distanceTo(me)
-    if (d < closestDist) { closest = p.entity; closestDist = d }
-  }
-  return closestDist <= 16 ? closest : null
+  const realName = resolveUsername(username)
+  if (!realName) return null
+  return bot.players[realName]?.entity || null
 }
 
 async function facePlayer (username) {
-  let player = bot.players[username]
+  const realName = resolveUsername(username)
+  let player = realName ? bot.players[realName] : null
   if (!player?.entity) {
     await faceNearestPlayer()
     return
@@ -3600,7 +3658,12 @@ const CANT_SEE_LINES = [
 bot.on('playerJoined', (player) => {
   if (!player || player.username === bot.username) return
   logEvent('player-joined', player.username)
-  // Defer greet to the existing tryAutoGreet proximity path; don't double up here.
+  // Check displayName on join for nickname mapping
+  const display = player.displayName?.toString()
+  if (display && display.toLowerCase() !== player.username.toLowerCase()) {
+    nicknameMap.set(display.toLowerCase(), player.username)
+    logEvent('nickname-learned', `"${display}" → ${player.username} (from join)`)
+  }
 })
 bot.on('playerLeft', (player) => {
   if (!player || player.username === bot.username) return
