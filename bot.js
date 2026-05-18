@@ -418,10 +418,28 @@ async function tossTrash () {
   }
 }
 
+function findPlayerEntity (username) {
+  const direct = bot.players[username]?.entity
+  if (direct) return direct
+  const lower = username.toLowerCase()
+  for (const [name, p] of Object.entries(bot.players)) {
+    if (name.toLowerCase() === lower && p.entity) return p.entity
+  }
+  const me = bot.entity?.position
+  if (!me) return null
+  let closest = null
+  let closestDist = Infinity
+  for (const [name, p] of Object.entries(bot.players)) {
+    if (name === bot.username || !p.entity) continue
+    const d = p.entity.position.distanceTo(me)
+    if (d < closestDist) { closest = p.entity; closestDist = d }
+  }
+  return closestDist <= 16 ? closest : null
+}
+
 async function facePlayer (username) {
   let player = bot.players[username]
   if (!player?.entity) {
-    // Nickname doesn't match player key — fall back to nearest player.
     await faceNearestPlayer()
     return
   }
@@ -440,13 +458,14 @@ async function faceNearestPlayer () {
   if (closest) await facePlayer(closest)
 }
 
-async function pathTo (pt, range = 1, waitMs = 15000, myGen) {
+async function pathTo (pt, range = 1, waitMs = 15000) {
+  const startGen = abortGen
   const goal = new goals.GoalNear(pt.x, pt.y, pt.z, range)
   bot.pathfinder.setGoal(goal)
   const start = Date.now()
   while (Date.now() - start < waitMs) {
     await sleep(400)
-    if (myGen != null && abortGen !== myGen) { bot.pathfinder.setGoal(null); throw new AbortError() }
+    if (abortGen !== startGen) { bot.pathfinder.setGoal(null); throw new AbortError() }
     if (!bot.pathfinder.isMoving()) break
   }
   return !bot.pathfinder.isMoving()
@@ -707,7 +726,7 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
       for (const x of xs) {
         checkAbort(myGen)
         if (deathCount > startDeaths) throw new Error('died during sweep')
-        await pathTo({ x, y: 64, z }, 1, 4000, myGen).catch(e => { if (e.name === 'AbortError') throw e })
+        await pathTo({ x, y: 64, z }, 1, 4000)
       }
     }
 
@@ -840,7 +859,7 @@ async function runHarvestPotatoes ({ user } = {}) {
     for (const pt of POTATO_SWEEP_POINTS) {
       checkAbort(myGen)
       if (deathCount > startDeaths) throw new Error('died during sweep')
-      await pathTo(pt, 0, 5000, myGen)
+      await pathTo(pt, 0, 5000)
     }
 
     // Replant — equip potato, place on each farmland tile.
@@ -1029,7 +1048,7 @@ async function runHarvestPotatoesRightClick ({ user } = {}) {
     for (const pos of ordered) {
       checkAbort(myGen)
       if (deathCount > startDeaths) throw new Error('died during sweep')
-      await pathTo({ x: Math.max(pos.x, SAFE_X_MIN), y: pos.y, z: pos.z }, 1, 4000, myGen).catch(e => { if (e.name === 'AbortError') throw e })
+      await pathTo({ x: Math.max(pos.x, SAFE_X_MIN), y: pos.y, z: pos.z }, 1, 4000)
     }
 
     await tossTrash()
@@ -2825,25 +2844,21 @@ const CHAT_HANDLERS = [
     },
   },
   {
-    name: 'come',
-    pattern: /\b(come here|come to me|come over)\b/i,
-    handler: (user) => {
-      abortGen++
-      const target = bot.players[user]?.entity
-      if (!target) { bot.chat(pickLine(CANT_SEE_LINES, { user })); return }
-      bot.pathfinder.setGoal(new goals.GoalNear(target.position.x, target.position.y, target.position.z, 2))
-      bot.chat(`On my way, ${user}.`)
-    },
-  },
-  {
     name: 'follow',
     pattern: /\bfollow me\b/i,
     handler: (user) => {
       abortGen++
-      const target = bot.players[user]?.entity
+      const target = findPlayerEntity(user)
       if (!target) { bot.chat(pickLine(CANT_SEE_LINES, { user })); return }
-      followTarget = user
       bot.chat(pickLine(FOLLOW_START_LINES, { user }))
+      const startFollow = async () => {
+        if (insideHouse()) await runGoOutside()
+        followTarget = user
+      }
+      startFollow().catch(e => {
+        if (e.name === 'AbortError') return
+        logEvent('follow', `couldn't exit house: ${e.message}`)
+      })
     },
   },
   {
@@ -3267,6 +3282,7 @@ function extractMySegment (message) {
   return mine || message
 }
 const LOVE_RE = /\bi love you\b/i
+const BYE_RE = /\b(bye|bye bye|goodbye|good bye|see ya|see you|later|peace out|ok bye|cya|ttyl|take care)\b/i
 bot.on('chat', (username, message) => {
   if (username === bot.username) return
   logEvent('chat', `<${username}> ${message}`)
@@ -3281,7 +3297,21 @@ bot.on('chat', (username, message) => {
     logEvent('chat-handled', `love <- <${username}> ${message}`)
     return
   }
+  // Farewell from the player we're following ends the follow.
+  if (followTarget && username === followTarget && BYE_RE.test(message)) {
+    abortGen++
+    bot.pathfinder.setGoal(null)
+    followTarget = null
+    bot.chat(pickFarewell())
+    logEvent('chat-handled', `bye <- <${username}> ${message}`)
+    return
+  }
   if (!nickRe || !nickRe.test(message)) return
+  // Any directed command from the followed player ends the follow.
+  if (followTarget && username === followTarget) {
+    bot.pathfinder.setGoal(null)
+    followTarget = null
+  }
   // Multi-command: extract only the sentence directed at this bot
   const myMessage = extractMySegment(message)
   const stripped = myMessage.replace(nickRe, ' ').trim()
@@ -3322,7 +3352,8 @@ bot.on('whisper', (username, message) => {
 // every tick until they log off or someone says "stop".
 bot.on('physicsTick', () => {
   if (!followTarget) return
-  const e = bot.players[followTarget]?.entity
+  if (insideHouse()) return
+  const e = findPlayerEntity(followTarget)
   if (!e) return
   if (!bot.pathfinder.isMoving() || !(bot.pathfinder.goal instanceof goals.GoalFollow)) {
     bot.pathfinder.setGoal(new goals.GoalFollow(e, 2), true)
@@ -4163,7 +4194,7 @@ function handleCommand (cmd) {
         bot.pathfinder.setGoal(null)
         return { ok: true, following: null }
       }
-      const target = bot.players[args.username]?.entity
+      const target = findPlayerEntity(args.username)
       if (!target) return { ok: false, error: `can't see player: ${args.username}` }
       followTarget = args.username
       return { ok: true, following: followTarget }
