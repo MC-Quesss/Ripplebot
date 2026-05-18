@@ -15,6 +15,7 @@ const auth = process.env.MC_AUTH || 'offline'
 const version = process.env.MC_VERSION || '1.12.2'
 const useForge = process.env.MC_FORGE === 'true'
 const ctrlPort = parseInt(process.env.BOT_CTRL_PORT || '25580', 10)
+const BOT_FRIENDS = new Set((process.env.BOT_FRIENDS || '').split(',').map(s => s.trim()).filter(Boolean))
 const logPath = path.join(__dirname, 'bot.log')
 
 const logStream = fs.createWriteStream(logPath, { flags: 'a' })
@@ -283,8 +284,54 @@ bot.on('spawn', () => {
 // false/undefined to let later handlers try.
 let NICKNAME = process.env.MC_NICKNAME || null // resolved after login if not set
 let followTarget = null // username currently being followed, or null
+let followEntity = null // actual entity being trailed (player or bot ahead in chain)
+let followChainPos = 0  // 0 = not following, 1 = following player directly, 2+ = following a bot
+let lastChainEval = 0   // timestamp of last chain re-evaluation
 
 function posStr (p) { return `${p.x.toFixed(0)}, ${p.y.toFixed(0)}, ${p.z.toFixed(0)}` }
+
+// ── Entity awareness helpers ────────────────────────────────────────────────
+
+function nearbyPlayers (radius = 3) {
+  if (!bot.entity) return []
+  const me = bot.entity.position
+  return Object.values(bot.players)
+    .filter(p => p.username !== bot.username && p.entity && p.entity.position.distanceTo(me) <= radius)
+    .map(p => ({ username: p.username, entity: p.entity, dist: p.entity.position.distanceTo(me) }))
+    .sort((a, b) => a.dist - b.dist)
+}
+
+function isPositionOccupied (pos, excludeUsername = null) {
+  for (const [name, p] of Object.entries(bot.players)) {
+    if (name === bot.username || name === excludeUsername || !p.entity) continue
+    if (p.entity.position.distanceTo(pos) < 1.0) return name
+  }
+  return null
+}
+
+function evaluateFollowChain (targetUsername) {
+  const targetEntity = findPlayerEntity(targetUsername)
+  if (!targetEntity) return { entity: null, chainPos: 0 }
+  const targetPos = targetEntity.position
+  const botsInChain = []
+  for (const friendName of BOT_FRIENDS) {
+    const friendEntity = findPlayerEntity(friendName)
+    if (!friendEntity) continue
+    const dist = friendEntity.position.distanceTo(targetPos)
+    if (dist <= 12) botsInChain.push({ username: friendName, entity: friendEntity, dist })
+  }
+  botsInChain.sort((a, b) => a.dist - b.dist || a.username.localeCompare(b.username))
+  const myDist = bot.entity.position.distanceTo(targetPos)
+  let chainPos = 1
+  for (const b of botsInChain) {
+    if (b.dist < myDist || (Math.abs(b.dist - myDist) < 0.5 && b.username < bot.username)) {
+      chainPos++
+    }
+  }
+  if (chainPos === 1) return { entity: targetEntity, chainPos: 1 }
+  const ahead = botsInChain[chainPos - 2]
+  return { entity: ahead?.entity || targetEntity, chainPos }
+}
 
 // ── Harvest + replant (codifies places.md) ───────────────────────────────
 // Harvests wheat (optionally filtered to north/south half), then replants
@@ -497,7 +544,17 @@ async function faceNearestPlayer () {
 
 async function pathTo (pt, range = 1, waitMs = 15000) {
   const startGen = abortGen
-  const goal = new goals.GoalNear(pt.x, pt.y, pt.z, range)
+  let tx = pt.x, tz = pt.z
+  const Vec3 = require('vec3').Vec3
+  if (range <= 1 && isPositionOccupied(new Vec3(pt.x, pt.y, pt.z))) {
+    const offsets = [{x:1,z:0},{x:-1,z:0},{x:0,z:1},{x:0,z:-1}]
+    for (const off of offsets) {
+      if (!isPositionOccupied(new Vec3(pt.x + off.x, pt.y, pt.z + off.z))) {
+        tx = pt.x + off.x; tz = pt.z + off.z; break
+      }
+    }
+  }
+  const goal = new goals.GoalNear(tx, pt.y, tz, range)
   bot.pathfinder.setGoal(goal)
   const start = Date.now()
   while (Date.now() - start < waitMs) {
@@ -2891,6 +2948,9 @@ const CHAT_HANDLERS = [
       const startFollow = async () => {
         if (insideHouse()) await runGoOutside()
         followTarget = user
+        followEntity = null
+        followChainPos = 0
+        lastChainEval = 0
       }
       startFollow().catch(e => {
         if (e.name === 'AbortError') return
@@ -2907,7 +2967,7 @@ const CHAT_HANDLERS = [
       ;['forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak'].forEach(s => bot.setControlState(s, false))
       if (followTarget) {
         bot.chat(pickLine(STOP_FOLLOW_LINES, { user: followTarget }))
-        followTarget = null
+        followTarget = null; followEntity = null; followChainPos = 0
       } else {
         bot.chat(pickLine(STOP_LINES))
       }
@@ -3338,7 +3398,7 @@ bot.on('chat', (username, message) => {
   if (followTarget && username === followTarget && BYE_RE.test(message)) {
     abortGen++
     bot.pathfinder.setGoal(null)
-    followTarget = null
+    followTarget = null; followEntity = null; followChainPos = 0
     bot.chat(pickFarewell())
     logEvent('chat-handled', `bye <- <${username}> ${message}`)
     return
@@ -3347,7 +3407,7 @@ bot.on('chat', (username, message) => {
   // Any directed command from the followed player ends the follow.
   if (followTarget && username === followTarget) {
     bot.pathfinder.setGoal(null)
-    followTarget = null
+    followTarget = null; followEntity = null; followChainPos = 0
   }
   // Multi-command: extract only the sentence directed at this bot
   const myMessage = extractMySegment(message)
@@ -3385,15 +3445,45 @@ bot.on('whisper', (username, message) => {
 
 // ── Tier-1 reflexes ───────────────────────────────────────────────────────
 
-// Sticky follow: once someone says "follow me", maintain a GoalFollow on them
-// every tick until they log off or someone says "stop".
+// Anti-stack: if standing still and another entity is in the same block, nudge away.
+let lastAntiStackCheck = 0
+bot.on('physicsTick', () => {
+  const now = Date.now()
+  if (now - lastAntiStackCheck < 2000) return
+  lastAntiStackCheck = now
+  if (bot.pathfinder.isMoving()) return
+  if (followTarget) return
+  const me = bot.entity?.position
+  if (!me) return
+  const tooClose = nearbyPlayers(0.8)
+  if (tooClose.length === 0) return
+  const other = tooClose[0].entity.position
+  const dx = me.x - other.x
+  const dz = me.z - other.z
+  const d = Math.sqrt(dx * dx + dz * dz) || 0.1
+  bot.pathfinder.setGoal(new goals.GoalNear(me.x + (dx / d) * 1.5, me.y, me.z + (dz / d) * 1.5, 0), true)
+})
+
+// Caravan follow: form an ordered chain behind the target player.
 bot.on('physicsTick', () => {
   if (!followTarget) return
   if (insideHouse()) return
-  const e = findPlayerEntity(followTarget)
-  if (!e) return
+  const now = Date.now()
+  if (now - lastChainEval > 3000 || !followEntity) {
+    lastChainEval = now
+    const chain = evaluateFollowChain(followTarget)
+    if (!chain.entity) {
+      followTarget = null; followEntity = null; followChainPos = 0
+      bot.pathfinder.setGoal(null)
+      return
+    }
+    followEntity = chain.entity
+    followChainPos = chain.chainPos
+  }
+  if (!followEntity) return
+  const followDist = followChainPos === 1 ? 2 : 3
   if (!bot.pathfinder.isMoving() || !(bot.pathfinder.goal instanceof goals.GoalFollow)) {
-    bot.pathfinder.setGoal(new goals.GoalFollow(e, 2), true)
+    bot.pathfinder.setGoal(new goals.GoalFollow(followEntity, followDist), true)
   }
 })
 
@@ -3412,7 +3502,7 @@ bot.on('entityHurt', (entity) => {
   if (bot.health <= 6) {
     bot.chat('Taking damage — breaking off!')
     bot.pathfinder.setGoal(null)
-    followTarget = null
+    followTarget = null; followEntity = null; followChainPos = 0
   }
 })
 
@@ -3749,12 +3839,23 @@ function handleCommand (cmd) {
     }
     case 'pathfind': {
       // args: { x, y, z, range? } — walk to a point. If range provided, GoalNear; else GoalBlock.
-      const { x, y, z, range } = args
-      const goal = range !== undefined
-        ? new goals.GoalNear(Number(x), Number(y), Number(z), Number(range))
-        : new goals.GoalBlock(Number(x), Number(y), Number(z))
+      let { x, y, z, range } = args
+      x = Number(x); y = Number(y); z = Number(z)
+      const Vec3pf = require('vec3').Vec3
+      const pfRange = range !== undefined ? Number(range) : 0
+      if (pfRange <= 1 && isPositionOccupied(new Vec3pf(x, y, z))) {
+        const offsets = [{x:1,z:0},{x:-1,z:0},{x:0,z:1},{x:0,z:-1}]
+        for (const off of offsets) {
+          if (!isPositionOccupied(new Vec3pf(x + off.x, y, z + off.z))) {
+            x += off.x; z += off.z; break
+          }
+        }
+      }
+      const goal = pfRange > 0
+        ? new goals.GoalNear(x, y, z, pfRange)
+        : new goals.GoalBlock(x, y, z)
       bot.pathfinder.setGoal(goal)
-      return { ok: true, goal: `(${x},${y},${z}) range=${range ?? 0}` }
+      return { ok: true, goal: `(${x},${y},${z}) range=${pfRange}` }
     }
     case 'pathfind_status': {
       const g = bot.pathfinder.goal
@@ -4226,13 +4327,14 @@ function handleCommand (cmd) {
     case 'follow': {
       // args: { username }  — start following named player. Omit username to stop.
       if (!args.username) {
-        followTarget = null
+        followTarget = null; followEntity = null; followChainPos = 0
         bot.pathfinder.setGoal(null)
         return { ok: true, following: null }
       }
       const target = findPlayerEntity(args.username)
       if (!target) return { ok: false, error: `can't see player: ${args.username}` }
       followTarget = args.username
+      followEntity = null; followChainPos = 0; lastChainEval = 0
       return { ok: true, following: followTarget }
     }
     case 'chat_rules': {
