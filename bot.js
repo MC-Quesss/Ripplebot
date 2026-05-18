@@ -162,7 +162,7 @@ async function tryAutoSleep () {
   if (!autoSleepEnabled || autoSleepBusy) return
   if (bot.isSleeping) return
   if (!isBedtime()) return
-  if (goInsideBusy || harvestBusy) return
+  if (goInsideBusy || harvestBusy || bakeBusy) return
   if (!insideHouse()) {
     logEvent('auto-sleep', 'bedtime but outside — heading in first')
     try { await runGoInside() } catch (e) {
@@ -365,6 +365,12 @@ function deliverPunchline () {
 let harvestBusy = false
 let goInsideBusy = false
 
+let abortGen = 0
+class AbortError extends Error {
+  constructor () { super('aborted'); this.name = 'AbortError' }
+}
+function checkAbort (myGen) { if (abortGen !== myGen) throw new AbortError() }
+
 function sleep (ms) { return new Promise(r => setTimeout(r, ms)) }
 
 const POTATO_ASK_LINES = [
@@ -434,12 +440,13 @@ async function faceNearestPlayer () {
   if (closest) await facePlayer(closest)
 }
 
-async function pathTo (pt, range = 1, waitMs = 15000) {
+async function pathTo (pt, range = 1, waitMs = 15000, myGen) {
   const goal = new goals.GoalNear(pt.x, pt.y, pt.z, range)
   bot.pathfinder.setGoal(goal)
   const start = Date.now()
   while (Date.now() - start < waitMs) {
     await sleep(400)
+    if (myGen != null && abortGen !== myGen) { bot.pathfinder.setGoal(null); throw new AbortError() }
     if (!bot.pathfinder.isMoving()) break
   }
   return !bot.pathfinder.isMoving()
@@ -606,6 +613,7 @@ function orderNautilusCCW (tiles) {
 async function runHarvestRightClick ({ half = 'all', user } = {}) {
   if (harvestBusy) { bot.chat('Already harvesting — one at a time.'); return }
   harvestBusy = true
+  const myGen = abortGen
   try {
     const t = bot.time || {}
     if (!t.isDay || (t.timeOfDay ?? 0) >= 11500) {
@@ -676,6 +684,7 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
       } catch (e) { logEvent('harvest-rc', `activate fail ${pos.x},${pos.z}: ${e.message}`) }
 
       if ((i + 1) % 10 === 0) {
+        checkAbort(myGen)
         if (deathCount > startDeaths) throw new Error('died mid-harvest')
         if (bot.health != null && bot.health < 10) throw new Error(`HP low (${bot.health}) — aborting`)
         if (hostilesNearby(10).length) throw new Error('hostiles approaching')
@@ -696,8 +705,9 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
         : [-287,-286,-285,-284,-283,-282,-281,-280,-279]
       sweepIdx++
       for (const x of xs) {
+        checkAbort(myGen)
         if (deathCount > startDeaths) throw new Error('died during sweep')
-        await pathTo({ x, y: 64, z }, 1, 4000).catch(() => {})
+        await pathTo({ x, y: 64, z }, 1, 4000, myGen).catch(e => { if (e.name === 'AbortError') throw e })
       }
     }
 
@@ -748,6 +758,7 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
 async function runHarvestPotatoes ({ user } = {}) {
   if (harvestBusy) { bot.chat('Already harvesting — one at a time.'); return }
   harvestBusy = true
+  const myGen = abortGen
   try {
     // Pre-flight safety (same gates as wheat harvest)
     const t = bot.time || {}
@@ -816,6 +827,7 @@ async function runHarvestPotatoes ({ user } = {}) {
         logEvent('harvest-potato', `dig fail ${pos.x},${pos.y},${pos.z}: ${e.message}`)
       }
       if ((i + 1) % 5 === 0) {
+        checkAbort(myGen)
         if (deathCount > startDeaths) throw new Error('died mid-harvest')
         if (bot.health != null && bot.health < 10) throw new Error(`HP low (${bot.health}) — aborting`)
         if (hostilesNearby(10).length) throw new Error('hostiles approaching')
@@ -826,8 +838,9 @@ async function runHarvestPotatoes ({ user } = {}) {
     // Sweep the patch to collect drops.
     bot.chat(`Harvested ${dug}. Sweeping for drops…`)
     for (const pt of POTATO_SWEEP_POINTS) {
+      checkAbort(myGen)
       if (deathCount > startDeaths) throw new Error('died during sweep')
-      await pathTo(pt, 0, 5000)
+      await pathTo(pt, 0, 5000, myGen)
     }
 
     // Replant — equip potato, place on each farmland tile.
@@ -842,6 +855,7 @@ async function runHarvestPotatoes ({ user } = {}) {
       }
       let replanted = 0
       for (let i = 0; i < farmlandBelow.length; i++) {
+        checkAbort(myGen)
         const pos = farmlandBelow[i]
         try {
           // Need a potato in hand each time; re-equip if something auto-ate.
@@ -921,6 +935,7 @@ async function runHarvestPotatoes ({ user } = {}) {
 async function runHarvestPotatoesRightClick ({ user } = {}) {
   if (harvestBusy) { bot.chat('Already harvesting — one at a time.'); return }
   harvestBusy = true
+  const myGen = abortGen
   try {
     const t = bot.time || {}
     if (!t.isDay || (t.timeOfDay ?? 0) >= 11500) {
@@ -1000,6 +1015,7 @@ async function runHarvestPotatoesRightClick ({ user } = {}) {
       } catch (e) { logEvent('harvest-potato-rc', `activate fail ${pos.x},${pos.z}: ${e.message}`) }
 
       if ((i + 1) % 10 === 0) {
+        checkAbort(myGen)
         if (deathCount > startDeaths) throw new Error('died mid-harvest')
         if (bot.health != null && bot.health < 10) throw new Error(`HP low (${bot.health}) — aborting`)
         if (hostilesNearby(10).length) throw new Error('hostiles approaching')
@@ -1011,8 +1027,9 @@ async function runHarvestPotatoesRightClick ({ user } = {}) {
     // ground when the bot activates from 2-3 blocks away.
     bot.chat(`Activated ${activated}, harvested ${harvested} mature. Sweep…`)
     for (const pos of ordered) {
+      checkAbort(myGen)
       if (deathCount > startDeaths) throw new Error('died during sweep')
-      await pathTo({ x: Math.max(pos.x, SAFE_X_MIN), y: pos.y, z: pos.z }, 1, 4000).catch(() => {})
+      await pathTo({ x: Math.max(pos.x, SAFE_X_MIN), y: pos.y, z: pos.z }, 1, 4000, myGen).catch(e => { if (e.name === 'AbortError') throw e })
     }
 
     await tossTrash()
@@ -1200,7 +1217,43 @@ async function runBakePotatoes ({ user } = {}) {
     const waitMin = (waitMs / 60000).toFixed(1)
     bot.chat(`Walking away to let ${put} bake (~${waitMin} min). Will collect at the end.`)
     logEvent('bake-potato', `wait_ms=${waitMs} (single take-all-at-end)`)
-    await sleep(waitMs)
+    // Chunked wait: check for bedtime every 15s and yield to bed if needed
+    {
+      const Vec3 = require('vec3').Vec3
+      let sleptInBed = false
+      const deadline = Date.now() + waitMs
+      while (Date.now() < deadline) {
+        const chunk = Math.min(deadline - Date.now(), 15000)
+        await sleep(chunk)
+        if (autoSleepEnabled && !bot.isSleeping && isBedtime() && insideHouse()) {
+          logEvent('bake-sleep', 'bedtime during furnace wait — going to bed')
+          try {
+            const BEDS = [
+              { label: 'primary', pos: BED_POS, approach: BED_APPROACH },
+              { label: 'left', pos: BED_POS_LEFT, approach: BED_APPROACH_LEFT },
+            ]
+            for (const b of BEDS) {
+              if (bot.isSleeping) break
+              await pathTo(b.approach, 1, 8000)
+              const bed = bot.blockAt(new Vec3(b.pos.x, b.pos.y, b.pos.z))
+              if (!bed) continue
+              try { await bot.activateBlock(bed) } catch (e) { continue }
+              await sleep(1000)
+              if (bot.isSleeping) { logEvent('bake-sleep', `in ${b.label} bed`); break }
+            }
+            if (bot.isSleeping) {
+              sleptInBed = true
+              const wakeDeadline = Date.now() + 600000
+              while (bot.isSleeping && Date.now() < wakeDeadline) await sleep(2000)
+              logEvent('bake-sleep', 'woke up, resuming furnace wait')
+            }
+          } catch (e) {
+            logEvent('bake-sleep', `sleep during bake failed: ${e.message}`)
+          }
+        }
+      }
+      if (sleptInBed) await pathTo(HARVEST_WAYPOINTS.furnace, 2, 8000)
+    }
 
     let takenTotal = 0
     try {
@@ -2804,6 +2857,7 @@ const CHAT_HANDLERS = [
     name: 'come',
     pattern: /\b(come here|come to me|come over)\b/i,
     handler: (user) => {
+      abortGen++
       const target = bot.players[user]?.entity
       if (!target) { bot.chat(pickLine(CANT_SEE_LINES, { user })); return }
       bot.pathfinder.setGoal(new goals.GoalNear(target.position.x, target.position.y, target.position.z, 2))
@@ -2814,6 +2868,7 @@ const CHAT_HANDLERS = [
     name: 'follow',
     pattern: /\bfollow me\b/i,
     handler: (user) => {
+      abortGen++
       const target = bot.players[user]?.entity
       if (!target) { bot.chat(pickLine(CANT_SEE_LINES, { user })); return }
       followTarget = user
@@ -2824,6 +2879,7 @@ const CHAT_HANDLERS = [
     name: 'stop',
     pattern: /\b(stop|stay|halt|wait there|hold up)\b/i,
     handler: (_user) => {
+      abortGen++
       bot.pathfinder.setGoal(null)
       ;['forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak'].forEach(s => bot.setControlState(s, false))
       if (followTarget) {
@@ -2940,7 +2996,9 @@ const CHAT_HANDLERS = [
     name: 'go_to_pen',
     pattern: /\b(go|head|get|come|step)\s+(to|into|in|see|check on)\s+(the\s+)?(sheep\s*pen|pen|sheep)\b|\benter\s+(the\s+)?(pen|sheep\s*pen)\b|\b(visit|see)\s+(the\s+)?sheep\b/i,
     handler: (_user) => {
+      abortGen++
       runEnterPen().catch(e => {
+        if (e.name === 'AbortError') return
         logEvent('enter-pen-error', e.message)
         bot.chat(`Can't enter pen: ${e.message}`)
       })
@@ -2950,7 +3008,9 @@ const CHAT_HANDLERS = [
     name: 'shear_sheep',
     pattern: /\b(shear|shave|clip)\s+(the\s+)?sheep\b|\b(get|collect|gather)\s+(some\s+)?wool\b/i,
     handler: (_user) => {
+      abortGen++
       runShearSheep().catch(e => {
+        if (e.name === 'AbortError') return
         logEvent('shear-error', e.message)
         bot.chat(`Can't shear: ${e.message}`)
       })
@@ -2960,7 +3020,9 @@ const CHAT_HANDLERS = [
     name: 'leave_pen',
     pattern: /\b(leave|exit|get out of|come out of)\s+(the\s+)?(sheep\s*pen|pen)\b|\b(come|go|step|get)\s+(out|away)\s+(of\s+)?(the\s+)?(pen|sheep)\b/i,
     handler: (_user) => {
+      abortGen++
       runLeavePen().catch(e => {
+        if (e.name === 'AbortError') return
         logEvent('leave-pen-error', e.message)
         bot.chat(`Can't leave pen: ${e.message}`)
       })
@@ -2970,7 +3032,9 @@ const CHAT_HANDLERS = [
     name: 'go_outside',
     pattern: /\b(go|head|step|get|come)\s+(outside|out|outdoors)\b|\b(leave|exit)\s+(the\s+)?(house|building)\b/i,
     handler: (_user) => {
+      abortGen++
       runGoOutside().catch(e => {
+        if (e.name === 'AbortError') return
         logEvent('go-outside-error', e.message)
         bot.chat(`Can't go out: ${e.message}`)
       })
@@ -2980,11 +3044,13 @@ const CHAT_HANDLERS = [
     name: 'come_inside',
     pattern: /\b(come|go|head|step|get)\s+(back\s+)?(inside|in|indoors|home)\b|\b(enter|return to)\s+(the\s+)?(house|building)\b/i,
     handler: (_user) => {
+      abortGen++
       const go = async () => {
         if (inPen()) await runLeavePen()
         await runGoInside()
       }
       go().catch(e => {
+        if (e.name === 'AbortError') return
         logEvent('go-inside-error', e.message)
         bot.chat(`Can't come in: ${e.message}`)
       })
@@ -3028,7 +3094,9 @@ const CHAT_HANDLERS = [
     name: 'bake-potato',
     pattern: /\b(bake|cook|smelt|roast)\b.*\bpotato(es)?\b/i,
     handler: (user) => {
+      abortGen++
       runBakePotatoes({ user }).catch(e => {
+        if (e.name === 'AbortError') return
         logEvent('bake-potato-error', e.message)
         bot.chat(`Potato bake aborted: ${e.message}`)
       })
@@ -3042,7 +3110,9 @@ const CHAT_HANDLERS = [
     name: 'harvest-potato',
     pattern: /\b(go|get|grab|harvest|dig|pick)\b.*\bpotato(es)?\b/i,
     handler: (user) => {
+      abortGen++
       runHarvestPotatoesRightClick({ user }).catch(e => {
+        if (e.name === 'AbortError') return
         logEvent('harvest-potato-rc-error', e.message)
         bot.chat(`Potato run aborted: ${e.message}`)
       })
@@ -3106,10 +3176,12 @@ const CHAT_HANDLERS = [
     name: 'harvest',
     pattern: /\b(harvest|cut|reap)\b.*\b(wheat|field|crops?)\b|\b(harvest|cut|reap)( (the|some))?\b(?!.*(bed|meat|potato))/i,
     handler: (user, stripped) => {
+      abortGen++
       let half = 'all'
       if (/\bnorth\b/i.test(stripped)) half = 'north'
       else if (/\bsouth\b/i.test(stripped)) half = 'south'
       runHarvestRightClick({ half, user }).catch(e => {
+        if (e.name === 'AbortError') return
         logEvent('harvest-rc-error', e.message)
         bot.chat(`Harvest aborted: ${e.message}`)
       })
@@ -3216,6 +3288,13 @@ bot.on('login', () => {
   nickRe = new RegExp(`(^|\\W)${NICKNAME}($|\\W)`, 'i')
   logEvent('nickname', `responding to "${NICKNAME}"`)
 })
+
+function extractMySegment (message) {
+  const sentences = message.split(/[.;!?]\s+/)
+  if (sentences.length <= 1) return message
+  const mine = sentences.find(s => nickRe && nickRe.test(s))
+  return mine || message
+}
 const LOVE_RE = /\bi love you\b/i
 bot.on('chat', (username, message) => {
   if (username === bot.username) return
@@ -3232,8 +3311,9 @@ bot.on('chat', (username, message) => {
     return
   }
   if (!nickRe || !nickRe.test(message)) return
-  // Message is addressed by nickname — try the dispatcher
-  const stripped = message.replace(nickRe, ' ').trim()
+  // Multi-command: extract only the sentence directed at this bot
+  const myMessage = extractMySegment(message)
+  const stripped = myMessage.replace(nickRe, ' ').trim()
   for (const rule of CHAT_HANDLERS) {
     if (rule.pattern.test(stripped)) {
       // If message starts with a greeting but matched a non-greeting handler,
@@ -3589,6 +3669,8 @@ function handleCommand (cmd) {
       return { ok: true }
     }
     case 'stop': {
+      abortGen++
+      bot.pathfinder.setGoal(null)
       ;['forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak'].forEach(s => bot.setControlState(s, false))
       return { ok: true }
     }
