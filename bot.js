@@ -1866,9 +1866,8 @@ async function runLeavePen () {
   }
 }
 
-// Ensure shears are in inventory. Checks inventory first, then chest slot 36,
-// then crafts from iron ingots at chest slot 45. Must be called BEFORE entering
-// the pen (needs chest access). Returns true if shears are ready.
+// Ensure shears are in inventory. Checks inventory first; if missing (broken),
+// crafts a new pair from iron ingots in chest slot 45.
 async function ensureShears () {
   const existing = bot.inventory.items().find(i => i.name === 'shears')
   if (existing) {
@@ -1876,40 +1875,22 @@ async function ensureShears () {
     return true
   }
 
-  // Try withdrawing from the chest.
+  // Shears broke or missing — craft from iron ingots.
+  bot.chat('Shears broke — crafting a new pair.')
   if (!insideHouse()) await runGoInside()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-
   const win = await openChest()
-  const chestShears = win.slots[CHEST_SLOTS.shears]
-  if (chestShears) {
-    const containerSize = win.slots.length - 36
-    const empty = findEmptyInvSlotInWindow(win, containerSize)
-    if (!empty) { win.close(); throw new Error('inventory full') }
-    await twoClick(CHEST_SLOTS.shears, empty.windowSlot)
-    win.close()
-    logEvent('shear', 'withdrew shears from chest slot 36')
-    await pathTo(HOUSE_CENTER, 0, 10000)
-    return true
-  }
-  win.close()
-
-  // No shears in chest — craft from iron ingots.
-  bot.chat('No shears on hand or in the chest — crafting a pair.')
-  const win2 = await openChest()
-  const ironStack = win2.slots[CHEST_SLOTS.iron]
+  const ironStack = win.slots[CHEST_SLOTS.iron]
   if (!ironStack || ironStack.count < 2) {
-    win2.close()
+    win.close()
     bot.chat("Can't craft shears — need at least 2 iron ingots in chest slot 45.")
     return false
   }
-  // Withdraw 2 iron ingots. twoClick moves the whole stack; we only need 2,
-  // so we'll put the rest back after.
-  const containerSize2 = win2.slots.length - 36
-  const emptySlot = findEmptyInvSlotInWindow(win2, containerSize2)
-  if (!emptySlot) { win2.close(); throw new Error('inventory full') }
+  const containerSize = win.slots.length - 36
+  const emptySlot = findEmptyInvSlotInWindow(win, containerSize)
+  if (!emptySlot) { win.close(); throw new Error('inventory full') }
   await twoClick(CHEST_SLOTS.iron, emptySlot.windowSlot)
-  win2.close()
+  win.close()
   logEvent('shear', `withdrew iron stack from chest slot 45 (had ${ironStack.count})`)
 
   // Craft shears: 2x2 grid, iron in slots 1 and 3 (diagonal top-left, bottom-right).
@@ -2072,16 +2053,6 @@ async function runShearSheep () {
     }
   }
 
-  // Return shears to their permanent chest slot (36).
-  const shearsLeft = bot.inventory.items().find(i => i.name === 'shears')
-  if (shearsLeft) {
-    try {
-      await depositToChestSlot(shearsLeft.slot, CHEST_SLOTS.shears)
-      logEvent('shear', 'returned shears to chest slot 36')
-    } catch (e) {
-      logEvent('shear', `couldn't return shears: ${e.message}`)
-    }
-  }
   await clearHand()
 }
 
@@ -2102,7 +2073,7 @@ async function runShearSheep () {
 // slots 0-4 are the result + 2x2 craft grid.
 const KITCHEN_CHEST = { x: -267, y: 67, z: 569 }
 const CHEST_APPROACH_POS = { x: -267, y: 65, z: 570 }
-const CHEST_SLOTS = { bread: 15, dough: 21, water: 22, salt: 23, flour: 24, bowl: 25, bakeware: 26, shears: 36, iron: 45 }
+const CHEST_SLOTS = { bread: 15, dough: 21, water: 22, salt: 23, flour: 24, bowl: 25, bakeware: 26, iron: 45 }
 
 let bakeBusy = false
 
