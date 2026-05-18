@@ -418,64 +418,43 @@ async function tossTrash () {
   }
 }
 
-// Nickname → real username resolution.
-// On modded 1.12.2, chat packets contain only the display name (nickname), but
-// bot.players is keyed by the real username from player_info. We build the map
-// programmatically from two sources:
-// (1) Raw chat packet JSON — server chat plugins embed the real username in
-//     clickEvent/hoverEvent fields (e.g. "/msg Quesss" or "Quesss" in hover).
-// (2) player_info displayName updates from the protocol.
-const nicknameMap = new Map() // lowercase nickname → real username
+// Nickname → real username map, built from raw chat JSON and player_info updates.
+const nicknameMap = new Map()
 
-// Extract nickname→username mapping from raw chat JSON components
 client.on('chat', (packet) => {
   try {
     const raw = packet.message
     const json = typeof raw === 'string' ? JSON.parse(raw) : raw
-    extractNicknamesFromComponent(json)
-  } catch (e) { /* not valid JSON or no useful data — ignore */ }
+    learnNicknames(json)
+  } catch (e) { /* ignore unparseable */ }
 })
 
-function extractNicknamesFromComponent (component) {
-  if (!component) return
-  // Recursively walk the component tree looking for nodes with clickEvent or insertion
-  // that contain a real username, while the visible text (in .extra) is a nickname.
-  const walk = (node) => {
-    if (!node || typeof node !== 'object') return
-    // This node has a clickEvent with /msg — the real username is there.
-    // The display name (nickname) is in this node's .extra[].text
-    const click = node.clickEvent?.value
-    const insertion = node.insertion
-    let realName = null
-    if (click) {
-      const match = click.match(/^\/(?:msg|tell|w)\s+(\w+)\s?$/)
-      if (match) realName = match[1]
-    }
-    if (!realName && insertion && /^\w{3,16}$/.test(insertion)) {
-      realName = insertion
-    }
-    if (realName) {
-      // The visible nickname is in nested extra text
-      const displayParts = (node.extra || []).map(e => e.text).filter(Boolean).join('')
-      const displayText = displayParts || node.text
-      if (displayText && displayText.toLowerCase() !== realName.toLowerCase() && displayText.length <= 20) {
-        nicknameMap.set(displayText.toLowerCase(), realName)
-      }
-    }
-    // Recurse
-    if (Array.isArray(node.extra)) node.extra.forEach(walk)
+function learnNicknames (node) {
+  if (!node || typeof node !== 'object') return
+  const click = node.clickEvent?.value
+  const insertion = node.insertion
+  let realName = null
+  if (click) {
+    const m = click.match(/^\/(?:msg|tell|w)\s+(\w+)\s?$/)
+    if (m) realName = m[1]
   }
-  walk(component)
-  if (Array.isArray(component.extra)) component.extra.forEach(walk)
+  if (!realName && insertion && /^\w{3,16}$/.test(insertion)) {
+    realName = insertion
+  }
+  if (realName) {
+    const displayText = (node.extra || []).map(e => e.text).filter(Boolean).join('') || node.text
+    if (displayText && displayText.toLowerCase() !== realName.toLowerCase() && displayText.length <= 20) {
+      nicknameMap.set(displayText.toLowerCase(), realName)
+    }
+  }
+  if (Array.isArray(node.extra)) node.extra.forEach(learnNicknames)
 }
 
-// Also learn from player_info displayName updates
 bot.on('playerUpdated', (oldPlayer, newPlayer) => {
   if (newPlayer.username === bot.username) return
   const display = newPlayer.displayName?.toString()
   if (display && display.toLowerCase() !== newPlayer.username.toLowerCase()) {
     nicknameMap.set(display.toLowerCase(), newPlayer.username)
-    logEvent('nickname-learned', `"${display}" → ${newPlayer.username} (from player_info)`)
   }
 })
 
@@ -3658,12 +3637,6 @@ const CANT_SEE_LINES = [
 bot.on('playerJoined', (player) => {
   if (!player || player.username === bot.username) return
   logEvent('player-joined', player.username)
-  // Check displayName on join for nickname mapping
-  const display = player.displayName?.toString()
-  if (display && display.toLowerCase() !== player.username.toLowerCase()) {
-    nicknameMap.set(display.toLowerCase(), player.username)
-    logEvent('nickname-learned', `"${display}" → ${player.username} (from join)`)
-  }
 })
 bot.on('playerLeft', (player) => {
   if (!player || player.username === bot.username) return
