@@ -222,7 +222,13 @@ function startAutoSleep () {
 // global (don't say the same line twice in quick succession when multiple
 // players are nearby at the same time).
 let autoGreetEnabled = true
-const GREET_TEXT = 'Hello, I am ROZZUM Unit 7134'
+const GREET_TEXTS = {
+  mama: "Hello, I'm here. Let's go kick some butt",
+  default: 'Hello, I am ROZZUM Unit 7134',
+}
+function getGreetText () {
+  return GREET_TEXTS[(NICKNAME || '').toLowerCase()] || GREET_TEXTS.default
+}
 const GREET_RADIUS = 8 // blocks
 const GREET_COOLDOWN_MS = 10 * 60 * 1000 // 10 minutes per player
 const GREET_GLOBAL_COOLDOWN_MS = 60 * 1000 // don't say the greeting twice within this window
@@ -255,7 +261,7 @@ function tryAutoGreet () {
     lastGreetAt = now
     facePlayer(name).then(() => {
       sendEmote('salute')
-      bot.chat(GREET_TEXT)
+      bot.chat(getGreetText())
     })
     logEvent('greet', `${name} (d=${d.toFixed(1)})`)
     // Also mark everyone else currently in range as greeted, since the
@@ -4335,7 +4341,7 @@ function handleCommand (cmd) {
     }
     case 'auto_greet': {
       if (typeof args.enabled === 'boolean') autoGreetEnabled = args.enabled
-      return { ok: true, enabled: autoGreetEnabled, greet: GREET_TEXT, radius: GREET_RADIUS, recent: Object.fromEntries([...greetHistory].map(([k, v]) => [k, new Date(v).toISOString()])) }
+      return { ok: true, enabled: autoGreetEnabled, greet: getGreetText(), radius: GREET_RADIUS, recent: Object.fromEntries([...greetHistory].map(([k, v]) => [k, new Date(v).toISOString()])) }
     }
     case 'auto_eat': {
       if (typeof args.enabled === 'boolean') {
