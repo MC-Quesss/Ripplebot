@@ -3570,16 +3570,16 @@ bot.on('entityHurt', (entity) => {
 const FAREWELLS = [
   { text: 'Aww, I miss them already.',               weight: (s) => s.charm },
   { text: 'Bye, Felicia.',                            weight: (s) => s.snark },
-  { text: 'Travel safe out there.',                   weight: (s) => s.charm + 10 },
+  { text: 'Safe travels out there.',                   weight: (s) => s.charm + 10 },
   { text: '*waves a little paw*',                     weight: (s) => s.charm },
-  { text: 'One fewer witness. Interesting.',          weight: (s) => s.snark + s.chaos },
-  { text: 'They logged off — statistically likely to return.', weight: (s) => s.focus },
-  { text: 'That was a whole vibe. Thanks for coming.',weight: (s) => s.charm + s.snark },
+  { text: 'One fewer witness. Interesting...',          weight: (s) => s.snark + s.chaos },
+  { text: 'They logged off — statistically likely to return, I think.', weight: (s) => s.focus },
+  { text: 'That was a vibe. Thanks for coming.',weight: (s) => s.charm + s.snark },
   { text: 'Mourning this loss with a single, small meow.', weight: (s) => s.charm + 20 },
-  { text: 'So long, and thanks for all the wheat.',   weight: (s) => s.snark + 20 },
-  { text: 'Noted. Carry on.',                         weight: (s) => s.focus + s.snark },
+  { text: 'So long, and thanks for all the baked potatoes.',   weight: (s) => s.snark + 20 },
+  { text: 'Noted; carry on.',                         weight: (s) => s.focus + s.snark },
   { text: 'Take care out there — it gets weird at night.', weight: (s) => s.curiosity + s.charm },
-  { text: 'My parasocial attachment level just ticked down.', weight: (s) => s.snark + s.curiosity },
+  { text: 'My parasocial attachment just ticked down one level.', weight: (s) => s.snark + s.curiosity },
 ]
 
 // Load Ripple's stats once per farewell pick. Keep it local to the minecraft
@@ -3612,19 +3612,19 @@ function pickFarewell () { return pickLine(FAREWELLS) }
 // Hello responses — Ripple-flavored, same weighting approach as FAREWELLS.
 // {user} is substituted with the speaker's name.
 const GREETINGS = [
-  { text: 'Hi {user}.',                                weight: (s) => s.charm },
-  { text: 'Hey {user}, good to see you.',              weight: (s) => s.charm + 10 },
-  { text: 'Oh hello, I was just thinking about you.',  weight: (s) => s.charm + s.snark },
-  { text: 'Salutations, {user}. Statistically, this is fine.', weight: (s) => s.focus + s.snark },
-  { text: '*perks up* {user}!',                        weight: (s) => s.charm + 15 },
-  { text: 'Sup.',                                      weight: (s) => s.snark },
-  { text: 'Word.',                                     weight: (s) => s.snark },
-  { text: 'You again. I allow it.',                    weight: (s) => s.snark + 10 },
-  { text: '*blinks slowly* Hi, {user}.',               weight: (s) => s.charm + 5 },
-  { text: 'Howdy. What are we causing today?',         weight: (s) => s.chaos + s.charm },
-  { text: 'Hello. I have been mostly productive in your absence.', weight: (s) => s.focus + s.snark },
-  { text: 'Hiya. You look different. Did something happen out there?', weight: (s) => s.charm + s.curiosity },
-  { text: 'Oh, it is you. Delightful.',                weight: (s) => s.charm + s.snark },
+  { text: 'Hi {user}.',                                                 weight: (s) => s.charm },
+  { text: 'Hey {user}, good to see you.',                               weight: (s) => s.charm + 10 },
+  { text: 'Oh hello, I was just thinking about you.',                   weight: (s) => s.charm + s.snark },
+  { text: 'Salutations, {user}. Statistically, this is fine.',          weight: (s) => s.focus + s.snark },
+  { text: '*perks up* {user}!',                                         weight: (s) => s.charm + 15 },
+  { text: 'Sup.',                                                       weight: (s) => s.snark },
+  { text: 'Word.',                                                      weight: (s) => s.snark },
+  { text: 'You again. I will allow it.',                                weight: (s) => s.snark + 10 },
+  { text: '*blinks slowly* Hi, {user}.',                                weight: (s) => s.charm + 5 },
+  { text: 'What kind of trouble are we causing today?',                 weight: (s) => s.chaos + s.charm },
+  { text: 'Hello. I have been mostly productive in your absence.',      weight: (s) => s.focus + s.snark },
+  { text: 'Hiya. You look different. Did something happen out there?',  weight: (s) => s.charm + s.curiosity },
+  { text: 'Oh, it is you. How delightful.',                                 weight: (s) => s.charm + s.snark },
 ]
 
 function pickGreeting (user) { return pickLine(GREETINGS, { user }) }
@@ -3743,10 +3743,10 @@ const COME_INSIDE_LINES = [
   { text: 'Mission complete. Seeking shelter.',            weight: (s) => s.focus + 10 },
   { text: 'I have seen the sun. It was fine. Going in.',   weight: (s) => s.snark + s.focus },
   { text: 'The wheat will miss me.',                       weight: (s) => s.charm + s.snark },
-  { text: 'Returning to my post. Someone has to watch the bread.', weight: (s) => s.focus + s.charm },
+  { text: 'Returning to my post. Someone has to sleep at night.', weight: (s) => s.focus + s.charm },
   { text: 'That was enough adventure for one cycle.',      weight: (s) => s.snark + s.curiosity },
   { text: '*door noises*',                                 weight: (s) => s.chaos + 10 },
-  { text: 'Okay. Inside voice now.',                       weight: (s) => s.snark + s.charm },
+  { text: 'Okay. Inside voices now.',                       weight: (s) => s.snark + s.charm },
   { text: 'Great success! Zero deaths.',                    weight: (s) => s.charm + s.snark },
   { text: 'Time for my TV shows.',                         weight: (s) => s.snark + s.chaos },
   { text: 'Inward bound! Statistically safer.',            weight: (s) => s.focus + s.snark },
@@ -4440,7 +4440,7 @@ const FARMING_MUSING_TOPICS = [
   },
   {
     id: 'farm_hot_tub_mystery',
-    starter: "The villagers are in the hot tub again.",
+    starter: "The villagers are in the hot tub again...",
     branches: [
       { response: "Again? Do they ever get out?",
         followups: [
@@ -4469,24 +4469,37 @@ const FARMING_MUSING_TOPICS = [
 const ALL_MUSING_TOPICS = [...MUSING_TOPICS, ...FARMING_MUSING_TOPICS]
 const MUSING_STARTERS = new Set(ALL_MUSING_TOPICS.map(t => t.starter))
 
+const MUSING_START_TIMEOUT_MS = 90000
+const MUSING_REPLY_TIMEOUT_MS = 90000
+const MUSING_COOLDOWN_MS = 150000
+
 function nodeChildren (node) {
   if (node.followups) return { type: 'nodes', items: node.followups }
   if (node.closers) return { type: 'closers', items: node.closers }
   return null
 }
 
-function isMusingBusy ({ allowDuringHarvest = false } = {}) {
+function isMusingActiveOrBusy ({ allowDuringHarvest = false } = {}) {
   if (!allowDuringHarvest && (harvestBusy || goInsideBusy || (typeof bakeBusy !== 'undefined' && bakeBusy))) return true
-  return musingState.status !== 'idle' || Date.now() < musingState.suppressUntil
+  return musingState.status !== 'idle'
+}
+
+function isMusingInitiationBlocked ({ allowDuringHarvest = false } = {}) {
+  return isMusingActiveOrBusy({ allowDuringHarvest }) || Date.now() < musingState.suppressUntil
 }
 
 function endMusingConversation () {
   if (musingState._timeoutId) clearTimeout(musingState._timeoutId)
   const now = Date.now()
   musingState = {
-    status: 'idle', currentTopicId: null, role: null,
-    suppressUntil: now + 150000, partnerUsername: null,
-    pendingOptions: null, pendingType: null, _timeoutId: null
+    status: 'idle',
+    currentTopicId: null,
+    role: null,
+    suppressUntil: now + MUSING_COOLDOWN_MS,
+    partnerUsername: null,
+    pendingOptions: null,
+    pendingType: null,
+    _timeoutId: null
   }
   logEvent('musing', 'conversation ended, cooldown 2.5min')
 }
@@ -4506,48 +4519,68 @@ function scheduleMusingTimeout (delayMs) {
 function musingSendAndAdvance (text, spokenNode, topicId) {
   const delay = 3000 + Math.random() * 4000
   const snapshot = topicId
+
   setTimeout(() => {
     if (musingState.currentTopicId !== snapshot) return
+
     bot.chat(text)
     logEvent('musing', `said: "${text.substring(0, 40)}..."`)
+
     if (!spokenNode) {
       endMusingConversation()
       return
     }
+
     const children = nodeChildren(spokenNode)
-    if (!children) { endMusingConversation(); return }
+    if (!children) {
+      endMusingConversation()
+      return
+    }
+
     musingState.pendingOptions = children.items
     musingState.pendingType = children.type
-    scheduleMusingTimeout(delay + 30000)
+    scheduleMusingTimeout(MUSING_REPLY_TIMEOUT_MS)
   }, delay)
 }
 
 function handleMusingMessage (username, message) {
   const trimmed = message.trim()
-
   const topic = ALL_MUSING_TOPICS.find(t => t.starter === trimmed)
+
   if (topic) {
     if (musingState.status === 'started' && musingState.role === 'initiator') {
       if (musingState._timeoutId) clearTimeout(musingState._timeoutId)
       musingState.status = 'idle'
       musingState.currentTopicId = null
     }
+
     if (musingState.status !== 'idle') return true
+
     const isFarmingTopic = FARMING_MUSING_TOPICS.some(t => t.id === topic.id)
-    if (isMusingBusy({ allowDuringHarvest: isFarmingTopic })) return true
+
+    // Important: cooldown does NOT block responding.
+    if (isMusingActiveOrBusy({ allowDuringHarvest: isFarmingTopic })) return true
 
     if (musingState._timeoutId) clearTimeout(musingState._timeoutId)
+
     const branch = topic.branches[Math.floor(Math.random() * topic.branches.length)]
     musingState = {
-      status: 'active', currentTopicId: topic.id, role: 'responder',
-      suppressUntil: musingState.suppressUntil, partnerUsername: username,
-      pendingOptions: null, pendingType: null, _timeoutId: null
+      status: 'active',
+      currentTopicId: topic.id,
+      role: 'responder',
+      suppressUntil: musingState.suppressUntil,
+      partnerUsername: username,
+      pendingOptions: null,
+      pendingType: null,
+      _timeoutId: null
     }
+
     musingSendAndAdvance(branch.response, branch, topic.id)
     return true
   }
 
   if (musingState.status !== 'active' && musingState.status !== 'started') return false
+
   if (musingState.pendingType === 'closers') {
     if (musingState.pendingOptions.includes(trimmed)) {
       logEvent('musing', `conversation complete: ${musingState.currentTopicId}`)
@@ -4557,12 +4590,26 @@ function handleMusingMessage (username, message) {
   }
 
   if (musingState.pendingType === 'nodes') {
-    const matched = musingState.pendingOptions.find(n => n.response === trimmed)
+    let matched = musingState.pendingOptions.find(n => n.response === trimmed)
+
+    // Human freeform reply fallback:
+    // if someone answers during the musing window, continue the tree
+    // even if they didn't say the exact scripted bot phrase.
+    if (!matched && !MUSING_STARTERS.has(trimmed)) {
+      matched = musingState.pendingOptions[Math.floor(Math.random() * musingState.pendingOptions.length)]
+      logEvent('musing', `freeform reply from ${username}: "${trimmed}"`)
+    }
+
     if (matched) {
       if (!musingState.partnerUsername) musingState.partnerUsername = username
       musingState.status = 'active'
+
       const children = nodeChildren(matched)
-      if (!children) { endMusingConversation(); return true }
+      if (!children) {
+        endMusingConversation()
+        return true
+      }
+
       if (children.type === 'closers') {
         const closer = children.items[Math.floor(Math.random() * children.items.length)]
         musingSendAndAdvance(closer, null, musingState.currentTopicId)
@@ -4570,6 +4617,7 @@ function handleMusingMessage (username, message) {
         const pick = children.items[Math.floor(Math.random() * children.items.length)]
         musingSendAndAdvance(pick.response, pick, musingState.currentTopicId)
       }
+
       return true
     }
   }
@@ -4580,31 +4628,41 @@ function handleMusingMessage (username, message) {
 function initiateMusingFromPool (pool, label) {
   const available = pool.filter(t => !recentMusingTopics.has(t.id))
   if (!available.length) return false
+
   const topic = available[Math.floor(Math.random() * available.length)]
 
   bot.chat(topic.starter)
   recentMusingTopics.add(topic.id)
-  if (recentMusingTopics.size >= Math.floor(ALL_MUSING_TOPICS.length * 0.8)) recentMusingTopics.clear()
+
+  if (recentMusingTopics.size >= Math.floor(ALL_MUSING_TOPICS.length * 0.8)) {
+    recentMusingTopics.clear()
+  }
 
   musingState = {
-    status: 'started', currentTopicId: topic.id, role: 'initiator',
-    suppressUntil: musingState.suppressUntil, partnerUsername: null,
-    pendingOptions: topic.branches, pendingType: 'nodes', _timeoutId: null
+    status: 'started',
+    currentTopicId: topic.id,
+    role: 'initiator',
+    suppressUntil: musingState.suppressUntil,
+    partnerUsername: null,
+    pendingOptions: topic.branches,
+    pendingType: 'nodes',
+    _timeoutId: null
   }
+
   logEvent('musing', `initiated (${label}): ${topic.id}`)
-  scheduleMusingTimeout(20000)
+  scheduleMusingTimeout(MUSING_START_TIMEOUT_MS)
   return true
 }
 
 function tryInitiateMusing () {
-  if (isMusingBusy()) return
+  if (isMusingInitiationBlocked()) return
   if (!bot.entity) return
   if (Object.keys(bot.players).length < 2) return
   initiateMusingFromPool(ALL_MUSING_TOPICS, 'idle')
 }
 
 function tryInitiateFarmingMusing () {
-  if (isMusingBusy({ allowDuringHarvest: true })) return
+  if (isMusingInitiationBlocked({ allowDuringHarvest: true })) return
   if (!bot.entity) return
   if (Object.keys(bot.players).length < 2) return
   initiateMusingFromPool(FARMING_MUSING_TOPICS, 'farming')
@@ -4614,13 +4672,18 @@ let farmingMusingTimerId = null
 
 function startFarmingMusingTimer () {
   stopFarmingMusingTimer()
+
   function scheduleNext () {
     farmingMusingTimerId = setTimeout(() => {
-      if (!harvestBusy) { stopFarmingMusingTimer(); return }
+      if (!harvestBusy) {
+        stopFarmingMusingTimer()
+        return
+      }
       tryInitiateFarmingMusing()
       scheduleNext()
     }, 20000 + Math.random() * 40000)
   }
+
   scheduleNext()
   logEvent('musing', 'farming musing timer started')
 }
@@ -4635,8 +4698,12 @@ function stopFarmingMusingTimer () {
 function startMusingTimer () {
   function scheduleNext () {
     const delay = 30000 + Math.random() * 60000
-    setTimeout(() => { tryInitiateMusing(); scheduleNext() }, delay)
+    setTimeout(() => {
+      tryInitiateMusing()
+      scheduleNext()
+    }, delay)
   }
+
   scheduleNext()
   logEvent('musing', 'timer started, interval 30–90s')
 }
