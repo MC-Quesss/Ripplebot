@@ -51,6 +51,9 @@ Old approach kept here for history. The 8-sample sweep was used pre-2026-05-14; 
 (-279, 64, 565)  (-283, 64, 565)  (-287, 64, 565)
 ```
 
+## Related
+- [[wheat-field-north]] — second wheat field directly north, separated by grass at z=558
+
 ## Procedures
 - [[../procedures/right-click-harvest]]
 - [[../procedures/nautilus-sweep-pattern]]

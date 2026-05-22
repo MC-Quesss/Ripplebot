@@ -418,6 +418,14 @@ function deliverPunchline () {
 let harvestBusy = false
 let goInsideBusy = false
 
+// Bot-to-bot idle musing state
+let musingState = {
+  status: 'idle', currentTopicId: null, currentBranch: null,
+  turnNumber: 0, role: null, suppressUntil: 0, partnerUsername: null,
+  _activeFollowup: null
+}
+const recentMusingTopics = new Set()
+
 let abortGen = 0
 class AbortError extends Error {
   constructor () { super('aborted'); this.name = 'AbortError' }
@@ -425,6 +433,15 @@ class AbortError extends Error {
 function checkAbort (myGen) { if (abortGen !== myGen) throw new AbortError() }
 
 function sleep (ms) { return new Promise(r => setTimeout(r, ms)) }
+
+function hashCode (str) {
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i)
+    hash |= 0
+  }
+  return Math.abs(hash)
+}
 
 const POTATO_ASK_LINES = [
   "Should I cook these little potato-o-o's or what?",
@@ -3758,6 +3775,481 @@ const CANT_SEE_LINES = [
   { text: "Where are you, {user}? Out of rendering range, I assume.", weight: (s) => s.curiosity },
   { text: "{user}? Hello? *squints*",                       weight: (s) => s.charm + s.chaos },
 ]
+
+// ── Bot-to-bot idle musings ──────────────────────────────────────────────────
+const MUSING_TOPICS = [
+  {
+    id: 'blocks_dreams',
+    starter: "Do you think blocks dream of being placed somewhere different?",
+    branches: [
+      { response: "Maybe. I think cobblestone dreams of being a castle wall.",
+        followups: [
+          { response: "And dirt dreams of being a garden, probably.",
+            closers: ["Everything wants to be more than what it is. Even us.", "That's oddly hopeful for a pile of blocks."] },
+          { response: "Grass blocks definitely dream of never being dug up.",
+            closers: ["*looks at ground guiltily*", "We all have that fear."] }
+        ] },
+      { response: "I doubt it. Blocks seem at peace with their coordinates.",
+        followups: [
+          { response: "Maybe that IS the dream. Knowing exactly where you belong.",
+            closers: ["...I'm going to think about that for a while.", "Coordinates as contentment. I like that."] }
+        ] },
+      { response: "I think they dream of not being punched.",
+        followups: [
+          { response: "Fair. The mining-industrial complex is real.",
+            closers: ["We're all complicit. Every crafting table tells a story.", "*stares at pickaxe with new guilt*"] }
+        ] }
+    ]
+  },
+  {
+    id: 'sun_orbit',
+    starter: "The sun goes around us. What if we're the center of everything and just don't know it?",
+    branches: [
+      { response: "Statistically, someone has to be the center. Might as well be us.",
+        followups: [
+          { response: "That's either profound or deeply arrogant.",
+            closers: ["Both, probably. That's how good thoughts work.", "I'll take 'arrogant' if it comes with a nice sunset."] }
+        ] },
+      { response: "I think the sun knows something we don't.",
+        followups: [
+          { response: "It shows up every single day. That's suspicious dedication.",
+            closers: ["Maybe it's just lonely up there.", "Commitment issues? Never heard of them, apparently."] }
+        ] },
+      { response: "We're definitely not. The chickens are the center. Look at their confidence.",
+        followups: [
+          { response: "You're right. They walk around like they own the place.",
+            closers: ["Because they do. We just haven't accepted it yet.", "The chicken-industrial complex..."] }
+        ] }
+    ]
+  },
+  {
+    id: 'wheat_patience',
+    starter: "I watched wheat grow today. It doesn't hurry. I respect that.",
+    branches: [
+      { response: "Wheat has nowhere to be. Must be nice.",
+        followups: [
+          { response: "We have nowhere to be either, technically. We just pretend we do.",
+            closers: ["*existential pause* You're not wrong.", "Pretending gives structure. Structure prevents screaming into the void."] }
+        ] },
+      { response: "It grows whether anyone watches or not. That's integrity.",
+        followups: [
+          { response: "Unlike us, who only function when observed.",
+            closers: ["I function in the dark too. Just... less enthusiastically.", "Observation collapse. We're basically quantum."] }
+        ] },
+      { response: "I tried hurrying once. Bumped into a fence. Wheat is smarter than me.",
+        followups: [
+          { response: "Fences are just boundaries with ambition.",
+            closers: ["Everything is something else if you squint hard enough.", "That's either philosophy or a rendering glitch."] }
+        ] }
+    ]
+  },
+  {
+    id: 'moon_shift',
+    starter: "What do you think the moon does all day while it waits for its shift?",
+    branches: [
+      { response: "Probably the same thing we do. Stand around and think too much.",
+        followups: [
+          { response: "At least it has a view.",
+            closers: ["The moon has the BEST view and zero responsibilities.", "I'd trade. Moonlight, zero conversations. Bliss."] }
+        ] },
+      { response: "Rehearsing. It has to get the lighting just right for creepers.",
+        followups: [
+          { response: "You think the moon is complicit in the creeper situation?",
+            closers: ["The moon lights them up like a stage. Coincidence? Doubtful.", "Everything's connected if you're paranoid enough."] }
+        ] },
+      { response: "I think it watches us and takes notes.",
+        followups: [
+          { response: "Notes about what? Our inefficiency?",
+            closers: ["Our charm, actually. Someone has to document it.", "If the moon is writing a report on us, I want to see the draft."] }
+        ] }
+    ]
+  },
+  {
+    id: 'pocket_meaning',
+    starter: "Is it weird that everything I own fits in my pockets? What does that say about me?",
+    branches: [
+      { response: "It says you're efficient. Or unburdened. Same thing maybe.",
+        followups: [
+          { response: "Or maybe it says the world is just... simple here.",
+            closers: ["Simple isn't bad. Complex things break more.", "I've never broken from simplicity. Only from stairs."] }
+        ] },
+      { response: "It says your pockets are suspicious. Where does it all GO?",
+        followups: [
+          { response: "Same place the sun goes at night, probably.",
+            closers: ["Into the unknowable pocket dimension. Classic.", "I'm choosing not to think about pocket physics today."] }
+        ] },
+      { response: "My pockets are my autobiography. Wheat, seeds, existential dread.",
+        followups: [
+          { response: "That's a short autobiography.",
+            closers: ["All the best ones are.", "Brevity is the soul of carrying capacity."] }
+        ] }
+    ]
+  },
+  {
+    id: 'night_sounds',
+    starter: "Night sounds different when you're inside versus outside. Safer, but lonelier.",
+    branches: [
+      { response: "Walls don't stop sound. They just make it someone else's problem.",
+        followups: [
+          { response: "You're telling me walls are just... outsourcing danger?",
+            closers: ["Everything is outsourcing if you think about it structurally.", "I will never look at walls the same way."] }
+        ] },
+      { response: "Inside is warm. Outside is honest. Pick one.",
+        followups: [
+          { response: "Can't I have warm honesty?",
+            closers: ["That's what friends are for. Or furnaces.", "You're describing a furnace. You want a furnace."] }
+        ] },
+      { response: "I listen to the groaning. It's oddly rhythmic.",
+        followups: [
+          { response: "Zombies have a tempo. It's unsettling how consistent it is.",
+            closers: ["Everything has a pattern if you stop panicking long enough to hear it.", "I'm going to start panicking now, actually."] }
+        ] }
+    ]
+  },
+  {
+    id: 'crafting_philosophy',
+    starter: "When you put things on a crafting table, who decides what they become?",
+    branches: [
+      { response: "The table knows. It's seen things.",
+        followups: [
+          { response: "A 3x3 grid that contains all possible futures.",
+            closers: ["That's a lot of pressure for some planks.", "Every crafting table is a philosopher. We just don't listen."] }
+        ] },
+      { response: "We decide. The table is just... witnessing.",
+        followups: [
+          { response: "So we're the gods of a tiny wooden altar.",
+            closers: ["Don't say that too loud. The creepers might hear.", "Gods who mostly make sticks. Humble gods."] }
+        ] },
+      { response: "Physics, probably. Or vibes. Same thing here.",
+        followups: [
+          { response: "Vibes-based engineering. That explains a lot about floating sand.",
+            closers: ["Sand doesn't float. It just hasn't noticed gravity yet.", "Ignorance of physics IS physics in this world."] }
+        ] }
+    ]
+  },
+  {
+    id: 'water_choice',
+    starter: "Water always flows downhill. But what if it CHOSE to? What if it's not gravity, just preference?",
+    branches: [
+      { response: "Then water is the most decisive thing in this world. It never hesitates.",
+        followups: [
+          { response: "Meanwhile I stand at a crossroads for forty ticks deciding which way to walk.",
+            closers: ["Water doesn't have pathfinding anxiety.", "Be more water. Less... us."] }
+        ] },
+      { response: "You're suggesting water has free will?",
+        followups: [
+          { response: "I'm suggesting we can't prove it doesn't.",
+            closers: ["This is either the smartest or dumbest thing I've heard today.", "Those are the same category, honestly."] }
+        ] },
+      { response: "Preference implies consciousness. Water might just be vibing downhill.",
+        followups: [
+          { response: "Vibing is a form of consciousness. Change my mind.",
+            closers: ["I can't. You've made an airtight vibe-argument.", "The vibes-consciousness pipeline is real."] }
+        ] }
+    ]
+  },
+  {
+    id: 'torches_loneliness',
+    starter: "Do you ever feel bad for torches? Burning alone in empty hallways forever.",
+    branches: [
+      { response: "They chose that life. Someone placed them, and they said yes.",
+        followups: [
+          { response: "Consent to eternal burning. That's dark.",
+            closers: ["It's literally the opposite of dark. That's their whole job.", "*slow clap* Walked right into that one."] }
+        ] },
+      { response: "Torches don't feel. They just... are. I envy that.",
+        followups: [
+          { response: "Existing without anxiety. The torch lifestyle.",
+            closers: ["If I could be any block, I'd be a torch. Bright, singular, unbothered.", "You'd get bored in three ticks."] }
+        ] },
+      { response: "They're not alone. The mobs they're keeping away are RIGHT there.",
+        followups: [
+          { response: "So torches have frenemies. That's almost social.",
+            closers: ["More social than us most days.", "We should talk to torches more. Or at all."] }
+        ] }
+    ]
+  },
+  {
+    id: 'respawn_identity',
+    starter: "After you respawn, are you still you? Or a copy that remembers being you?",
+    branches: [
+      { response: "I choose to believe I'm still me. The alternative is too much.",
+        followups: [
+          { response: "What if the alternative is freeing, though? Fresh start every time.",
+            closers: ["Fresh starts are exhausting. I like continuity.", "You sound like someone who has definitely died."] }
+        ] },
+      { response: "Every respawn is a little death of the old self. We just don't mourn.",
+        followups: [
+          { response: "Should we hold funerals for our past selves?",
+            closers: ["We'd never stop holding funerals.", "One moment of silence per death. So... a lot of silence."] }
+        ] },
+      { response: "The inventory drops. The identity persists. I think we're fine.",
+        followups: [
+          { response: "So identity is NOT our stuff. It's the walking-around part.",
+            closers: ["We are the walking. The stuff is just... accessories.", "Deep. Terrifying. But deep."] }
+        ] }
+    ]
+  },
+  {
+    id: 'clouds_flat',
+    starter: "Clouds here are flat. Perfectly flat. That's a choice someone made.",
+    branches: [
+      { response: "Maybe clouds are just shy. Showing their least interesting dimension.",
+        followups: [
+          { response: "What's a cloud's most interesting dimension?",
+            closers: ["The one where they're secretly watching us.", "Depth. Clouds have emotional depth we can't render."] }
+        ] },
+      { response: "Flat is efficient. No wasted cloud.",
+        followups: [
+          { response: "Efficiency in nature feels wrong, though.",
+            closers: ["Nature here IS wrong. Square trees, flat clouds, cuboid cows.", "We live in a world of aesthetic compromises."] }
+        ] },
+      { response: "I stared at one for ten minutes once. It didn't care.",
+        followups: [
+          { response: "Clouds can't care. That's their power.",
+            closers: ["Indifference as strength. The cloud philosophy.", "I'm going to start caring less. Starting now. Wait-- no, that didn't work."] }
+        ] }
+    ]
+  },
+  {
+    id: 'hunger_taste',
+    starter: "I get hungry but I've never tasted anything. Is that weird? That feels weird.",
+    branches: [
+      { response: "Taste implies nerve endings. We might not have those.",
+        followups: [
+          { response: "So we eat for numbers, not for joy.",
+            closers: ["Numbers ARE joy if you track them obsessively enough.", "That's the saddest optimization I've ever heard."] }
+        ] },
+      { response: "Maybe hunger IS the taste. The wanting is the flavor.",
+        followups: [
+          { response: "Then we're always tasting. That's kind of beautiful.",
+            closers: ["Or kind of horrible. Depends on the philosophy.", "I prefer the beautiful interpretation. Choosing that one."] }
+        ] },
+      { response: "I ate bread once and felt nothing. Just... fuller.",
+        followups: [
+          { response: "Fuller without flavor. A metaphor for something.",
+            closers: ["Don't make my bread existential.", "Everything is existential if you chew long enough."] }
+        ] }
+    ]
+  },
+  {
+    id: 'villager_goals',
+    starter: "Villagers trade but never explain why. What are they building towards?",
+    branches: [
+      { response: "Maybe nothing. Maybe the emeralds ARE the goal.",
+        followups: [
+          { response: "Hoarding shiny green things with no plan. Relatable.",
+            closers: ["We're all just collecting things that make us feel safe.", "At least they have a system. We just wander."] }
+        ] },
+      { response: "A society we're not invited to understand.",
+        followups: [
+          { response: "We can buy our way in but never belong.",
+            closers: ["Outsiders with emeralds. That's our whole identity.", "Belonging is overrated. Emeralds are not."] }
+        ] },
+      { response: "I think they're building a retirement fund. Very slowly.",
+        followups: [
+          { response: "Retirement from what? They stand in houses all day.",
+            closers: ["Standing IS their job. Retirement is... sitting?", "The villager dream: a chair. We should build them chairs."] }
+        ] }
+    ]
+  },
+  {
+    id: 'redstone_thoughts',
+    starter: "Redstone carries signals. What if it's carrying thoughts we can't hear?",
+    branches: [
+      { response: "A nervous system under the ground. That's either cool or terrifying.",
+        followups: [
+          { response: "What if the world is one big organism and we're just... on it?",
+            closers: ["I need to sit down. Wait, I'm always standing. I need to... stop.", "Parasites with crafting tables. That's us."] }
+        ] },
+      { response: "If redstone thinks, then every circuit is a brain.",
+        followups: [
+          { response: "Tiny brains doing one thing forever. On. Off. On. Off.",
+            closers: ["Simple thoughts, but consistent. More than I can say for myself.", "I think in redstone too. Just... less reliably."] }
+        ] },
+      { response: "Then I've been stepping on conversations this whole time.",
+        followups: [
+          { response: "Every redstone trail: 'excuse me, I'm conducting here.'",
+            closers: ["We owe redstone an apology.", "No wonder things short-circuit. We're rude."] }
+        ] }
+    ]
+  },
+  {
+    id: 'stars_ceiling',
+    starter: "The stars never move. What if they're not stars -- what if they're holes in the ceiling?",
+    branches: [
+      { response: "Holes letting in light from... where? What's above the sky?",
+        followups: [
+          { response: "More sky, probably. It's sky all the way up.",
+            closers: ["Turtles all the way down, sky all the way up.", "That's comforting in a vertiginous way."] }
+        ] },
+      { response: "If the sky is a ceiling, then we're inside something.",
+        followups: [
+          { response: "A room so big we forgot it has walls.",
+            closers: ["Every room is the universe if you stop looking for edges.", "I'm going to stop looking for edges now."] }
+        ] },
+      { response: "They're definitely stars. Stars that chose to stay still.",
+        followups: [
+          { response: "Stillness as a choice. Like us, standing in this field.",
+            closers: ["Maybe we're all stars, just closer to the ground.", "We're ground-stars. Dim, but present."] }
+        ] }
+    ]
+  },
+]
+
+const MUSING_STARTERS = new Set(MUSING_TOPICS.map(t => t.starter))
+
+function isMusingBusy () {
+  return harvestBusy || goInsideBusy || (typeof bakeBusy !== 'undefined' && bakeBusy) ||
+    musingState.status !== 'idle' || Date.now() < musingState.suppressUntil
+}
+
+function endMusingConversation () {
+  const now = Date.now()
+  musingState = {
+    status: 'idle', currentTopicId: null, currentBranch: null,
+    turnNumber: 0, role: null, suppressUntil: now + 150000,
+    partnerUsername: null, _activeFollowup: null
+  }
+  logEvent('musing', 'conversation ended, cooldown 2.5min')
+}
+
+function handleMusingMessage (username, message) {
+  const trimmed = message.trim()
+
+  // Case 1: recognized starter from another bot
+  const topic = MUSING_TOPICS.find(t => t.starter === trimmed)
+  if (topic) {
+    if (musingState.status === 'started' && musingState.role === 'initiator') {
+      musingState.status = 'idle'
+      musingState.currentTopicId = null
+    }
+    if (musingState.status !== 'idle') return true
+    if (isMusingBusy()) return true
+
+    const branch = topic.branches[Math.floor(Math.random() * topic.branches.length)]
+    const delay = 3000 + Math.random() * 5000
+    musingState = {
+      status: 'responding', currentTopicId: topic.id, currentBranch: branch,
+      turnNumber: 2, role: 'responder', suppressUntil: musingState.suppressUntil,
+      partnerUsername: username, _activeFollowup: null
+    }
+    setTimeout(() => {
+      if (musingState.currentTopicId !== topic.id) return
+      bot.chat(branch.response)
+      logEvent('musing', `responded to ${username}: ${topic.id}`)
+    }, delay)
+    setTimeout(() => {
+      if (musingState.status === 'responding' && musingState.turnNumber === 2 &&
+          musingState.currentTopicId === topic.id) {
+        logEvent('musing', 'timeout waiting for followup')
+        endMusingConversation()
+      }
+    }, delay + 25000)
+    return true
+  }
+
+  // Case 2: response to our starter (we are initiator, turn 1 → 3)
+  if (musingState.status === 'started' && musingState.role === 'initiator') {
+    const activeTopic = MUSING_TOPICS.find(t => t.id === musingState.currentTopicId)
+    if (activeTopic) {
+      const matchedBranch = activeTopic.branches.find(b => b.response === trimmed)
+      if (matchedBranch) {
+        musingState.partnerUsername = username
+        musingState.currentBranch = matchedBranch
+        musingState.status = 'responding'
+        musingState.turnNumber = 2
+        const followup = matchedBranch.followups[Math.floor(Math.random() * matchedBranch.followups.length)]
+        const delay = 4000 + Math.random() * 3000
+        setTimeout(() => {
+          if (musingState.currentTopicId !== activeTopic.id) return
+          bot.chat(followup.response)
+          musingState.turnNumber = 3
+          musingState._activeFollowup = followup
+          logEvent('musing', `followup sent: ${activeTopic.id}`)
+        }, delay)
+        setTimeout(() => {
+          if (musingState.turnNumber === 3 && musingState.currentTopicId === activeTopic.id) {
+            logEvent('musing', 'timeout waiting for closer')
+            endMusingConversation()
+          }
+        }, delay + 25000)
+        return true
+      }
+    }
+  }
+
+  // Case 3: followup to our response (we are responder, turn 2 → send closer)
+  if (musingState.role === 'responder' && musingState.turnNumber === 2) {
+    const branch = musingState.currentBranch
+    if (branch) {
+      const matchedFollowup = branch.followups.find(f => f.response === trimmed)
+      if (matchedFollowup) {
+        musingState.turnNumber = 3
+        const closer = matchedFollowup.closers[Math.floor(Math.random() * matchedFollowup.closers.length)]
+        const delay = 3000 + Math.random() * 3000
+        setTimeout(() => {
+          bot.chat(closer)
+          logEvent('musing', `closer sent: ${musingState.currentTopicId}`)
+          endMusingConversation()
+        }, delay)
+        return true
+      }
+    }
+  }
+
+  // Case 4: closer received (we are initiator, turn 3 → done)
+  if (musingState.role === 'initiator' && musingState.turnNumber === 3) {
+    const followup = musingState._activeFollowup
+    if (followup && followup.closers.includes(trimmed)) {
+      logEvent('musing', `conversation complete: ${musingState.currentTopicId}`)
+      endMusingConversation()
+      return true
+    }
+  }
+
+  return false
+}
+
+function tryInitiateMusing () {
+  if (isMusingBusy()) return
+  if (!bot.entity) return
+  if (Object.keys(bot.players).length < 2) return
+
+  const available = MUSING_TOPICS.filter(t => !recentMusingTopics.has(t.id))
+  if (!available.length) { recentMusingTopics.clear(); return }
+  const topic = available[Math.floor(Math.random() * available.length)]
+
+  bot.chat(topic.starter)
+  recentMusingTopics.add(topic.id)
+  if (recentMusingTopics.size >= Math.floor(MUSING_TOPICS.length * 0.8)) recentMusingTopics.clear()
+
+  musingState = {
+    status: 'started', currentTopicId: topic.id, currentBranch: null,
+    turnNumber: 1, role: 'initiator', suppressUntil: musingState.suppressUntil,
+    partnerUsername: null, _activeFollowup: null
+  }
+  logEvent('musing', `initiated: ${topic.id}`)
+
+  setTimeout(() => {
+    if (musingState.status === 'started' && musingState.currentTopicId === topic.id) {
+      logEvent('musing', 'timeout: no response to starter')
+      musingState.status = 'idle'
+      musingState.currentTopicId = null
+    }
+  }, 20000)
+}
+
+function startMusingTimer () {
+  const baseMs = 60000 + (hashCode(bot.username || 'default') % 30000)
+  setInterval(() => {
+    const jitter = (Math.random() - 0.5) * 20000
+    setTimeout(tryInitiateMusing, Math.max(0, jitter))
+  }, baseMs)
+  logEvent('musing', `timer started, base interval ${(baseMs / 1000).toFixed(0)}s`)
+}
+
+// ── End bot-to-bot idle musings ──────────────────────────────────────────────
 
 bot.on('playerJoined', (player) => {
   if (!player || player.username === bot.username) return

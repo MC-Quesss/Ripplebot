@@ -7,6 +7,41 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-05-21 — North field added to harvest routine (day 42108)
+
+**Session goal:** integrate the second wheat field (north of the original) into the harvest routine.
+
+**Bot state at start:**
+- Position (-268.5, 65, 570.5) — inside [[../places/house]]
+- HP 19→20, food 16→19, deaths 0
+- Day 42108, timeOfDay 3657 (early morning, `isDay: true`)
+
+**Discovery: North wheat field verified**
+- `find_blocks` returned wheat at z=551..557, same x bounds (-287..-279), same y=64
+- z=554 is a lily pad channel (same structure as z=562 in south field)
+- z=558 is a grass-block divider (y=63) between the two fields — walkable
+- Total: 54 tiles (27 per half), identical to the south field
+- New journal note: [[../places/wheat-field-north]]
+
+**Code changes (bot.js, pushed to Ripplebot):**
+- Added `NORTH_FIELD_BOUNDS` constant
+- Added `north_field_center` waypoint at (-283, 64, 554)
+- `filterByHalf` now supports `'north-field'` and `'south-field'`; `'all'` spans both fields
+- Refactored harvest into `harvestAndSweepField` helper — `'all'` mode does north field (harvest+sweep) then south field (harvest+sweep) to avoid drop despawn
+- Chat handler: "north field" / "south field" target one field; bare "north"/"south" still target halves of the south field
+
+**Test run: `half='north-field'`**
+- Found 54 wheat tiles, activated all 54, 0 mature (all still growing)
+- Sweep picked up 29 wheat from ground drops (leftover from a previous run)
+- Bot crossed lily pads at z=554 and grass at z=558 without issues
+- 0 deaths, no pathfinding failures
+
+**Open questions:**
+- None of the north field wheat was mature — need to wait and test a real harvest with drops
+- Full `'all'` mode not yet tested end-to-end (code refactored after the test run)
+
+---
+
 ## 2026-05-13 — Journal genesis (day 41325)
 
 **Session goal:** establish the Obsidian journal network. Map what we already know.
