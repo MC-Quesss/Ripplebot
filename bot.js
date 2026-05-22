@@ -422,7 +422,8 @@ let goInsideBusy = false
 let musingState = {
   status: 'idle', currentTopicId: null, role: null,
   suppressUntil: 0, partnerUsername: null,
-  pendingOptions: null, pendingType: null, _timeoutId: null
+  pendingOptions: null, pendingType: null, _timeoutId: null,
+  recursive: false, depth: 0, usedLines: null, pendingTopic: null
 }
 const recentMusingTopics = new Set()
 
@@ -3784,6 +3785,10 @@ const CANT_SEE_LINES = [
 ]
 
 // ── Bot-to-bot idle musings ──────────────────────────────────────────────────
+
+// Classical conversations:
+// These are fixed-depth scripted conversation trees.
+
 const MUSING_TOPICS = [
   {
     id: 'blocks_dreams',
@@ -4323,32 +4328,6 @@ const FARMING_MUSING_TOPICS = [
     ]
   },
   {
-    id: 'farm_no_rush',
-    starter: "You know what I like about harvest day? There's nowhere else to be.",
-    branches: [
-      { response: "No schedule. Just us and the rows.",
-        followups: [
-          { response: "The wheat waited weeks. Least we can do is take our time.",
-            closers: ["The wheat set the pace. We just follow.", "Patience in, patience out."] }
-        ] },
-      { response: "The chest is full. This is all bonus.",
-        followups: [
-          { response: "Bonus wheat. Wheat we harvest just because.",
-            followups: [
-              { response: "There's worse ways to spend a day.",
-                closers: ["Can't think of any right now.", "Nope. This is it."] },
-              { response: "I wonder if the wheat knows it's bonus wheat.",
-                closers: ["It doesn't. It just grows. Which is the whole point.", "Wheat doesn't rank itself. We shouldn't either."] }
-            ] }
-        ] },
-      { response: "I could do this all day. And the day is long.",
-        followups: [
-          { response: "Long day, full field, good company.",
-            closers: ["Short list.", "Don't need much."] }
-        ] }
-    ]
-  },
-  {
     id: 'farm_talking_to_crops',
     starter: "Do you ever talk to the wheat? I talk to the wheat.",
     branches: [
@@ -4466,8 +4445,76 @@ const FARMING_MUSING_TOPICS = [
   },
 ]
 
-const ALL_MUSING_TOPICS = [...MUSING_TOPICS, ...FARMING_MUSING_TOPICS]
+// Recursive conversations:
+// These are variable-depth conversation graphs with probabilistic continuation.
+const RECURSIVE_MUSING_TOPICS = [
+  {
+    id: 'recursive-building-materials',
+    starter: 'What are the best building materials?',
+    minDepth: 2,
+    maxDepth: 6,
+    nodes: [
+      'Wood is friendly, but it does burn if you ask it the wrong question.',
+      'Stone has confidence. Too much confidence, maybe.',
+      'Glass is useful if you want walls that gossip with the sun.',
+      'Dirt is underrated. It holds everything up and asks for no applause.',
+      'Bricks are just organized clay with ambition.',
+      'The best material depends on whether you are building a house, a tower, or a regret.'
+    ],
+    closers: [
+      'I think I would build with stone and apologize to the trees.',
+      'Maybe the best material is whatever keeps the rain outside.',
+      'I have decided not to build anything taller than my courage.'
+    ]
+  },
+  {
+    id: 'recursive-where-is-the-end',
+    starter: 'Where is the end?',
+    minDepth: 2,
+    maxDepth: 7,
+    nodes: [
+      'Usually it is just past where you stopped looking.',
+      'Maybe the end is a door wearing a wall costume.',
+      'I walked toward the end once, but it kept politely backing away.',
+      'Some endings are just beginnings with better lighting.',
+      'If you find the end, do not poke it. It may start over.',
+      'The end might be wherever everyone stops asking follow-up questions.'
+    ],
+    closers: [
+      'I suppose the end is not on today’s map.',
+      'Let us not rush it. Ends are dramatic enough already.',
+      'If this is the end, it is wearing a very convincing middle.'
+    ]
+  },
+  {
+    id: 'recursive-short-days',
+    starter: 'Why do the days seem so short?',
+    minDepth: 2,
+    maxDepth: 6,
+    nodes: [
+      'Maybe the sun is tired.',
+      'The days get shorter when you fill them with too many intentions.',
+      'Time behaves differently when nobody is watching the clock politely.',
+      'A day is roomy until you make plans for it.',
+      'Maybe night is afraid to come out until everybody has gone to bed.',
+      'The calendar is suspiciously confident for something made of squares.'
+    ],
+    closers: [
+      'I think the day feels short because our perception of time is based on a GPU operating at trillions of cycles per second.',
+      'Maybe tomorrow will be different.',
+      'I will ask the sun tomorrow if it decides to come back.'
+    ]
+  }
+]
+
+
+const CLASSICAL_MUSING_TOPICS = [...MUSING_TOPICS, ...FARMING_MUSING_TOPICS]
+const ALL_MUSING_TOPICS = [...CLASSICAL_MUSING_TOPICS, ...RECURSIVE_MUSING_TOPICS]
 const MUSING_STARTERS = new Set(ALL_MUSING_TOPICS.map(t => t.starter))
+
+function isRecursiveTopic (topic) {
+  return Array.isArray(topic.nodes)
+}
 
 const MUSING_START_TIMEOUT_MS = 90000
 const MUSING_REPLY_TIMEOUT_MS = 90000
@@ -4477,6 +4524,58 @@ function nodeChildren (node) {
   if (node.followups) return { type: 'nodes', items: node.followups }
   if (node.closers) return { type: 'closers', items: node.closers }
   return null
+}
+
+function pickRandom (items) {
+  return items[Math.floor(Math.random() * items.length)]
+}
+
+function pickRecursiveLine (topic, usedLines = new Set()) {
+  const available = topic.nodes.filter(line => !usedLines.has(line))
+  const pool = available.length ? available : topic.nodes
+  return pickRandom(pool)
+}
+
+function shouldContinueRecursive (depth, topic) {
+  if (depth < (topic.minDepth ?? 2)) return true
+  if (depth >= (topic.maxDepth ?? 6)) return false
+
+  const stopChance = 0.15 + (depth * 0.12)
+  return Math.random() > stopChance
+}
+
+function recursiveMusingSendAndAdvance (topicId) {
+  const delay = 3000 + Math.random() * 4000
+  const snapshot = topicId
+
+  setTimeout(() => {
+    if (musingState.currentTopicId !== snapshot) return
+
+    const topic = musingState.pendingTopic
+    if (!topic) {
+      endMusingConversation()
+      return
+    }
+
+    musingState.depth += 1
+
+    if (!shouldContinueRecursive(musingState.depth, topic)) {
+      const closer = pickRandom(topic.closers)
+      bot.chat(closer)
+      logEvent('musing', `recursive closer: "${closer.substring(0, 40)}..."`)
+      endMusingConversation()
+      return
+    }
+
+    const line = pickRecursiveLine(topic, musingState.usedLines)
+    musingState.usedLines.add(line)
+
+    bot.chat(line)
+    logEvent('musing', `recursive said: "${line.substring(0, 40)}..."`)
+
+    musingState.pendingType = 'recursive'
+    scheduleMusingTimeout(MUSING_REPLY_TIMEOUT_MS)
+  }, delay)
 }
 
 function isMusingActiveOrBusy ({ allowDuringHarvest = false } = {}) {
@@ -4499,7 +4598,11 @@ function endMusingConversation () {
     partnerUsername: null,
     pendingOptions: null,
     pendingType: null,
-    _timeoutId: null
+    _timeoutId: null,
+    recursive: false,
+    depth: 0,
+    usedLines: null,
+    pendingTopic: null
   }
   logEvent('musing', 'conversation ended, cooldown 2.5min')
 }
@@ -4543,15 +4646,61 @@ function musingSendAndAdvance (text, spokenNode, topicId) {
   }, delay)
 }
 
+function beginRecursiveMusingState ({ topic, role, partnerUsername = null }) {
+  musingState = {
+    status: role === 'initiator' ? 'started' : 'active',
+    currentTopicId: topic.id,
+    role,
+    suppressUntil: musingState.suppressUntil,
+    partnerUsername,
+    pendingOptions: null,
+    pendingType: 'recursive',
+    _timeoutId: null,
+    recursive: true,
+    depth: 0,
+    usedLines: new Set(),
+    pendingTopic: topic
+  }
+}
+
+function beginClassicalMusingState ({ topic, role, partnerUsername = null }) {
+  musingState = {
+    status: role === 'initiator' ? 'started' : 'active',
+    currentTopicId: topic.id,
+    role,
+    suppressUntil: musingState.suppressUntil,
+    partnerUsername,
+    pendingOptions: topic.branches,
+    pendingType: 'nodes',
+    _timeoutId: null,
+    recursive: false,
+    depth: 0,
+    usedLines: null,
+    pendingTopic: null
+  }
+}
+
 function handleMusingMessage (username, message) {
   const trimmed = message.trim()
   const topic = ALL_MUSING_TOPICS.find(t => t.starter === trimmed)
+  const recursiveTopic = topic && isRecursiveTopic(topic)
 
   if (topic) {
+    // Another bot answered our starter by echoing the same topic starter.
+    // For recursive topics this is enough to begin the ping-pong.
     if (musingState.status === 'started' && musingState.role === 'initiator') {
       if (musingState._timeoutId) clearTimeout(musingState._timeoutId)
-      musingState.status = 'idle'
-      musingState.currentTopicId = null
+
+      if (recursiveTopic) {
+        beginRecursiveMusingState({ topic, role: 'responder', partnerUsername: username })
+        recursiveMusingSendAndAdvance(topic.id)
+        return true
+      }
+
+      // Classical starters from another bot while we are waiting should not
+      // fork a second conversation tree. Treat it as handled and keep waiting.
+      scheduleMusingTimeout(MUSING_START_TIMEOUT_MS)
+      return true
     }
 
     if (musingState.status !== 'idle') return true
@@ -4563,18 +4712,14 @@ function handleMusingMessage (username, message) {
 
     if (musingState._timeoutId) clearTimeout(musingState._timeoutId)
 
-    const branch = topic.branches[Math.floor(Math.random() * topic.branches.length)]
-    musingState = {
-      status: 'active',
-      currentTopicId: topic.id,
-      role: 'responder',
-      suppressUntil: musingState.suppressUntil,
-      partnerUsername: username,
-      pendingOptions: null,
-      pendingType: null,
-      _timeoutId: null
+    if (recursiveTopic) {
+      beginRecursiveMusingState({ topic, role: 'responder', partnerUsername: username })
+      recursiveMusingSendAndAdvance(topic.id)
+      return true
     }
 
+    const branch = pickRandom(topic.branches)
+    beginClassicalMusingState({ topic, role: 'responder', partnerUsername: username })
     musingSendAndAdvance(branch.response, branch, topic.id)
     return true
   }
@@ -4589,6 +4734,13 @@ function handleMusingMessage (username, message) {
     }
   }
 
+  if (musingState.pendingType === 'recursive' && musingState.recursive) {
+    if (!musingState.partnerUsername) musingState.partnerUsername = username
+    musingState.status = 'active'
+    recursiveMusingSendAndAdvance(musingState.currentTopicId)
+    return true
+  }
+
   if (musingState.pendingType === 'nodes') {
     let matched = musingState.pendingOptions.find(n => n.response === trimmed)
 
@@ -4596,7 +4748,7 @@ function handleMusingMessage (username, message) {
     // if someone answers during the musing window, continue the tree
     // even if they didn't say the exact scripted bot phrase.
     if (!matched && !MUSING_STARTERS.has(trimmed)) {
-      matched = musingState.pendingOptions[Math.floor(Math.random() * musingState.pendingOptions.length)]
+      matched = pickRandom(musingState.pendingOptions)
       logEvent('musing', `freeform reply from ${username}: "${trimmed}"`)
     }
 
@@ -4611,10 +4763,10 @@ function handleMusingMessage (username, message) {
       }
 
       if (children.type === 'closers') {
-        const closer = children.items[Math.floor(Math.random() * children.items.length)]
+        const closer = pickRandom(children.items)
         musingSendAndAdvance(closer, null, musingState.currentTopicId)
       } else {
-        const pick = children.items[Math.floor(Math.random() * children.items.length)]
+        const pick = pickRandom(children.items)
         musingSendAndAdvance(pick.response, pick, musingState.currentTopicId)
       }
 
@@ -4629,7 +4781,7 @@ function initiateMusingFromPool (pool, label) {
   const available = pool.filter(t => !recentMusingTopics.has(t.id))
   if (!available.length) return false
 
-  const topic = available[Math.floor(Math.random() * available.length)]
+  const topic = pickRandom(available)
 
   bot.chat(topic.starter)
   recentMusingTopics.add(topic.id)
@@ -4638,15 +4790,10 @@ function initiateMusingFromPool (pool, label) {
     recentMusingTopics.clear()
   }
 
-  musingState = {
-    status: 'started',
-    currentTopicId: topic.id,
-    role: 'initiator',
-    suppressUntil: musingState.suppressUntil,
-    partnerUsername: null,
-    pendingOptions: topic.branches,
-    pendingType: 'nodes',
-    _timeoutId: null
+  if (isRecursiveTopic(topic)) {
+    beginRecursiveMusingState({ topic, role: 'initiator' })
+  } else {
+    beginClassicalMusingState({ topic, role: 'initiator' })
   }
 
   logEvent('musing', `initiated (${label}): ${topic.id}`)
