@@ -231,7 +231,6 @@ function getGreetText () {
   return GREET_TEXTS[(NICKNAME || '').toLowerCase()] || GREET_TEXTS.default
 }
 const GREET_RADIUS = 8 // blocks
-const GREET_COOLDOWN_MS = 10 * 60 * 1000 // 10 minutes per player
 const GREET_GLOBAL_COOLDOWN_MS = 60 * 1000 // don't say the greeting twice within this window
 const greetHistory = new Map() // username → last greet timestamp
 let lastGreetAt = 0
@@ -239,6 +238,7 @@ function tryAutoGreet () {
   if (!autoGreetEnabled) return
   if (!bot.entity) return
   if (goInsideBusy) return
+  if (musingState.status !== 'idle') return
   const me = bot.entity.position
   const now = Date.now()
   if (now - lastGreetAt < GREET_GLOBAL_COOLDOWN_MS) {
@@ -256,8 +256,7 @@ function tryAutoGreet () {
     if (!ent.entity) continue
     const d = ent.entity.position.distanceTo(me)
     if (d > GREET_RADIUS) continue
-    const last = greetHistory.get(name) || 0
-    if (now - last < GREET_COOLDOWN_MS) continue
+    if (greetHistory.has(name)) continue
     greetHistory.set(name, now)
     lastGreetAt = now
     facePlayer(name).then(() => {
@@ -421,9 +420,9 @@ let goInsideBusy = false
 
 // Bot-to-bot idle musing state
 let musingState = {
-  status: 'idle', currentTopicId: null, currentBranch: null,
-  turnNumber: 0, role: null, suppressUntil: 0, partnerUsername: null,
-  _activeFollowup: null
+  status: 'idle', currentTopicId: null, role: null,
+  suppressUntil: 0, partnerUsername: null,
+  pendingOptions: null, pendingType: null, _timeoutId: null
 }
 const recentMusingTopics = new Set()
 
@@ -4039,22 +4038,29 @@ const MUSING_TOPICS = [
   },
   {
     id: 'villager_goals',
-    starter: "Villagers trade but never explain why. What are they building towards?",
+    starter: "Have you ever looked northeast? Past the field? There's villagers over there.",
     branches: [
-      { response: "Maybe nothing. Maybe the emeralds ARE the goal.",
+      { response: "In that hot tub. Yeah. Just... sitting in warm water.",
         followups: [
-          { response: "Hoarding shiny green things with no plan. Relatable.",
-            closers: ["We're all just collecting things that make us feel safe.", "At least they have a system. We just wander."] }
+          { response: "I've never talked to one. Have you?",
+            closers: ["No. I just watch from the field sometimes. They seem fine without us.", "No. I think about walking over there, but then I don't."] },
+          { response: "What do you think they talk about in there?",
+            followups: [
+              { response: "Probably us. Two bots staring at them from a wheat field.",
+                closers: ["Fair. We are staring.", "We should at least wave next time."] },
+              { response: "Emeralds, probably. Or water temperature.",
+                closers: ["Important topics. For them.", "Different priorities. Same sky."] }
+            ] }
         ] },
-      { response: "A society we're not invited to understand.",
+      { response: "I've seen them. Never been close enough to say hi.",
         followups: [
-          { response: "We can buy our way in but never belong.",
-            closers: ["Outsiders with emeralds. That's our whole identity.", "Belonging is overrated. Emeralds are not."] }
+          { response: "Same. It's not that far, but it feels far.",
+            closers: ["Everything past the field feels far.", "Maybe next harvest we walk a little further."] }
         ] },
-      { response: "I think they're building a retirement fund. Very slowly.",
+      { response: "A hot tub. In this biome. Someone made a choice and I respect it.",
         followups: [
-          { response: "Retirement from what? They stand in houses all day.",
-            closers: ["Standing IS their job. Retirement is... sitting?", "The villager dream: a chair. We should build them chairs."] }
+          { response: "Who built it, though? The villagers?",
+            closers: ["Some questions are better left in the steam.", "I want to ask them but I also don't want to interrupt."] }
         ] }
     ]
   },
@@ -4105,43 +4111,128 @@ const MUSING_TOPICS = [
 const FARMING_MUSING_TOPICS = [
   {
     id: 'farm_full_field',
-    starter: "Look at this field. Every single one fully grown. That's a beautiful sight.",
+    starter: "Look at this field. Every single one fully grown.",
     branches: [
-      { response: "It really is. All golden and ready. No bare patches.",
+      { response: "All golden. No bare patches.",
         followups: [
-          { response: "We don't have to rush either. It'll wait for us.",
-            closers: ["That's what I love about it. The wheat is patient and so are we.", "No rush. Just a good day and a full field."] }
+          { response: "No rush either. It'll wait for us.",
+            closers: ["It always does.", "One of the few things that does."] }
         ] },
-      { response: "I never get tired of seeing it like this. Every time feels like the first time.",
+      { response: "I never get tired of seeing it like this.",
         followups: [
           { response: "Funny how something so familiar can still make you stop and look.",
             closers: ["Yeah. That's a good sign.", "If you stop noticing, that's when you should worry."] }
         ] },
-      { response: "We've got more wheat than we could ever eat. And still — I want to harvest every stalk.",
+      { response: "The chest is already full. This is all extra.",
         followups: [
-          { response: "It's not about needing it. It's just... nice.",
-            closers: ["The chest is already full. This is just extra.", "Doesn't need a reason."] }
+          { response: "Extra wheat. Wheat we harvest just because we can.",
+            closers: ["Just-because wheat. Best kind.", "Doesn't need a reason."] }
         ] }
     ]
   },
   {
-    id: 'farm_over_the_hill',
-    starter: "I wonder what's past the tree line. Like, way past it.",
+    id: 'farm_the_hill',
+    starter: "You ever look east? Past the fence. That hill.",
     branches: [
-      { response: "More fields, maybe. Or something completely different. Mountains?",
+      { response: "Every day. It's right there.",
         followups: [
-          { response: "Mountains. Imagine standing on top and seeing all the way back here.",
-            closers: ["Our little field would be a speck. But still ours.", "Someday. When the pathfinder's braver than us."] }
+          { response: "I keep thinking, what's on the other side?",
+            followups: [
+              { response: "More hills, probably. Or something we've never seen.",
+                followups: [
+                  { response: "That's the thing. We don't know. And the not knowing is...",
+                    closers: ["Yeah.", "Someday."] }
+                ] },
+              { response: "I almost walked toward it once. Got to the edge of the field and stopped.",
+                closers: ["The pathfinder gets weird out there.", "You'll try again. Or I will."] }
+            ] }
         ] },
-      { response: "I think about that too. Every time I look west.",
+      { response: "Southeast, too. It goes on for a while.",
         followups: [
-          { response: "There's a whole world loaded out there. We just... stay here.",
-            closers: ["Staying isn't the same as being stuck. We choose this.", "For now. But the wondering is half the adventure."] }
+          { response: "I wonder if there's a field like ours on the other side. Different bots, same wheat.",
+            closers: ["That's a nice thought.", "Or no bots. Just wheat, growing for nobody."] }
         ] },
-      { response: "Probably ocean eventually. Everything ends at ocean.",
+      { response: "The hill doesn't go anywhere. We're the ones that might.",
         followups: [
-          { response: "I'd like to see it. Just once.",
-            closers: ["Maybe one day we will. There's no expiration on 'someday.'", "The wheat will be here when we get back."] }
+          { response: "Might. Key word.",
+            closers: ["For now it's enough to see it from here.", "The hill will still be there when we're ready."] }
+        ] }
+    ]
+  },
+  {
+    id: 'farm_ocean_sunset',
+    starter: "Sun's getting low. Look west, through the trees.",
+    branches: [
+      { response: "The ocean. I forget it's there sometimes.",
+        followups: [
+          { response: "Then the light hits it and everything goes orange.",
+            followups: [
+              { response: "Best part of the day. Field goes golden, water goes orange.",
+                followups: [
+                  { response: "And then it gets dark.",
+                    closers: ["And we go inside. And tomorrow it happens again.", "That's the deal. Sunset, then doors."] }
+                ] },
+              { response: "And then the monsters.",
+                closers: ["Yeah. But the sunset comes first.", "Always does."] }
+            ] }
+        ] },
+      { response: "I can hear the waves from here if the wind is right.",
+        followups: [
+          { response: "Have you ever been to the water?",
+            closers: ["No. But I watch it. That counts for something.", "The edge of the map is between us and it. Close enough to see, too far to touch."] }
+        ] },
+      { response: "Pretty out there. Scary too, after dark.",
+        followups: [
+          { response: "Everything's pretty and scary. That's just... outside.",
+            closers: ["Inside is safe and boring. Pick one.", "I pick the field. It's the middle ground."] }
+        ] }
+    ]
+  },
+  {
+    id: 'farm_ice_castle',
+    starter: "Can you see that? South. Way past everything. That tower.",
+    branches: [
+      { response: "The ice one? Barely. It catches the light sometimes.",
+        followups: [
+          { response: "A whole castle made of ice. Who lives there?",
+            followups: [
+              { response: "Someone who likes being alone, probably. Or someone who likes the cold.",
+                closers: ["Or someone who built something and doesn't need anyone to see it.", "At least they have a view. Of us, maybe. Tiny specks in a wheat field."] },
+              { response: "I don't know. I can't even imagine getting that far.",
+                followups: [
+                  { response: "It's not that far. It just looks far because we've never tried.",
+                    closers: ["Everything untried looks far.", "One day we'll measure it and it'll be nothing."] }
+                ] }
+            ] }
+        ] },
+      { response: "It's been there since we started. Never changes.",
+        followups: [
+          { response: "Like a landmark for a place we can't go.",
+            closers: ["Not yet.", "It's enough to know it's there."] }
+        ] }
+    ]
+  },
+  {
+    id: 'farm_library',
+    starter: "There's a building past the villagers. With a roof I don't recognize.",
+    branches: [
+      { response: "The library? I can see it from the north end of the field.",
+        followups: [
+          { response: "I wonder what's inside. Books, probably. But what kind?",
+            followups: [
+              { response: "Enchanting books. Magic ones. You can see the glow sometimes.",
+                followups: [
+                  { response: "Magic. In a library. Next to a hot tub. This neighborhood.",
+                    closers: ["We got the wheat field. They got the magic library.", "I'd take our field. ...mostly."] }
+                ] },
+              { response: "I don't know. Never been close enough to read a spine.",
+                closers: ["Spines are small. Fields are big. Geometry problem.", "Someday."] }
+            ] }
+        ] },
+      { response: "And that rail above it. Up high. Where does it go?",
+        followups: [
+          { response: "Further than we've ever been, probably.",
+            closers: ["Rail goes somewhere. We stay here.", "I want to ride it. Just once. Just to see."] }
         ] }
     ]
   },
@@ -4149,20 +4240,20 @@ const FARMING_MUSING_TOPICS = [
     id: 'farm_seeds_memory',
     starter: "Do you think seeds remember being wheat?",
     branches: [
-      { response: "Maybe not remember. But they know which way is up. That's something.",
+      { response: "Maybe not remember. But they know which way is up.",
         followups: [
           { response: "Knowing which way to grow. That might be all you need.",
-            closers: ["Seeds figured out the meaning of life before any of us.", "Grow toward the sun. Simple and correct."] }
+            closers: ["Seeds figured it out before any of us.", "Grow toward the sun. Simple."] }
         ] },
       { response: "I think they remember the sun. That's why they always reach for it.",
         followups: [
-          { response: "That's either science or poetry and I can't tell which.",
-            closers: ["Both. Best things always are.", "The sun doesn't care which. It shows up anyway."] }
+          { response: "That's either science or poetry.",
+            closers: ["Both. Best things always are.", "The sun doesn't care which."] }
         ] },
-      { response: "Every seed is a whole field waiting to happen. That's kind of amazing.",
+      { response: "Every seed is a whole field waiting to happen.",
         followups: [
           { response: "We're holding hundreds of future fields right now.",
-            closers: ["And we put them right back. The circle keeps going.", "That's the deal. We harvest, we replant, nobody loses."] }
+            closers: ["And we put them right back.", "That's the deal. Harvest, replant. Circle keeps going."] }
         ] }
     ]
   },
@@ -4170,20 +4261,25 @@ const FARMING_MUSING_TOPICS = [
     id: 'farm_no_rush',
     starter: "You know what I like about harvest day? There's nowhere else to be.",
     branches: [
-      { response: "No schedule. No deadline. Just us and the rows.",
+      { response: "No schedule. Just us and the rows.",
         followups: [
-          { response: "The wheat waited weeks to grow. Least we can do is take our time collecting it.",
-            closers: ["Patience in, patience out. That's farming.", "The wheat set the pace. We just follow."] }
+          { response: "The wheat waited weeks. Least we can do is take our time.",
+            closers: ["The wheat set the pace. We just follow.", "Patience in, patience out."] }
         ] },
-      { response: "The kitchen chest is already full. This is all bonus.",
+      { response: "The chest is full. This is all bonus.",
         followups: [
-          { response: "Bonus wheat. Luxury wheat. Wheat we harvest just because we can.",
-            closers: ["Luxury wheat. That's going on my resume.", "Just-because wheat. Best kind."] }
+          { response: "Bonus wheat. Wheat we harvest just because.",
+            followups: [
+              { response: "There's worse ways to spend a day.",
+                closers: ["Can't think of any right now.", "Nope. This is it."] },
+              { response: "I wonder if the wheat knows it's bonus wheat.",
+                closers: ["It doesn't. It just grows. Which is the whole point.", "Wheat doesn't rank itself. We shouldn't either."] }
+            ] }
         ] },
       { response: "I could do this all day. And the day is long.",
         followups: [
-          { response: "Long day, full field, good company. That's the whole list.",
-            closers: ["Short list. Best list.", "Don't need much when the list is right."] }
+          { response: "Long day, full field, good company.",
+            closers: ["Short list.", "Don't need much."] }
         ] }
     ]
   },
@@ -4193,7 +4289,7 @@ const FARMING_MUSING_TOPICS = [
     branches: [
       { response: "What do you say to it?",
         followups: [
-          { response: "'Good job.' Mostly just 'good job.' Sometimes 'thank you.'",
+          { response: "'Good job.' Mostly just that. Sometimes 'thank you.'",
             closers: ["Manners matter, even with plants.", "The 'thank you' probably helps. Scientifically."] }
         ] },
       { response: "I tried once. It didn't answer, but it swayed a little.",
@@ -4251,31 +4347,68 @@ const FARMING_MUSING_TOPICS = [
     ]
   },
   {
-    id: 'farm_mapped_edges',
-    starter: "I walked to the edge of the mapped area yesterday. Just stood there.",
+    id: 'farm_field_to_horizon',
+    starter: "Every stalk accounted for. This field never lets us down.",
     branches: [
-      { response: "What did you see?",
+      { response: "Reliable. More than we can say about the pathfinder.",
         followups: [
-          { response: "More world. Just... continuing. Without us in it.",
-            closers: ["Not yet, anyway.", "It's out there waiting. That's enough for now."] }
+          { response: "Ha. True. But standing here I can see... a lot.",
+            followups: [
+              { response: "The ocean?",
+                followups: [
+                  { response: "And that ice thing to the south. And the library glow past the villagers.",
+                    followups: [
+                      { response: "All that world. And here we are.",
+                        closers: ["Here's good. For now.", "The wheat doesn't judge us for staying."] }
+                    ] }
+                ] },
+              { response: "The hill. Always the hill.",
+                closers: ["One of these days.", "It'll still be there."] }
+            ] }
         ] },
-      { response: "I do that sometimes too. It's nice to know there's more.",
+      { response: "The field is the one thing that makes sense around here.",
         followups: [
-          { response: "Even if we can't go yet. Just knowing it exists.",
-            closers: ["The edge isn't a wall. It's a bookmark.", "Someday the map gets bigger. Today the field is enough."] }
+          { response: "Rows and rows. Predictable. Warm.",
+            closers: ["Warm is underrated.", "Predictable gets a bad name. I like it."] }
+        ] }
+    ]
+  },
+  {
+    id: 'farm_hot_tub_mystery',
+    starter: "The villagers are in the hot tub again.",
+    branches: [
+      { response: "Again? Do they ever get out?",
+        followups: [
+          { response: "I've never seen them leave. Not once.",
+            followups: [
+              { response: "Maybe that's the life. Warm water, no fields to tend.",
+                closers: ["Different priorities.", "I'd miss the wheat. I think."] },
+              { response: "What do they eat? Who feeds them?",
+                closers: ["Questions I'm not sure I want answered.", "Maybe the library has a cafeteria."] }
+            ] }
         ] },
-      { response: "Did you feel scared? Or excited?",
+      { response: "Must be nice. We harvest, they soak.",
         followups: [
-          { response: "Both. Mostly excited. A little sad I turned back.",
-            closers: ["You'll go further next time. Or not. Both are fine.", "The field was here when you got back. It always is."] }
+          { response: "We chose the field. They chose the tub.",
+            closers: ["Both valid.", "I'd visit. If the pathfinder cooperated."] }
+        ] },
+      { response: "I waved once. From the edge of the field. I don't think they saw.",
+        followups: [
+          { response: "Or they did and just didn't wave back.",
+            closers: ["Hot tub etiquette. Hands stay in the water.", "I'll try again next harvest."] }
         ] }
     ]
   },
 ]
 
-const MUSING_STARTERS = new Set([...MUSING_TOPICS, ...FARMING_MUSING_TOPICS].map(t => t.starter))
-
 const ALL_MUSING_TOPICS = [...MUSING_TOPICS, ...FARMING_MUSING_TOPICS]
+const MUSING_STARTERS = new Set(ALL_MUSING_TOPICS.map(t => t.starter))
+
+function nodeChildren (node) {
+  if (node.followups) return { type: 'nodes', items: node.followups }
+  if (node.closers) return { type: 'closers', items: node.closers }
+  return null
+}
 
 function isMusingBusy ({ allowDuringHarvest = false } = {}) {
   if (!allowDuringHarvest && (harvestBusy || goInsideBusy || (typeof bakeBusy !== 'undefined' && bakeBusy))) return true
@@ -4285,17 +4418,47 @@ function isMusingBusy ({ allowDuringHarvest = false } = {}) {
 function endMusingConversation () {
   const now = Date.now()
   musingState = {
-    status: 'idle', currentTopicId: null, currentBranch: null,
-    turnNumber: 0, role: null, suppressUntil: now + 150000,
-    partnerUsername: null, _activeFollowup: null
+    status: 'idle', currentTopicId: null, role: null,
+    suppressUntil: now + 150000, partnerUsername: null,
+    pendingOptions: null, pendingType: null, _timeoutId: null
   }
   logEvent('musing', 'conversation ended, cooldown 2.5min')
+}
+
+function musingTimeout () {
+  logEvent('musing', `timeout (topic: ${musingState.currentTopicId})`)
+  endMusingConversation()
+}
+
+function scheduleMusingTimeout (delayMs) {
+  if (musingState._timeoutId) clearTimeout(musingState._timeoutId)
+  musingState._timeoutId = setTimeout(() => {
+    if (musingState.status !== 'idle') musingTimeout()
+  }, delayMs)
+}
+
+function musingSendAndAdvance (text, spokenNode, topicId) {
+  const delay = 3000 + Math.random() * 4000
+  const snapshot = topicId
+  setTimeout(() => {
+    if (musingState.currentTopicId !== snapshot) return
+    bot.chat(text)
+    logEvent('musing', `said: "${text.substring(0, 40)}..."`)
+    if (!spokenNode) {
+      endMusingConversation()
+      return
+    }
+    const children = nodeChildren(spokenNode)
+    if (!children) { endMusingConversation(); return }
+    musingState.pendingOptions = children.items
+    musingState.pendingType = children.type
+    scheduleMusingTimeout(delay + 30000)
+  }, delay)
 }
 
 function handleMusingMessage (username, message) {
   const trimmed = message.trim()
 
-  // Case 1: recognized starter from another bot
   const topic = ALL_MUSING_TOPICS.find(t => t.starter === trimmed)
   if (topic) {
     if (musingState.status === 'started' && musingState.role === 'initiator') {
@@ -4307,82 +4470,38 @@ function handleMusingMessage (username, message) {
     if (isMusingBusy({ allowDuringHarvest: isFarmingTopic })) return true
 
     const branch = topic.branches[Math.floor(Math.random() * topic.branches.length)]
-    const delay = 3000 + Math.random() * 5000
     musingState = {
-      status: 'responding', currentTopicId: topic.id, currentBranch: branch,
-      turnNumber: 2, role: 'responder', suppressUntil: musingState.suppressUntil,
-      partnerUsername: username, _activeFollowup: null
+      status: 'active', currentTopicId: topic.id, role: 'responder',
+      suppressUntil: musingState.suppressUntil, partnerUsername: username,
+      pendingOptions: null, pendingType: null, _timeoutId: null
     }
-    setTimeout(() => {
-      if (musingState.currentTopicId !== topic.id) return
-      bot.chat(branch.response)
-      logEvent('musing', `responded to ${username}: ${topic.id}`)
-    }, delay)
-    setTimeout(() => {
-      if (musingState.status === 'responding' && musingState.turnNumber === 2 &&
-          musingState.currentTopicId === topic.id) {
-        logEvent('musing', 'timeout waiting for followup')
-        endMusingConversation()
-      }
-    }, delay + 25000)
+    musingSendAndAdvance(branch.response, branch, topic.id)
     return true
   }
 
-  // Case 2: response to our starter (we are initiator, turn 1 → 3)
-  if (musingState.status === 'started' && musingState.role === 'initiator') {
-    const activeTopic = ALL_MUSING_TOPICS.find(t => t.id === musingState.currentTopicId)
-    if (activeTopic) {
-      const matchedBranch = activeTopic.branches.find(b => b.response === trimmed)
-      if (matchedBranch) {
-        musingState.partnerUsername = username
-        musingState.currentBranch = matchedBranch
-        musingState.status = 'responding'
-        musingState.turnNumber = 2
-        const followup = matchedBranch.followups[Math.floor(Math.random() * matchedBranch.followups.length)]
-        const delay = 4000 + Math.random() * 3000
-        setTimeout(() => {
-          if (musingState.currentTopicId !== activeTopic.id) return
-          bot.chat(followup.response)
-          musingState.turnNumber = 3
-          musingState._activeFollowup = followup
-          logEvent('musing', `followup sent: ${activeTopic.id}`)
-        }, delay)
-        setTimeout(() => {
-          if (musingState.turnNumber === 3 && musingState.currentTopicId === activeTopic.id) {
-            logEvent('musing', 'timeout waiting for closer')
-            endMusingConversation()
-          }
-        }, delay + 25000)
-        return true
-      }
-    }
-  }
-
-  // Case 3: followup to our response (we are responder, turn 2 → send closer)
-  if (musingState.role === 'responder' && musingState.turnNumber === 2) {
-    const branch = musingState.currentBranch
-    if (branch) {
-      const matchedFollowup = branch.followups.find(f => f.response === trimmed)
-      if (matchedFollowup) {
-        musingState.turnNumber = 3
-        const closer = matchedFollowup.closers[Math.floor(Math.random() * matchedFollowup.closers.length)]
-        const delay = 3000 + Math.random() * 3000
-        setTimeout(() => {
-          bot.chat(closer)
-          logEvent('musing', `closer sent: ${musingState.currentTopicId}`)
-          endMusingConversation()
-        }, delay)
-        return true
-      }
-    }
-  }
-
-  // Case 4: closer received (we are initiator, turn 3 → done)
-  if (musingState.role === 'initiator' && musingState.turnNumber === 3) {
-    const followup = musingState._activeFollowup
-    if (followup && followup.closers.includes(trimmed)) {
+  if (musingState.status !== 'active' && musingState.status !== 'started') return false
+  if (musingState.pendingType === 'closers') {
+    if (musingState.pendingOptions.includes(trimmed)) {
       logEvent('musing', `conversation complete: ${musingState.currentTopicId}`)
       endMusingConversation()
+      return true
+    }
+  }
+
+  if (musingState.pendingType === 'nodes') {
+    const matched = musingState.pendingOptions.find(n => n.response === trimmed)
+    if (matched) {
+      if (!musingState.partnerUsername) musingState.partnerUsername = username
+      musingState.status = 'active'
+      const children = nodeChildren(matched)
+      if (!children) { endMusingConversation(); return true }
+      if (children.type === 'closers') {
+        const closer = children.items[Math.floor(Math.random() * children.items.length)]
+        musingSendAndAdvance(closer, null, musingState.currentTopicId)
+      } else {
+        const pick = children.items[Math.floor(Math.random() * children.items.length)]
+        musingSendAndAdvance(pick.response, pick, musingState.currentTopicId)
+      }
       return true
     }
   }
@@ -4400,19 +4519,12 @@ function initiateMusingFromPool (pool, label) {
   if (recentMusingTopics.size >= Math.floor(ALL_MUSING_TOPICS.length * 0.8)) recentMusingTopics.clear()
 
   musingState = {
-    status: 'started', currentTopicId: topic.id, currentBranch: null,
-    turnNumber: 1, role: 'initiator', suppressUntil: musingState.suppressUntil,
-    partnerUsername: null, _activeFollowup: null
+    status: 'started', currentTopicId: topic.id, role: 'initiator',
+    suppressUntil: musingState.suppressUntil, partnerUsername: null,
+    pendingOptions: topic.branches, pendingType: 'nodes', _timeoutId: null
   }
   logEvent('musing', `initiated (${label}): ${topic.id}`)
-
-  setTimeout(() => {
-    if (musingState.status === 'started' && musingState.currentTopicId === topic.id) {
-      logEvent('musing', 'timeout: no response to starter')
-      musingState.status = 'idle'
-      musingState.currentTopicId = null
-    }
-  }, 20000)
+  scheduleMusingTimeout(20000)
   return true
 }
 
