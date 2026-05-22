@@ -339,6 +339,7 @@ function evaluateFollowChain (targetUsername) {
 const HARVEST_WAYPOINTS = {
   field_east_approach: { x: -278, y: 64, z: 567 },
   field_center:        { x: -283, y: 64, z: 562 },
+  north_field_center:  { x: -283, y: 64, z: 554 },
   chest_approach:      { x: -267, y: 65, z: 570 },
   kitchen_chest:       { x: -267, y: 67, z: 569 },
   // Potato patch south of the main field, near the pond. The patch was a
@@ -355,6 +356,7 @@ const POTATO_SWEEP_POINTS = [
   { x: -287, y: 63, z: 577 }, { x: -286, y: 63, z: 577 },
 ]
 const FIELD_BOUNDS = { xMin: -287, xMax: -279, zMin: 559, zMax: 565 }
+const NORTH_FIELD_BOUNDS = { xMin: -287, xMax: -279, zMin: 551, zMax: 557 }
 const HOSTILE_NAMES = new Set([
   'zombie', 'skeleton', 'spider', 'creeper', 'witch', 'enderman',
   'slime', 'husk', 'drowned', 'phantom', 'stray', 'cave_spider',
@@ -659,9 +661,17 @@ function hostilesNearby (radius = 16) {
 function filterByHalf (positions, half) {
   if (half === 'north') return positions.filter(p => p.z >= 559 && p.z <= 561)
   if (half === 'south') return positions.filter(p => p.z >= 563 && p.z <= 565)
-  return positions.filter(p =>
+  if (half === 'south-field') return positions.filter(p =>
     p.x >= FIELD_BOUNDS.xMin && p.x <= FIELD_BOUNDS.xMax &&
     p.z >= FIELD_BOUNDS.zMin && p.z <= FIELD_BOUNDS.zMax
+  )
+  if (half === 'north-field') return positions.filter(p =>
+    p.x >= NORTH_FIELD_BOUNDS.xMin && p.x <= NORTH_FIELD_BOUNDS.xMax &&
+    p.z >= NORTH_FIELD_BOUNDS.zMin && p.z <= NORTH_FIELD_BOUNDS.zMax
+  )
+  return positions.filter(p =>
+    p.x >= FIELD_BOUNDS.xMin && p.x <= FIELD_BOUNDS.xMax &&
+    p.z >= NORTH_FIELD_BOUNDS.zMin && p.z <= FIELD_BOUNDS.zMax
   )
 }
 
@@ -737,7 +747,10 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
       return
     }
     const startDeaths = deathCount
-    const halfLabel = half === 'all' ? 'the whole field' : `the ${half} half`
+    const halfLabel = half === 'all' ? 'both fields'
+      : half === 'north-field' ? 'the north field'
+      : half === 'south-field' ? 'the south field'
+      : `the ${half} half`
     bot.chat(pickLine(HARVEST_START_LINES, { user: user || 'coming', half: halfLabel }))
     logEvent('harvest-rc', `start half=${half} startDeaths=${startDeaths}`)
 
@@ -747,79 +760,95 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
       if (deathCount > startDeaths) throw new Error('died exiting house')
     }
 
-    // Travel: detour around the tree, then to field center.
+    // Travel: detour around the tree, then to the target field center.
     await pathTo(HARVEST_WAYPOINTS.field_east_approach, 1)
-    await pathTo(HARVEST_WAYPOINTS.field_center, 1)
+    const targetCenter = (half === 'north-field')
+      ? HARVEST_WAYPOINTS.north_field_center
+      : HARVEST_WAYPOINTS.field_center
+    await pathTo(targetCenter, 1)
     if (deathCount > startDeaths) throw new Error('died en route')
 
     const mcData = require('minecraft-data')(bot.version)
     const wheatId = mcData.blocksByName.wheat?.id
     if (wheatId === undefined) throw new Error('wheat block id unknown')
     const Vec3 = require('vec3').Vec3
-    let allWheat = bot.findBlocks({ matching: wheatId, maxDistance: 24, count: 400 })
-    allWheat = filterByHalf(allWheat, half)
-    logEvent('harvest-rc', `found ${allWheat.length} wheat tiles in ${half}`)
-    if (!allWheat.length) {
-      bot.chat(`No wheat tiles found in ${halfLabel}.`)
-      return
-    }
-    // Order tiles as CCW nautilus from SE corner — see places/wheat-field
-    // in the journal. findBlocks returns distance-sorted, which walks
-    // randomly across the field and creates more drop misses.
-    allWheat = orderNautilusCCW(allWheat)
-    bot.chat(`Right-clicking ${allWheat.length} tiles in ${halfLabel} (CCW nautilus)…`)
-
     const wheatCountBefore = bot.inventory.items()
       .filter(i => i.name === 'wheat').reduce((s, i) => s + i.count, 0)
 
-    let activated = 0
-    let harvested = 0
-    for (let i = 0; i < allWheat.length; i++) {
-      const pos = allWheat[i]
-      // Pathfind range=1 so the bot stands adjacent — drops more likely to land
-      // in pickup radius. If pathfinding fails, skip; the sweep will catch it.
-      try { await pathTo({ x: pos.x, y: pos.y, z: pos.z }, 1, 5000) }
-      catch (e) { logEvent('harvest-rc', `pathfind miss ${pos.x},${pos.z}: ${e.message}`); continue }
-
-      const before = bot.blockAt(new Vec3(pos.x, pos.y, pos.z))
-      if (!before || before.name !== 'wheat') continue
-      const wasMature = before.metadata === 7
-      try {
-        await bot.activateBlock(before)
-        activated++
-        if (wasMature) {
-          // Confirm by checking the block reset to growing (metadata < 7).
-          const after = bot.blockAt(new Vec3(pos.x, pos.y, pos.z))
-          if (after && after.name === 'wheat' && (after.metadata ?? 7) < 7) harvested++
-        }
-      } catch (e) { logEvent('harvest-rc', `activate fail ${pos.x},${pos.z}: ${e.message}`) }
-
-      if ((i + 1) % 10 === 0) {
-        checkAbort(myGen)
-        if (deathCount > startDeaths) throw new Error('died mid-harvest')
-        if (bot.health != null && bot.health < 10) throw new Error(`HP low (${bot.health}) — aborting`)
-        if (hostilesNearby(10).length) throw new Error('hostiles approaching')
-      }
+    const SWEEP_ZS = {
+      'north': [559, 560, 561],
+      'south': [563, 564, 565],
+      'south-field': [559, 560, 561, 563, 564, 565],
+      'north-field': [555, 556, 557, 551, 552, 553],
     }
-    logEvent('harvest-rc', `activated=${activated} harvested=${harvested}`)
 
-    // Full-coverage sweep of the harvested half (every farmland tile).
-    bot.chat(`Activated ${activated}, harvested ${harvested} mature. Full-coverage sweep…`)
-    const sweepZs = half === 'north' ? [559, 560, 561]
-                   : half === 'south' ? [563, 564, 565]
-                   : [559, 560, 561, 563, 564, 565]
-    let sweepIdx = 0
-    for (const z of sweepZs) {
-      // Boustrophedon: alternate x direction by row.
-      const xs = (sweepIdx % 2 === 0)
-        ? [-279,-280,-281,-282,-283,-284,-285,-286,-287]
-        : [-287,-286,-285,-284,-283,-282,-281,-280,-279]
-      sweepIdx++
-      for (const x of xs) {
-        checkAbort(myGen)
-        if (deathCount > startDeaths) throw new Error('died during sweep')
-        await pathTo({ x, y: 64, z }, 1, 4000)
+    async function harvestAndSweepField (fieldHalf, label) {
+      let fieldWheat = bot.findBlocks({ matching: wheatId, maxDistance: 32, count: 400 })
+      fieldWheat = filterByHalf(fieldWheat, fieldHalf)
+      logEvent('harvest-rc', `found ${fieldWheat.length} wheat tiles in ${fieldHalf}`)
+      if (!fieldWheat.length) {
+        bot.chat(`No wheat tiles found in ${label}.`)
+        return { activated: 0, harvested: 0 }
       }
+      fieldWheat = orderNautilusCCW(fieldWheat)
+      bot.chat(`Right-clicking ${fieldWheat.length} tiles in ${label} (CCW nautilus)…`)
+
+      let activated = 0
+      let harvested = 0
+      for (let i = 0; i < fieldWheat.length; i++) {
+        const pos = fieldWheat[i]
+        try { await pathTo({ x: pos.x, y: pos.y, z: pos.z }, 1, 5000) }
+        catch (e) { logEvent('harvest-rc', `pathfind miss ${pos.x},${pos.z}: ${e.message}`); continue }
+
+        const before = bot.blockAt(new Vec3(pos.x, pos.y, pos.z))
+        if (!before || before.name !== 'wheat') continue
+        const wasMature = before.metadata === 7
+        try {
+          await bot.activateBlock(before)
+          activated++
+          if (wasMature) {
+            const after = bot.blockAt(new Vec3(pos.x, pos.y, pos.z))
+            if (after && after.name === 'wheat' && (after.metadata ?? 7) < 7) harvested++
+          }
+        } catch (e) { logEvent('harvest-rc', `activate fail ${pos.x},${pos.z}: ${e.message}`) }
+
+        if ((i + 1) % 10 === 0) {
+          checkAbort(myGen)
+          if (deathCount > startDeaths) throw new Error('died mid-harvest')
+          if (bot.health != null && bot.health < 10) throw new Error(`HP low (${bot.health}) — aborting`)
+          if (hostilesNearby(10).length) throw new Error('hostiles approaching')
+        }
+      }
+      logEvent('harvest-rc', `${fieldHalf}: activated=${activated} harvested=${harvested}`)
+
+      bot.chat(`${label}: activated ${activated}, harvested ${harvested} mature. Sweeping…`)
+      const sweepZs = SWEEP_ZS[fieldHalf]
+      let sweepIdx = 0
+      for (const z of sweepZs) {
+        const xs = (sweepIdx % 2 === 0)
+          ? [-279,-280,-281,-282,-283,-284,-285,-286,-287]
+          : [-287,-286,-285,-284,-283,-282,-281,-280,-279]
+        sweepIdx++
+        for (const x of xs) {
+          checkAbort(myGen)
+          if (deathCount > startDeaths) throw new Error('died during sweep')
+          await pathTo({ x, y: 64, z }, 1, 4000)
+        }
+      }
+      return { activated, harvested }
+    }
+
+    let totalActivated = 0
+    let totalHarvested = 0
+    if (half === 'all') {
+      const r1 = await harvestAndSweepField('north-field', 'the north field')
+      totalActivated += r1.activated; totalHarvested += r1.harvested
+      if (deathCount > startDeaths) throw new Error('died between fields')
+      const r2 = await harvestAndSweepField('south-field', 'the south field')
+      totalActivated += r2.activated; totalHarvested += r2.harvested
+    } else {
+      const r = await harvestAndSweepField(half, halfLabel)
+      totalActivated = r.activated; totalHarvested = r.harvested
     }
 
     // Toss trash while still outside, then re-enter house and deposit.
@@ -845,8 +874,8 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
         try { await win.deposit(it.type, it.metadata, it.count); deposited += it.count } catch (e) { break }
       }
       win.close()
-      bot.chat(pickLine(HARVEST_DONE_LINES, { dug: harvested, gained, deposited }))
-      logEvent('harvest-rc', `activated=${activated} harvested=${harvested} gained=${gained} deposited=${deposited}`)
+      bot.chat(pickLine(HARVEST_DONE_LINES, { dug: totalHarvested, gained, deposited }))
+      logEvent('harvest-rc', `activated=${totalActivated} harvested=${totalHarvested} gained=${gained} deposited=${deposited}`)
     } catch (e) {
       bot.chat(`Deposit failed: ${e.message}. Wheat still in my pockets.`)
     }
@@ -3259,7 +3288,9 @@ const CHAT_HANDLERS = [
     handler: (user, stripped) => {
       abortGen++
       let half = 'all'
-      if (/\bnorth\b/i.test(stripped)) half = 'north'
+      if (/\bnorth\s+field\b/i.test(stripped)) half = 'north-field'
+      else if (/\bsouth\s+field\b/i.test(stripped)) half = 'south-field'
+      else if (/\bnorth\b/i.test(stripped)) half = 'north'
       else if (/\bsouth\b/i.test(stripped)) half = 'south'
       runHarvestRightClick({ half, user }).catch(e => {
         if (e.name === 'AbortError') return
