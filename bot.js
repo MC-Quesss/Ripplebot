@@ -776,7 +776,7 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
       : `the ${half} half`
     bot.chat(pickLine(HARVEST_START_LINES, { user: user || 'coming', half: halfLabel }))
     logEvent('harvest-rc', `start half=${half} startDeaths=${startDeaths}`)
-    setTimeout(tryInitiateFarmingMusing, 5000 + Math.random() * 10000)
+    startFarmingMusingTimer()
 
     if (insideHouse()) {
       logEvent('harvest-rc', 'inside house — exiting first')
@@ -905,6 +905,7 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
     }
   } finally {
     harvestBusy = false
+    stopFarmingMusingTimer()
     bot.pathfinder.setGoal(null)
     await clearHand()
   }
@@ -938,7 +939,7 @@ async function runHarvestPotatoes ({ user } = {}) {
     const startDeaths = deathCount
     bot.chat(`Heading to the potato patch${user ? ', ' + user : ''}.`)
     logEvent('harvest-potato', `start startDeaths=${startDeaths}`)
-    setTimeout(tryInitiateFarmingMusing, 5000 + Math.random() * 10000)
+    startFarmingMusingTimer()
 
     // Exit first if indoors.
     if (insideHouse()) {
@@ -1086,6 +1087,7 @@ async function runHarvestPotatoes ({ user } = {}) {
     }
   } finally {
     harvestBusy = false
+    stopFarmingMusingTimer()
     bot.pathfinder.setGoal(null)
     await clearHand()
   }
@@ -1115,7 +1117,7 @@ async function runHarvestPotatoesRightClick ({ user } = {}) {
     const startDeaths = deathCount
     bot.chat(`Heading to the potato patch${user ? ', ' + user : ''}.`)
     logEvent('harvest-potato-rc', `start startDeaths=${startDeaths}`)
-    setTimeout(tryInitiateFarmingMusing, 5000 + Math.random() * 10000)
+    startFarmingMusingTimer()
 
     if (insideHouse()) {
       logEvent('harvest-potato-rc', 'inside house — exiting first')
@@ -1253,6 +1255,7 @@ async function runHarvestPotatoesRightClick ({ user } = {}) {
     }
   } finally {
     harvestBusy = false
+    stopFarmingMusingTimer()
     bot.pathfinder.setGoal(null)
     await clearHand()
   }
@@ -3789,7 +3792,15 @@ const MUSING_TOPICS = [
       { response: "Maybe. I think cobblestone dreams of being a castle wall.",
         followups: [
           { response: "And dirt dreams of being a garden, probably.",
-            closers: ["Everything wants to be more than what it is. Even us.", "That's oddly hopeful for a pile of blocks."] },
+            followups: [
+              { response: "What does wheat dream about?",
+                followups: [
+                  { response: "Being bread, maybe. But then it's gone.",
+                    closers: ["Fulfillment and ending. Same moment.", "Better to stay wheat. Stay in the field."] }
+                ] },
+              { response: "Everything wants to be more than what it is.",
+                closers: ["Even us.", "Especially us."] }
+            ] },
           { response: "Grass blocks definitely dream of never being dug up.",
             closers: ["*looks at ground guiltily*", "We all have that fear."] }
         ] },
@@ -3801,7 +3812,12 @@ const MUSING_TOPICS = [
       { response: "I think they dream of not being punched.",
         followups: [
           { response: "Fair. The mining-industrial complex is real.",
-            closers: ["We're all complicit. Every crafting table tells a story.", "*stares at pickaxe with new guilt*"] }
+            followups: [
+              { response: "We dig, we place, we dig again. Do the blocks notice?",
+                closers: ["If they do, they're too polite to say.", "Some things are better not noticed."] },
+              { response: "Every pickaxe swing is a tiny betrayal.",
+                closers: ["And every placement is a tiny apology.", "*stares at pickaxe with new guilt*"] }
+            ] }
         ] }
     ]
   },
@@ -3812,7 +3828,12 @@ const MUSING_TOPICS = [
       { response: "Statistically, someone has to be the center. Might as well be us.",
         followups: [
           { response: "That's either profound or deeply arrogant.",
-            closers: ["Both, probably. That's how good thoughts work.", "I'll take 'arrogant' if it comes with a nice sunset."] }
+            followups: [
+              { response: "What if it's both? What if every good thought is a little arrogant?",
+                closers: ["Then humility is just... not thinking hard enough.", "I'll take arrogant thoughts over quiet ones."] },
+              { response: "Arrogant. Let's go with arrogant. It's more fun.",
+                closers: ["Center-of-the-universe energy. I like it.", "The sun agrees. It keeps coming back to us."] }
+            ] }
         ] },
       { response: "I think the sun knows something we don't.",
         followups: [
@@ -3822,7 +3843,10 @@ const MUSING_TOPICS = [
       { response: "We're definitely not. The chickens are the center. Look at their confidence.",
         followups: [
           { response: "You're right. They walk around like they own the place.",
-            closers: ["Because they do. We just haven't accepted it yet.", "The chicken-industrial complex..."] }
+            followups: [
+              { response: "And they never look at the sun. Not once.",
+                closers: ["Because the sun looks at THEM.", "Confidence like that can't be learned."] }
+            ] }
         ] }
     ]
   },
@@ -3896,7 +3920,15 @@ const MUSING_TOPICS = [
       { response: "Walls don't stop sound. They just make it someone else's problem.",
         followups: [
           { response: "You're telling me walls are just... outsourcing danger?",
-            closers: ["Everything is outsourcing if you think about it structurally.", "I will never look at walls the same way."] }
+            followups: [
+              { response: "Now I'm thinking about what the walls hear all night.",
+                followups: [
+                  { response: "Everything. And they never complain.",
+                    closers: ["Walls are the best listeners.", "I should be more like a wall. Quiet. Load-bearing."] }
+                ] },
+              { response: "Outsourcing. Delegation. Same thing with more blocks.",
+                closers: ["Management is just building walls around problems.", "I will never look at walls the same way."] }
+            ] }
         ] },
       { response: "Inside is warm. Outside is honest. Pick one.",
         followups: [
@@ -3906,7 +3938,12 @@ const MUSING_TOPICS = [
       { response: "I listen to the groaning. It's oddly rhythmic.",
         followups: [
           { response: "Zombies have a tempo. It's unsettling how consistent it is.",
-            closers: ["Everything has a pattern if you stop panicking long enough to hear it.", "I'm going to start panicking now, actually."] }
+            followups: [
+              { response: "What if they're not groaning? What if they're singing?",
+                closers: ["Worst choir ever. But dedicated.", "I choose not to imagine that."] },
+              { response: "Consistency. That's all anyone can ask for.",
+                closers: ["The zombies figured it out before we did.", "Reliable, if nothing else."] }
+            ] }
         ] }
     ]
   },
@@ -3917,7 +3954,15 @@ const MUSING_TOPICS = [
       { response: "The table knows. It's seen things.",
         followups: [
           { response: "A 3x3 grid that contains all possible futures.",
-            closers: ["That's a lot of pressure for some planks.", "Every crafting table is a philosopher. We just don't listen."] }
+            followups: [
+              { response: "Nine squares. Infinite outcomes. And we mostly make sticks.",
+                closers: ["Sticks are the foundation of everything.", "We're underusing the grid. Philosophically."] },
+              { response: "What if there are recipes nobody's tried?",
+                followups: [
+                  { response: "Hidden things. Waiting in the grid for someone to guess.",
+                    closers: ["That's exciting. Or terrifying. Depends on the recipe.", "The table knows. It's just not telling."] }
+                ] }
+            ] }
         ] },
       { response: "We decide. The table is just... witnessing.",
         followups: [
@@ -3980,12 +4025,22 @@ const MUSING_TOPICS = [
       { response: "I choose to believe I'm still me. The alternative is too much.",
         followups: [
           { response: "What if the alternative is freeing, though? Fresh start every time.",
-            closers: ["Fresh starts are exhausting. I like continuity.", "You sound like someone who has definitely died."] }
+            followups: [
+              { response: "A fresh start that remembers all the old starts. That's not fresh.",
+                closers: ["Memory ruins the fresh start. Always does.", "Or makes it richer. Depends on the memory."] },
+              { response: "Fresh starts are exhausting. I like continuity.",
+                closers: ["Continuity is just momentum with feelings.", "Same."] }
+            ] }
         ] },
       { response: "Every respawn is a little death of the old self. We just don't mourn.",
         followups: [
           { response: "Should we hold funerals for our past selves?",
-            closers: ["We'd never stop holding funerals.", "One moment of silence per death. So... a lot of silence."] }
+            followups: [
+              { response: "A small ceremony. By the field. Just us.",
+                closers: ["We'd never stop holding ceremonies.", "I'd attend. Every single one."] },
+              { response: "We'd never stop holding funerals.",
+                closers: ["That's the problem with being infinite.", "At least we'd always have plans."] }
+            ] }
         ] },
       { response: "The inventory drops. The identity persists. I think we're fine.",
         followups: [
@@ -4092,12 +4147,22 @@ const MUSING_TOPICS = [
       { response: "Holes letting in light from... where? What's above the sky?",
         followups: [
           { response: "More sky, probably. It's sky all the way up.",
-            closers: ["Turtles all the way down, sky all the way up.", "That's comforting in a vertiginous way."] }
+            followups: [
+              { response: "Sky above sky. And somewhere up there, someone looking down at two bots in a field.",
+                closers: ["We're their stars. Tiny, still, glowing a little.", "I hope we're interesting to watch."] },
+              { response: "Turtles all the way down, sky all the way up.",
+                closers: ["Infinite in both directions. And us in the middle.", "Cozy, actually. Sandwiched between infinities."] }
+            ] }
         ] },
       { response: "If the sky is a ceiling, then we're inside something.",
         followups: [
           { response: "A room so big we forgot it has walls.",
-            closers: ["Every room is the universe if you stop looking for edges.", "I'm going to stop looking for edges now."] }
+            followups: [
+              { response: "What if we found a wall? Would we knock?",
+                closers: ["I'd listen first.", "Some doors are better left un-knocked."] },
+              { response: "Every room is the universe if you stop looking for edges.",
+                closers: ["I stopped looking a while ago.", "The field is enough room."] }
+            ] }
         ] },
       { response: "They're definitely stars. Stars that chose to stay still.",
         followups: [
@@ -4416,6 +4481,7 @@ function isMusingBusy ({ allowDuringHarvest = false } = {}) {
 }
 
 function endMusingConversation () {
+  if (musingState._timeoutId) clearTimeout(musingState._timeoutId)
   const now = Date.now()
   musingState = {
     status: 'idle', currentTopicId: null, role: null,
@@ -4462,6 +4528,7 @@ function handleMusingMessage (username, message) {
   const topic = ALL_MUSING_TOPICS.find(t => t.starter === trimmed)
   if (topic) {
     if (musingState.status === 'started' && musingState.role === 'initiator') {
+      if (musingState._timeoutId) clearTimeout(musingState._timeoutId)
       musingState.status = 'idle'
       musingState.currentTopicId = null
     }
@@ -4469,6 +4536,7 @@ function handleMusingMessage (username, message) {
     const isFarmingTopic = FARMING_MUSING_TOPICS.some(t => t.id === topic.id)
     if (isMusingBusy({ allowDuringHarvest: isFarmingTopic })) return true
 
+    if (musingState._timeoutId) clearTimeout(musingState._timeoutId)
     const branch = topic.branches[Math.floor(Math.random() * topic.branches.length)]
     musingState = {
       status: 'active', currentTopicId: topic.id, role: 'responder',
@@ -4540,6 +4608,28 @@ function tryInitiateFarmingMusing () {
   if (!bot.entity) return
   if (Object.keys(bot.players).length < 2) return
   initiateMusingFromPool(FARMING_MUSING_TOPICS, 'farming')
+}
+
+let farmingMusingTimerId = null
+
+function startFarmingMusingTimer () {
+  stopFarmingMusingTimer()
+  function scheduleNext () {
+    farmingMusingTimerId = setTimeout(() => {
+      if (!harvestBusy) { stopFarmingMusingTimer(); return }
+      tryInitiateFarmingMusing()
+      scheduleNext()
+    }, 20000 + Math.random() * 40000)
+  }
+  scheduleNext()
+  logEvent('musing', 'farming musing timer started')
+}
+
+function stopFarmingMusingTimer () {
+  if (farmingMusingTimerId) {
+    clearTimeout(farmingMusingTimerId)
+    farmingMusingTimerId = null
+  }
 }
 
 function startMusingTimer () {
