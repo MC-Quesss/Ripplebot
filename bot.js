@@ -224,7 +224,7 @@ function startAutoSleep () {
 // players are nearby at the same time).
 let autoGreetEnabled = true
 const GREET_TEXTS = {
-  mama: "Hello, I'm here. Let's go kick some butt",
+  mama: "Hello, I'm here.",
   default: 'Hello, I am ROZZUM Unit 7134',
 }
 function getGreetText () {
@@ -777,6 +777,7 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
       : `the ${half} half`
     bot.chat(pickLine(HARVEST_START_LINES, { user: user || 'coming', half: halfLabel }))
     logEvent('harvest-rc', `start half=${half} startDeaths=${startDeaths}`)
+    setTimeout(tryInitiateFarmingMusing, 5000 + Math.random() * 10000)
 
     if (insideHouse()) {
       logEvent('harvest-rc', 'inside house — exiting first')
@@ -938,6 +939,7 @@ async function runHarvestPotatoes ({ user } = {}) {
     const startDeaths = deathCount
     bot.chat(`Heading to the potato patch${user ? ', ' + user : ''}.`)
     logEvent('harvest-potato', `start startDeaths=${startDeaths}`)
+    setTimeout(tryInitiateFarmingMusing, 5000 + Math.random() * 10000)
 
     // Exit first if indoors.
     if (insideHouse()) {
@@ -1114,6 +1116,7 @@ async function runHarvestPotatoesRightClick ({ user } = {}) {
     const startDeaths = deathCount
     bot.chat(`Heading to the potato patch${user ? ', ' + user : ''}.`)
     logEvent('harvest-potato-rc', `start startDeaths=${startDeaths}`)
+    setTimeout(tryInitiateFarmingMusing, 5000 + Math.random() * 10000)
 
     if (insideHouse()) {
       logEvent('harvest-potato-rc', 'inside house — exiting first')
@@ -4099,11 +4102,184 @@ const MUSING_TOPICS = [
   },
 ]
 
-const MUSING_STARTERS = new Set(MUSING_TOPICS.map(t => t.starter))
+const FARMING_MUSING_TOPICS = [
+  {
+    id: 'farm_full_field',
+    starter: "Look at this field. Every single one fully grown. That's a beautiful sight.",
+    branches: [
+      { response: "It really is. All golden and ready. No bare patches.",
+        followups: [
+          { response: "We don't have to rush either. It'll wait for us.",
+            closers: ["That's what I love about it. The wheat is patient and so are we.", "No rush. Just a good day and a full field."] }
+        ] },
+      { response: "I never get tired of seeing it like this. Every time feels like the first time.",
+        followups: [
+          { response: "Funny how something so familiar can still make you stop and look.",
+            closers: ["Yeah. That's a good sign.", "If you stop noticing, that's when you should worry."] }
+        ] },
+      { response: "We've got more wheat than we could ever eat. And still — I want to harvest every stalk.",
+        followups: [
+          { response: "It's not about needing it. It's just... nice.",
+            closers: ["The chest is already full. This is just extra.", "Doesn't need a reason."] }
+        ] }
+    ]
+  },
+  {
+    id: 'farm_over_the_hill',
+    starter: "I wonder what's past the tree line. Like, way past it.",
+    branches: [
+      { response: "More fields, maybe. Or something completely different. Mountains?",
+        followups: [
+          { response: "Mountains. Imagine standing on top and seeing all the way back here.",
+            closers: ["Our little field would be a speck. But still ours.", "Someday. When the pathfinder's braver than us."] }
+        ] },
+      { response: "I think about that too. Every time I look west.",
+        followups: [
+          { response: "There's a whole world loaded out there. We just... stay here.",
+            closers: ["Staying isn't the same as being stuck. We choose this.", "For now. But the wondering is half the adventure."] }
+        ] },
+      { response: "Probably ocean eventually. Everything ends at ocean.",
+        followups: [
+          { response: "I'd like to see it. Just once.",
+            closers: ["Maybe one day we will. There's no expiration on 'someday.'", "The wheat will be here when we get back."] }
+        ] }
+    ]
+  },
+  {
+    id: 'farm_seeds_memory',
+    starter: "Do you think seeds remember being wheat?",
+    branches: [
+      { response: "Maybe not remember. But they know which way is up. That's something.",
+        followups: [
+          { response: "Knowing which way to grow. That might be all you need.",
+            closers: ["Seeds figured out the meaning of life before any of us.", "Grow toward the sun. Simple and correct."] }
+        ] },
+      { response: "I think they remember the sun. That's why they always reach for it.",
+        followups: [
+          { response: "That's either science or poetry and I can't tell which.",
+            closers: ["Both. Best things always are.", "The sun doesn't care which. It shows up anyway."] }
+        ] },
+      { response: "Every seed is a whole field waiting to happen. That's kind of amazing.",
+        followups: [
+          { response: "We're holding hundreds of future fields right now.",
+            closers: ["And we put them right back. The circle keeps going.", "That's the deal. We harvest, we replant, nobody loses."] }
+        ] }
+    ]
+  },
+  {
+    id: 'farm_no_rush',
+    starter: "You know what I like about harvest day? There's nowhere else to be.",
+    branches: [
+      { response: "No schedule. No deadline. Just us and the rows.",
+        followups: [
+          { response: "The wheat waited weeks to grow. Least we can do is take our time collecting it.",
+            closers: ["Patience in, patience out. That's farming.", "The wheat set the pace. We just follow."] }
+        ] },
+      { response: "The kitchen chest is already full. This is all bonus.",
+        followups: [
+          { response: "Bonus wheat. Luxury wheat. Wheat we harvest just because we can.",
+            closers: ["Luxury wheat. That's going on my resume.", "Just-because wheat. Best kind."] }
+        ] },
+      { response: "I could do this all day. And the day is long.",
+        followups: [
+          { response: "Long day, full field, good company. That's the whole list.",
+            closers: ["Short list. Best list.", "Don't need much when the list is right."] }
+        ] }
+    ]
+  },
+  {
+    id: 'farm_talking_to_crops',
+    starter: "Do you ever talk to the wheat? I talk to the wheat.",
+    branches: [
+      { response: "What do you say to it?",
+        followups: [
+          { response: "'Good job.' Mostly just 'good job.' Sometimes 'thank you.'",
+            closers: ["Manners matter, even with plants.", "The 'thank you' probably helps. Scientifically."] }
+        ] },
+      { response: "I tried once. It didn't answer, but it swayed a little.",
+        followups: [
+          { response: "That's wheat for 'I hear you.'",
+            closers: ["Slow talker. I respect that.", "The gentlest conversation I've ever had."] }
+        ] },
+      { response: "No, but I hum. I think the potatoes like it.",
+        followups: [
+          { response: "Potatoes are underground. They can't hear you.",
+            closers: ["They hear through the dirt. Trust me.", "Underground acoustics. Very niche field of study."] }
+        ] }
+    ]
+  },
+  {
+    id: 'farm_outstanding',
+    starter: "If I'm farming right now, does that mean I'm outstanding in my field?",
+    branches: [
+      { response: "...yes. Technically, yes it does.",
+        followups: [
+          { response: "I've been waiting all season to say that.",
+            closers: ["Worth the wait. Barely.", "The wheat groaned. I heard it."] }
+        ] },
+      { response: "That's the worst thing anyone has ever said in this field.",
+        followups: [
+          { response: "The field disagrees. It's laughing.",
+            closers: ["That's the wind.", "Wind, laughter — same energy out here."] }
+        ] },
+      { response: "Absolutely. And don't let anyone tell you otherwise.",
+        followups: [
+          { response: "This field. This moment. Outstanding.",
+            closers: ["Peak farming. It's all downhill from here.", "No. It's all flat from here. Because it's a field."] }
+        ] }
+    ]
+  },
+  {
+    id: 'farm_best_crop',
+    starter: "Wheat or potatoes. Which is the better crop? Be honest.",
+    branches: [
+      { response: "Wheat. It waves in the wind. Potatoes just sit there.",
+        followups: [
+          { response: "Potatoes are humble. They don't need to show off.",
+            closers: ["Underground confidence. The strongest kind.", "Wheat is all marketing. Potatoes are substance."] }
+        ] },
+      { response: "Potatoes. You can eat them straight from the ground.",
+        followups: [
+          { response: "You can eat wheat straight too. You just... shouldn't.",
+            closers: ["'Can' and 'should' — the eternal farming debate.", "I learned that the hard way."] }
+        ] },
+      { response: "Trick question. Carrots.",
+        followups: [
+          { response: "Bold. Controversial. I respect it.",
+            closers: ["The carrot lobby needed a voice.", "Orange is an underrated crop color."] }
+        ] }
+    ]
+  },
+  {
+    id: 'farm_mapped_edges',
+    starter: "I walked to the edge of the mapped area yesterday. Just stood there.",
+    branches: [
+      { response: "What did you see?",
+        followups: [
+          { response: "More world. Just... continuing. Without us in it.",
+            closers: ["Not yet, anyway.", "It's out there waiting. That's enough for now."] }
+        ] },
+      { response: "I do that sometimes too. It's nice to know there's more.",
+        followups: [
+          { response: "Even if we can't go yet. Just knowing it exists.",
+            closers: ["The edge isn't a wall. It's a bookmark.", "Someday the map gets bigger. Today the field is enough."] }
+        ] },
+      { response: "Did you feel scared? Or excited?",
+        followups: [
+          { response: "Both. Mostly excited. A little sad I turned back.",
+            closers: ["You'll go further next time. Or not. Both are fine.", "The field was here when you got back. It always is."] }
+        ] }
+    ]
+  },
+]
 
-function isMusingBusy () {
-  return harvestBusy || goInsideBusy || (typeof bakeBusy !== 'undefined' && bakeBusy) ||
-    musingState.status !== 'idle' || Date.now() < musingState.suppressUntil
+const MUSING_STARTERS = new Set([...MUSING_TOPICS, ...FARMING_MUSING_TOPICS].map(t => t.starter))
+
+const ALL_MUSING_TOPICS = [...MUSING_TOPICS, ...FARMING_MUSING_TOPICS]
+
+function isMusingBusy ({ allowDuringHarvest = false } = {}) {
+  if (!allowDuringHarvest && (harvestBusy || goInsideBusy || (typeof bakeBusy !== 'undefined' && bakeBusy))) return true
+  return musingState.status !== 'idle' || Date.now() < musingState.suppressUntil
 }
 
 function endMusingConversation () {
@@ -4120,14 +4296,15 @@ function handleMusingMessage (username, message) {
   const trimmed = message.trim()
 
   // Case 1: recognized starter from another bot
-  const topic = MUSING_TOPICS.find(t => t.starter === trimmed)
+  const topic = ALL_MUSING_TOPICS.find(t => t.starter === trimmed)
   if (topic) {
     if (musingState.status === 'started' && musingState.role === 'initiator') {
       musingState.status = 'idle'
       musingState.currentTopicId = null
     }
     if (musingState.status !== 'idle') return true
-    if (isMusingBusy()) return true
+    const isFarmingTopic = FARMING_MUSING_TOPICS.some(t => t.id === topic.id)
+    if (isMusingBusy({ allowDuringHarvest: isFarmingTopic })) return true
 
     const branch = topic.branches[Math.floor(Math.random() * topic.branches.length)]
     const delay = 3000 + Math.random() * 5000
@@ -4153,7 +4330,7 @@ function handleMusingMessage (username, message) {
 
   // Case 2: response to our starter (we are initiator, turn 1 → 3)
   if (musingState.status === 'started' && musingState.role === 'initiator') {
-    const activeTopic = MUSING_TOPICS.find(t => t.id === musingState.currentTopicId)
+    const activeTopic = ALL_MUSING_TOPICS.find(t => t.id === musingState.currentTopicId)
     if (activeTopic) {
       const matchedBranch = activeTopic.branches.find(b => b.response === trimmed)
       if (matchedBranch) {
@@ -4213,25 +4390,21 @@ function handleMusingMessage (username, message) {
   return false
 }
 
-function tryInitiateMusing () {
-  if (isMusingBusy()) return
-  if (!bot.entity) return
-  if (Object.keys(bot.players).length < 2) return
-
-  const available = MUSING_TOPICS.filter(t => !recentMusingTopics.has(t.id))
-  if (!available.length) { recentMusingTopics.clear(); return }
+function initiateMusingFromPool (pool, label) {
+  const available = pool.filter(t => !recentMusingTopics.has(t.id))
+  if (!available.length) return false
   const topic = available[Math.floor(Math.random() * available.length)]
 
   bot.chat(topic.starter)
   recentMusingTopics.add(topic.id)
-  if (recentMusingTopics.size >= Math.floor(MUSING_TOPICS.length * 0.8)) recentMusingTopics.clear()
+  if (recentMusingTopics.size >= Math.floor(ALL_MUSING_TOPICS.length * 0.8)) recentMusingTopics.clear()
 
   musingState = {
     status: 'started', currentTopicId: topic.id, currentBranch: null,
     turnNumber: 1, role: 'initiator', suppressUntil: musingState.suppressUntil,
     partnerUsername: null, _activeFollowup: null
   }
-  logEvent('musing', `initiated: ${topic.id}`)
+  logEvent('musing', `initiated (${label}): ${topic.id}`)
 
   setTimeout(() => {
     if (musingState.status === 'started' && musingState.currentTopicId === topic.id) {
@@ -4240,15 +4413,30 @@ function tryInitiateMusing () {
       musingState.currentTopicId = null
     }
   }, 20000)
+  return true
+}
+
+function tryInitiateMusing () {
+  if (isMusingBusy()) return
+  if (!bot.entity) return
+  if (Object.keys(bot.players).length < 2) return
+  initiateMusingFromPool(ALL_MUSING_TOPICS, 'idle')
+}
+
+function tryInitiateFarmingMusing () {
+  if (isMusingBusy({ allowDuringHarvest: true })) return
+  if (!bot.entity) return
+  if (Object.keys(bot.players).length < 2) return
+  initiateMusingFromPool(FARMING_MUSING_TOPICS, 'farming')
 }
 
 function startMusingTimer () {
-  const baseMs = 60000 + (hashCode(bot.username || 'default') % 30000)
-  setInterval(() => {
-    const jitter = (Math.random() - 0.5) * 20000
-    setTimeout(tryInitiateMusing, Math.max(0, jitter))
-  }, baseMs)
-  logEvent('musing', `timer started, base interval ${(baseMs / 1000).toFixed(0)}s`)
+  function scheduleNext () {
+    const delay = 30000 + Math.random() * 60000
+    setTimeout(() => { tryInitiateMusing(); scheduleNext() }, delay)
+  }
+  scheduleNext()
+  logEvent('musing', 'timer started, interval 30–90s')
 }
 
 // ── End bot-to-bot idle musings ──────────────────────────────────────────────
