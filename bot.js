@@ -131,6 +131,7 @@ bot.once('spawn', () => {
     logEvent('auto-eat', 'enabled (start at food<=14)')
   }
   startAutoSleep()
+  startMusingTimer()
 })
 
 // Auto-sleep: if it's bedtime and bot is inside the house, walk to bed and sleep.
@@ -3455,6 +3456,7 @@ bot.on('chat', (username, message) => {
     logEvent('chat-handled', `bye <- <${username}> ${message}`)
     return
   }
+  if (handleMusingMessage(username, message)) return
   if (!nickRe || !nickRe.test(message)) return
   // Any directed command from the followed player ends the follow.
   if (followTarget && username === followTarget) {
