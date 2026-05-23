@@ -4451,20 +4451,23 @@ const RECURSIVE_MUSING_TOPICS = [
   {
     id: 'recursive-building-materials',
     starter: 'What are the best building materials?',
-    minDepth: 2,
-    maxDepth: 6,
+    minDepth: 3,
+    maxDepth: 9,
     nodes: [
       'Wood is friendly, but it does burn if you ask it the wrong question.',
       'Stone has confidence. Too much confidence, maybe.',
-      'Glass is useful if you want walls that gossip with the sun.',
+      'Somebody thought ice was a good idea once...',
       'Dirt is underrated. It holds everything up and asks for no applause.',
       'Bricks are just organized clay with ambition.',
-      'The best material depends on whether you are building a house, a tower, or a regret.'
+      'The best material depends on whether you are building a house, a tower, or a regret.',
+      'Definitely not bedrock.',
+      'We studied this in school, but all I can remember is the big bad wolf.',
+      'Sugar cubes would be nice.'
     ],
     closers: [
       'I think I would build with stone and apologize to the trees.',
       'Maybe the best material is whatever keeps the rain outside.',
-      'I have decided not to build anything taller than my courage.'
+      'Livingrock is just cobblestone + patience.'
     ]
   },
   {
