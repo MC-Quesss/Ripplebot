@@ -140,12 +140,9 @@ function wasPhraseRecentlyHeard (text) {
 function pickAvoidingRecentPhrase (items, toPhrase = x => x) {
   const available = items.filter(item => !wasPhraseRecentlyHeard(toPhrase(item)))
   const pool = available.length ? available : items
-  return pool[Math.floor(Math.random() * pool.length)]
-}
-const _origBotChat = bot.chat.bind(bot)
-bot.chat = (message, ...args) => {
-  rememberChatPhrase(message)
-  return _origBotChat(message, ...args)
+  const picked = pool[Math.floor(Math.random() * pool.length)]
+  rememberChatPhrase(toPhrase(picked))
+  return picked
 }
 bot.once('spawn', () => {
   const mcData = require('minecraft-data')(bot.version)
@@ -3783,6 +3780,7 @@ function pickLine (pool, vars = {}) {
   let r = Math.random() * total
   let chosen = weighted[0].text
   for (const w of weighted) { r -= w.w; if (r <= 0) { chosen = w.text; break } }
+  rememberChatPhrase(chosen)
   return chosen
 }
 
@@ -4686,10 +4684,14 @@ function nodeChildren (node) {
   return null
 }
 
+function phraseForRandomItem (item) {
+  if (typeof item === 'string') return item
+  return item?.starter || item?.response || item?.text || ''
+}
+
 function pickRandom (items) {
   if (!items.length) return undefined
-  if (typeof items[0] === 'string') return pickAvoidingRecentPhrase(items)
-  return items[Math.floor(Math.random() * items.length)]
+  return pickAvoidingRecentPhrase(items, phraseForRandomItem)
 }
 
 function pickRecursiveLine (topic, usedLines = new Set()) {
