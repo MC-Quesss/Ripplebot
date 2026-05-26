@@ -131,8 +131,8 @@ bot.once('spawn', () => {
     logEvent('auto-eat', 'enabled (start at food<=14)')
   }
   startAutoSleep()
+  startWheatReadyWatcher()
   startMusingTimer()
-  startWheatReadyAlertTimer()
 })
 
 // Auto-sleep: if it's bedtime and bot is inside the house, walk to bed and sleep.
@@ -700,112 +700,129 @@ function filterByHalf (positions, half) {
   )
 }
 
-
-// Wheat-ready alert: this is intentionally separate from the ambient musing
-// system. When the known wheat fields are fully mature, remind nearby players
-// roughly every 10 seconds until the field is harvested/replanted. Wheat age in
-// Minecraft 1.12.2 is stored in block metadata; metadata 7 means fully grown.
-const WHEAT_ALERT_CHECK_MS = 5000
-const WHEAT_ALERT_CHAT_MS = 10000
-const WHEAT_FIELD_MIN_VISIBLE_TILES = 40
-let wheatReadyAlertTimerId = null
-let lastWheatReadyAlertAt = 0
-let lastWheatReadyAlertLine = null
-let lastWheatReadyState = false
-
-const WHEAT_READY_ALERT_LINES_DAY = [
-  'Hey, the wheat is ready for harvest.',
-  'Field report: the wheat is fully grown.',
-  'Tiny agricultural bulletin: the wheat is ready.',
-  'The wheat is golden and waiting.',
-  'Harvest window is open. The wheat is ready.',
-  'All that wheat out there is ready to come in.',
-  'Oh, by the way, did you know the wheat is ready for harvest?',
-  'The field is doing that fully-grown thing again.',
-  'The wheat has reached maximum wheat.',
+// Wheat-ready alert mode. This is intentionally louder than the normal musing
+// system: when every known wheat tile is mature, remind nearby humans until one
+// of them acknowledges the alert. The snooze resets only after the field stops
+// being fully mature, so the next growth cycle can alert again.
+const WHEAT_CROP_ROWS = [
+  { label: 'north field north rows', xMin: NORTH_FIELD_BOUNDS.xMin, xMax: NORTH_FIELD_BOUNDS.xMax, zs: [551, 552, 553] },
+  { label: 'north field south rows', xMin: NORTH_FIELD_BOUNDS.xMin, xMax: NORTH_FIELD_BOUNDS.xMax, zs: [555, 556, 557] },
+  { label: 'south field north rows', xMin: FIELD_BOUNDS.xMin, xMax: FIELD_BOUNDS.xMax, zs: [559, 560, 561] },
+  { label: 'south field south rows', xMin: FIELD_BOUNDS.xMin, xMax: FIELD_BOUNDS.xMax, zs: [563, 564, 565] },
 ]
-const WHEAT_READY_ALERT_LINES_NIGHT = [
-  'It is bedtime now, but the wheat is ready for harvesting in the morning.',
-  'Night shift note: wheat is ready. Morning harvest recommended.',
-  'The monsters can have the dark. The wheat will be ready in the morning.',
+const WHEAT_READY_CHECK_MS = 5000
+const WHEAT_READY_ALERT_MS = 10000
+const WHEAT_READY_LINES = [
+  'The wheat is fully grown and ready for harvest.',
+  'Harvest reminder: the wheat is ready.',
+  'Tiny farming bulletin: every wheat row looks ready.',
+  'The field is golden. That means harvest time.',
+  'Wheat status: ripe, waiting, dramatically patient.',
+  'By the way, the wheat is ready for harvest.',
+  'Fully grown wheat detected. Very agricultural. Very urgent.',
+  'The wheat has finished its little sun-powered project.',
+]
+const WHEAT_READY_NIGHT_LINES = [
+  'It is bedtime now, but the wheat is ready for harvest in the morning.',
+  'Night has arrived. The wheat is ready, though. Morning job.',
   'Sleep first, harvest later. The wheat is fully grown.',
-  'The field is ready, but nighttime is being nighttime about it.',
+  'The wheat is ready, but so are the beds. Morning harvest recommended.',
 ]
-
-function scanKnownWheatField () {
-  if (!bot.entity) return { visible: false, ready: false, total: 0, mature: 0, immature: 0, loaded: 0 }
-  const mcData = require('minecraft-data')(bot.version)
-  const wheatId = mcData.blocksByName.wheat?.id
-  if (wheatId === undefined) return { visible: false, ready: false, total: 0, mature: 0, immature: 0, loaded: 0 }
-  const Vec3 = require('vec3').Vec3
-  const xs = []
-  for (let x = NORTH_FIELD_BOUNDS.xMin; x <= NORTH_FIELD_BOUNDS.xMax; x++) xs.push(x)
-  const zs = []
-  for (let z = NORTH_FIELD_BOUNDS.zMin; z <= NORTH_FIELD_BOUNDS.zMax; z++) zs.push(z)
-  for (let z = FIELD_BOUNDS.zMin; z <= FIELD_BOUNDS.zMax; z++) zs.push(z)
-
-  let total = 0, mature = 0, immature = 0, loaded = 0
-  for (const x of xs) {
-    for (const z of zs) {
-      const b = bot.blockAt(new Vec3(x, 64, z))
-      if (!b) continue
-      loaded++
-      if (b.type !== wheatId && b.name !== 'wheat') continue
-      total++
-      if (b.metadata === 7) mature++
-      else immature++
-    }
-  }
-  const visible = total >= WHEAT_FIELD_MIN_VISIBLE_TILES
-  return { visible, ready: visible && total > 0 && immature === 0, total, mature, immature, loaded }
+const WHEAT_SNOOZE_ACK_LINES = [
+  'Got it. Wheat alert snoozed until the next growth cycle.',
+  'Acknowledged. I will stop announcing the wheat until it grows again.',
+  'Copy that. Wheat bulletin paused.',
+  'Understood. The wheat and I will be quietly mature now.',
+]
+const wheatReadyState = {
+  ready: false,
+  snoozed: false,
+  lastAlertAt: 0,
+  timer: null,
+  lastScan: null,
 }
 
-function pickWheatReadyAlertLine () {
-  const night = isBedtime() || bot.time?.isDay === false
-  const pool = night ? WHEAT_READY_ALERT_LINES_NIGHT : WHEAT_READY_ALERT_LINES_DAY
-  let line = pickRandom(pool)
-  if (pool.length > 1) {
-    for (let i = 0; i < 5 && line === lastWheatReadyAlertLine; i++) line = pickRandom(pool)
+function scanKnownWheatFields () {
+  if (!bot.entity) return { ready: false, expected: 0, wheat: 0, mature: 0, loaded: 0 }
+  const Vec3 = require('vec3').Vec3
+  let expected = 0
+  let loaded = 0
+  let wheat = 0
+  let mature = 0
+  for (const section of WHEAT_CROP_ROWS) {
+    for (const z of section.zs) {
+      for (let x = section.xMin; x <= section.xMax; x++) {
+        expected++
+        const block = bot.blockAt(new Vec3(x, 64, z))
+        if (!block) continue
+        loaded++
+        if (block.name !== 'wheat') continue
+        wheat++
+        if (block.metadata === 7) mature++
+      }
+    }
   }
-  lastWheatReadyAlertLine = line
-  return line
+  return {
+    ready: expected > 0 && loaded === expected && wheat === expected && mature === expected,
+    expected, loaded, wheat, mature,
+  }
+}
+
+function pickWheatReadyLine () {
+  const pool = isBedtime() ? WHEAT_READY_NIGHT_LINES : WHEAT_READY_LINES
+  return pool[Math.floor(Math.random() * pool.length)]
+}
+
+function snoozeWheatReadyAlerts (username = 'someone') {
+  if (!wheatReadyState.ready || wheatReadyState.snoozed) return false
+  wheatReadyState.snoozed = true
+  wheatReadyState.lastAlertAt = 0
+  const line = WHEAT_SNOOZE_ACK_LINES[Math.floor(Math.random() * WHEAT_SNOOZE_ACK_LINES.length)]
+  bot.chat(line)
+  logEvent('wheat-alert', `snoozed by ${username}`)
+  return true
+}
+
+function isWheatReadyAcknowledgement (message) {
+  if (!wheatReadyState.ready || wheatReadyState.snoozed) return false
+  if (!nickRe || !nickRe.test(message)) return false
+  const stripped = message.replace(nickRe, ' ').toLowerCase()
+  const acknowledges = /(ok|okay|thanks?|thank you|got it|heard|copy|roger|understood|cool|alright|all right|noted)/i.test(stripped)
+  const asksForAction = /(harvest|reap|cut|go|get|start|do it|now)/i.test(stripped)
+  return acknowledges && !asksForAction
 }
 
 function tryWheatReadyAlert () {
-  if (!bot.entity) return
-  if (harvestBusy) return
-  const scan = scanKnownWheatField()
-  const now = Date.now()
-
-  if (!scan.visible) {
-    if (lastWheatReadyState) logEvent('wheat-alert', `field no longer visible enough (${scan.total} wheat tiles)`)
-    lastWheatReadyState = false
-    return
-  }
-
+  const scan = scanKnownWheatFields()
+  wheatReadyState.lastScan = scan
   if (!scan.ready) {
-    if (lastWheatReadyState) logEvent('wheat-alert', `field no longer fully grown (${scan.mature}/${scan.total})`)
-    lastWheatReadyState = false
+    if (wheatReadyState.ready) logEvent('wheat-alert', `reset: mature=${scan.mature}/${scan.expected} wheat=${scan.wheat}/${scan.expected} loaded=${scan.loaded}/${scan.expected}`)
+    wheatReadyState.ready = false
+    wheatReadyState.snoozed = false
+    wheatReadyState.lastAlertAt = 0
     return
   }
 
-  if (!lastWheatReadyState) {
-    logEvent('wheat-alert', `field ready (${scan.mature}/${scan.total})`)
-    lastWheatReadyState = true
-    lastWheatReadyAlertAt = 0 // speak immediately on transition into ready state
+  if (!wheatReadyState.ready) {
+    wheatReadyState.ready = true
+    wheatReadyState.snoozed = false
+    wheatReadyState.lastAlertAt = 0
+    logEvent('wheat-alert', `ready: mature=${scan.mature}/${scan.expected}`)
   }
 
-  if (now - lastWheatReadyAlertAt < WHEAT_ALERT_CHAT_MS) return
-  lastWheatReadyAlertAt = now
-  bot.chat(pickWheatReadyAlertLine())
+  if (wheatReadyState.snoozed) return
+  const now = Date.now()
+  if (now - wheatReadyState.lastAlertAt < WHEAT_READY_ALERT_MS) return
+  wheatReadyState.lastAlertAt = now
+  bot.chat(pickWheatReadyLine())
 }
 
-function startWheatReadyAlertTimer () {
-  if (wheatReadyAlertTimerId) clearInterval(wheatReadyAlertTimerId)
-  wheatReadyAlertTimerId = setInterval(() => {
-    try { tryWheatReadyAlert() } catch (e) { logEvent('wheat-alert-error', e.message) }
-  }, WHEAT_ALERT_CHECK_MS)
-  logEvent('wheat-alert', `timer started, check=${WHEAT_ALERT_CHECK_MS}ms chat=${WHEAT_ALERT_CHAT_MS}ms`)
+function startWheatReadyWatcher () {
+  if (wheatReadyState.timer) return
+  wheatReadyState.timer = setInterval(() => {
+    try { tryWheatReadyAlert() } catch (e) { logEvent('wheat-alert', `error: ${e.message}`) }
+  }, WHEAT_READY_CHECK_MS)
+  logEvent('wheat-alert', `watching ${WHEAT_CROP_ROWS.reduce((sum, s) => sum + (s.xMax - s.xMin + 1) * s.zs.length, 0)} wheat tiles`)
 }
 
 // Order a list of {x,z} tiles into a counter-clockwise nautilus starting
@@ -3551,6 +3568,12 @@ const BYE_RE = /\b(bye|bye bye|goodbye|good bye|see ya|see you|later|peace out|o
 bot.on('chat', (username, message) => {
   if (username === bot.username) return
   logEvent('chat', `<${username}> ${message}`)
+  if (isWheatReadyAcknowledgement(message)) {
+    facePlayer(username).catch(() => {})
+    snoozeWheatReadyAlerts(username)
+    logEvent('chat-handled', `wheat-snooze <- <${username}> ${message}`)
+    return
+  }
   if (pendingJoke) {
     deliverPunchline()
     return
@@ -4991,10 +5014,6 @@ function handleCommand (cmd) {
     case 'deaths': {
       return { ok: true, count: deathCount }
     }
-    case 'wheat_status': {
-      const scan = scanKnownWheatField()
-      return { ok: true, ...scan, alert_ms: WHEAT_ALERT_CHAT_MS }
-    }
     case 'pos': {
       // Prefer raw protocol state — mineflayer's entity may be stuck at 0,0,0 on modded servers.
       const usingRaw = rawState.spawned && (!bot.entity || (bot.entity.position.x === 0 && bot.entity.position.y === 0))
@@ -5570,6 +5589,13 @@ function handleCommand (cmd) {
     }
     case 'harvest_status': {
       return { ok: true, busy: harvestBusy }
+    }
+    case 'wheat_status': {
+      const scan = scanKnownWheatFields()
+      return { ok: true, ...scan, alertReady: wheatReadyState.ready, snoozed: wheatReadyState.snoozed, alertEveryMs: WHEAT_READY_ALERT_MS }
+    }
+    case 'wheat_snooze': {
+      return { ok: true, snoozed: snoozeWheatReadyAlerts('ctl') }
     }
     case 'harvest_potatoes': {
       // Right-click is the default. For the legacy left-click brute method,
