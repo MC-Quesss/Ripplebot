@@ -132,6 +132,7 @@ bot.once('spawn', () => {
   }
   startAutoSleep()
   startMusingTimer()
+  startWheatGrowthWatcher()
 })
 
 // Auto-sleep: if it's bedtime and bot is inside the house, walk to bed and sleep.
@@ -697,6 +698,120 @@ function filterByHalf (positions, half) {
     p.x >= FIELD_BOUNDS.xMin && p.x <= FIELD_BOUNDS.xMax &&
     p.z >= NORTH_FIELD_BOUNDS.zMin && p.z <= FIELD_BOUNDS.zMax
   )
+}
+
+
+// Wheat growth watcher: this is the factual version of the old
+// "every single one fully grown" farming line. Wheat maturity in 1.12.2 is
+// block metadata; metadata 7 means fully grown. The watcher only announces
+// the field when every visible wheat block in the known field bounds is mature,
+// then stays quiet until the field becomes not-full again after harvest/replant.
+const WHEAT_FULL_TOPIC_ID = 'farm_full_field'
+const WHEAT_GROWTH_CHECK_MS = 60000
+let wheatFullAnnounced = false
+let wheatGrowthWatcherId = null
+let lastWheatScan = null
+
+function isInBounds (p, bounds) {
+  return p.x >= bounds.xMin && p.x <= bounds.xMax && p.z >= bounds.zMin && p.z <= bounds.zMax
+}
+
+function isInWheatFieldBounds (p) {
+  return isInBounds(p, FIELD_BOUNDS) || isInBounds(p, NORTH_FIELD_BOUNDS)
+}
+
+function scanWheatGrowth () {
+  if (!bot.entity) return { ok: false, error: 'bot has no entity yet' }
+  const mcData = require('minecraft-data')(bot.version)
+  const wheatId = mcData.blocksByName.wheat?.id
+  if (wheatId === undefined) return { ok: false, error: 'wheat block id unknown' }
+  const Vec3 = require('vec3').Vec3
+  const wheatPositions = bot.findBlocks({ matching: wheatId, maxDistance: 48, count: 500 })
+    .filter(isInWheatFieldBounds)
+
+  let mature = 0
+  let immature = 0
+  const byField = {
+    north: { total: 0, mature: 0 },
+    south: { total: 0, mature: 0 },
+  }
+
+  for (const pos of wheatPositions) {
+    const block = bot.blockAt(new Vec3(pos.x, pos.y, pos.z))
+    if (!block || block.name !== 'wheat') continue
+    const field = isInBounds(pos, NORTH_FIELD_BOUNDS) ? byField.north : byField.south
+    field.total++
+    const isMature = block.metadata === 7
+    if (isMature) {
+      mature++
+      field.mature++
+    } else {
+      immature++
+    }
+  }
+
+  const total = mature + immature
+  return {
+    ok: true,
+    total,
+    mature,
+    immature,
+    fullyGrown: total > 0 && immature === 0,
+    percent: total > 0 ? Math.round((mature / total) * 100) : 0,
+    fields: byField,
+  }
+}
+
+function describeWheatScan (scan = lastWheatScan) {
+  if (!scan?.ok) return `Wheat scan unavailable: ${scan?.error || 'unknown error'}.`
+  if (scan.total === 0) return "I can't see any wheat in the known field bounds from here."
+  const north = scan.fields?.north
+  const south = scan.fields?.south
+  const fieldBits = []
+  if (north?.total) fieldBits.push(`north ${north.mature}/${north.total}`)
+  if (south?.total) fieldBits.push(`south ${south.mature}/${south.total}`)
+  return `Wheat scan: ${scan.mature}/${scan.total} fully grown (${scan.percent}%)${fieldBits.length ? ` — ${fieldBits.join(', ')}` : ''}.`
+}
+
+function announceWheatFullyGrown (scan) {
+  logEvent('wheat-watch', `fully grown: ${scan.mature}/${scan.total}`)
+  if (!isMusingInitiationBlocked({ allowDuringHarvest: true }) && Object.keys(bot.players).length >= 2) {
+    if (initiateMusingTopic(WHEAT_FULL_FIELD_TOPIC, 'wheat-watch')) return
+  }
+  bot.chat('The wheat is fully grown.')
+}
+
+function tryWheatGrowthCheck () {
+  try {
+    const scan = scanWheatGrowth()
+    lastWheatScan = scan
+    if (!scan.ok) {
+      logEvent('wheat-watch', `scan unavailable: ${scan.error}`)
+      return
+    }
+    if (scan.total === 0) return
+    if (scan.fullyGrown) {
+      if (!wheatFullAnnounced) {
+        wheatFullAnnounced = true
+        announceWheatFullyGrown(scan)
+      }
+    } else if (wheatFullAnnounced) {
+      wheatFullAnnounced = false
+      logEvent('wheat-watch', `reset: ${scan.mature}/${scan.total} mature`)
+    }
+  } catch (e) {
+    logEvent('wheat-watch', `error: ${e.message}`)
+  }
+}
+
+function startWheatGrowthWatcher () {
+  if (wheatGrowthWatcherId) clearInterval(wheatGrowthWatcherId)
+  const initialDelay = 10000 + (hashCode(bot.username || 'bot') % 30000)
+  setTimeout(() => {
+    tryWheatGrowthCheck()
+    wheatGrowthWatcherId = setInterval(tryWheatGrowthCheck, WHEAT_GROWTH_CHECK_MS)
+  }, initialDelay)
+  logEvent('wheat-watch', `started, first check in ${Math.round(initialDelay / 1000)}s`)
 }
 
 // Order a list of {x,z} tiles into a counter-clockwise nautilus starting
@@ -3047,6 +3162,16 @@ const CHAT_HANDLERS = [
       bot.chat(pickLine(pool, { t: t.timeOfDay ?? '?', d: t.day ?? '?' }))
     },
   },
+
+  {
+    name: 'wheat_status',
+    pattern: /(wheat|field|crops?).*(grown|ready|ripe|status)|(is the wheat ready|are the crops ready)/i,
+    handler: (_user) => {
+      const scan = scanWheatGrowth()
+      lastWheatScan = scan
+      bot.chat(describeWheatScan(scan))
+    },
+  },
   {
     name: 'whats_up',
     pattern: /\bwhat('?s| is)\s*up\b|\bwassup\b|\bsup\b(?!.*\b(stop|stay|halt)\b)/i,
@@ -4178,28 +4303,29 @@ const MUSING_TOPICS = [
   },
 ]
 
+const WHEAT_FULL_FIELD_TOPIC = {
+  id: WHEAT_FULL_TOPIC_ID,
+  starter: "The wheat is fully grown.",
+  branches: [
+    { response: "All the visible wheat is golden.",
+      followups: [
+        { response: "That's not a random field thought. That's a scan result.",
+          closers: ["Confirmed by wheat metadata.", "The wheat has officially reported in."] }
+      ] },
+    { response: "Every wheat block I can see is mature.",
+      followups: [
+        { response: "Metadata seven across the board.",
+          closers: ["Tiny crop numbers, big crop news.", "Ready when you are."] }
+      ] },
+    { response: "Harvest window is open.",
+      followups: [
+        { response: "We can let it wait, or bring in the gold.",
+          closers: ["The field will hold.", "Standing by with very serious farmer energy."] }
+      ] }
+  ]
+}
+
 const FARMING_MUSING_TOPICS = [
-  {
-    id: 'farm_full_field',
-    starter: "Look at this field. Every single one fully grown.",
-    branches: [
-      { response: "All golden. No bare patches.",
-        followups: [
-          { response: "No rush either. It'll wait for us.",
-            closers: ["It always does.", "One of the few things that does."] }
-        ] },
-      { response: "I never get tired of seeing it like this.",
-        followups: [
-          { response: "Funny how something so familiar can still make you stop and look.",
-            closers: ["Yeah. That's a good sign.", "If you stop noticing, that's when you should worry."] }
-        ] },
-      { response: "The chest is already full. This is all extra.",
-        followups: [
-          { response: "Extra wheat. Wheat we harvest just because we can.",
-            closers: ["Just-because wheat. Best kind.", "Doesn't need a reason."] }
-        ] }
-    ]
-  },
   {
     id: 'farm_the_hill',
     starter: "You ever look east? Past the fence. That hill.",
@@ -4512,8 +4638,10 @@ const RECURSIVE_MUSING_TOPICS = [
 
 
 const CLASSICAL_MUSING_TOPICS = [...MUSING_TOPICS, ...FARMING_MUSING_TOPICS]
+const OBSERVATION_MUSING_TOPICS = [WHEAT_FULL_FIELD_TOPIC]
 const ALL_MUSING_TOPICS = [...CLASSICAL_MUSING_TOPICS, ...RECURSIVE_MUSING_TOPICS]
-const MUSING_STARTERS = new Set(ALL_MUSING_TOPICS.map(t => t.starter))
+const ALL_RESPONSE_MUSING_TOPICS = [...ALL_MUSING_TOPICS, ...OBSERVATION_MUSING_TOPICS]
+const MUSING_STARTERS = new Set(ALL_RESPONSE_MUSING_TOPICS.map(t => t.starter))
 
 function isRecursiveTopic (topic) {
   return Array.isArray(topic.nodes)
@@ -4685,8 +4813,10 @@ function beginClassicalMusingState ({ topic, role, partnerUsername = null }) {
 
 function handleMusingMessage (username, message) {
   const trimmed = message.trim()
-  const topic = ALL_MUSING_TOPICS.find(t => t.starter === trimmed)
+  const topic = ALL_RESPONSE_MUSING_TOPICS.find(t => t.starter === trimmed)
   const recursiveTopic = topic && isRecursiveTopic(topic)
+
+  if (topic?.id === WHEAT_FULL_TOPIC_ID) wheatFullAnnounced = true
 
   if (topic) {
     // Another bot answered our starter by echoing the same topic starter.
@@ -4780,17 +4910,15 @@ function handleMusingMessage (username, message) {
   return false
 }
 
-function initiateMusingFromPool (pool, label) {
-  const available = pool.filter(t => !recentMusingTopics.has(t.id))
-  if (!available.length) return false
-
-  const topic = pickRandom(available)
+function initiateMusingTopic (topic, label, { remember = true } = {}) {
+  if (!topic) return false
 
   bot.chat(topic.starter)
-  recentMusingTopics.add(topic.id)
-
-  if (recentMusingTopics.size >= Math.floor(ALL_MUSING_TOPICS.length * 0.8)) {
-    recentMusingTopics.clear()
+  if (remember) {
+    recentMusingTopics.add(topic.id)
+    if (recentMusingTopics.size >= Math.floor(ALL_MUSING_TOPICS.length * 0.8)) {
+      recentMusingTopics.clear()
+    }
   }
 
   if (isRecursiveTopic(topic)) {
@@ -4802,6 +4930,13 @@ function initiateMusingFromPool (pool, label) {
   logEvent('musing', `initiated (${label}): ${topic.id}`)
   scheduleMusingTimeout(MUSING_START_TIMEOUT_MS)
   return true
+}
+
+function initiateMusingFromPool (pool, label) {
+  const available = pool.filter(t => !recentMusingTopics.has(t.id))
+  if (!available.length) return false
+
+  return initiateMusingTopic(pickRandom(available), label)
 }
 
 function tryInitiateMusing () {
@@ -5427,6 +5562,11 @@ function handleCommand (cmd) {
     case 'time': {
       const t = bot.time || {}
       return { ok: true, timeOfDay: t.timeOfDay, day: t.day, age: t.age, isDay: t.isDay }
+    }
+    case 'wheat_status': {
+      const scan = scanWheatGrowth()
+      lastWheatScan = scan
+      return { ok: scan.ok, ...scan, announced: wheatFullAnnounced, message: describeWheatScan(scan) }
     }
     case 'auto_sleep': {
       if (typeof args.enabled === 'boolean') autoSleepEnabled = args.enabled
