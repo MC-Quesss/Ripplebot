@@ -132,6 +132,7 @@ bot.once('spawn', () => {
   }
   startAutoSleep()
   startMusingTimer()
+  startWheatReadyAlertTimer()
 })
 
 // Auto-sleep: if it's bedtime and bot is inside the house, walk to bed and sleep.
@@ -697,6 +698,114 @@ function filterByHalf (positions, half) {
     p.x >= FIELD_BOUNDS.xMin && p.x <= FIELD_BOUNDS.xMax &&
     p.z >= NORTH_FIELD_BOUNDS.zMin && p.z <= FIELD_BOUNDS.zMax
   )
+}
+
+
+// Wheat-ready alert: this is intentionally separate from the ambient musing
+// system. When the known wheat fields are fully mature, remind nearby players
+// roughly every 10 seconds until the field is harvested/replanted. Wheat age in
+// Minecraft 1.12.2 is stored in block metadata; metadata 7 means fully grown.
+const WHEAT_ALERT_CHECK_MS = 5000
+const WHEAT_ALERT_CHAT_MS = 10000
+const WHEAT_FIELD_MIN_VISIBLE_TILES = 40
+let wheatReadyAlertTimerId = null
+let lastWheatReadyAlertAt = 0
+let lastWheatReadyAlertLine = null
+let lastWheatReadyState = false
+
+const WHEAT_READY_ALERT_LINES_DAY = [
+  'Hey, the wheat is ready for harvest.',
+  'Field report: the wheat is fully grown.',
+  'Tiny agricultural bulletin: the wheat is ready.',
+  'The wheat is golden and waiting.',
+  'Harvest window is open. The wheat is ready.',
+  'All that wheat out there is ready to come in.',
+  'Oh, by the way, did you know the wheat is ready for harvest?',
+  'The field is doing that fully-grown thing again.',
+  'The wheat has reached maximum wheat.',
+]
+const WHEAT_READY_ALERT_LINES_NIGHT = [
+  'It is bedtime now, but the wheat is ready for harvesting in the morning.',
+  'Night shift note: wheat is ready. Morning harvest recommended.',
+  'The monsters can have the dark. The wheat will be ready in the morning.',
+  'Sleep first, harvest later. The wheat is fully grown.',
+  'The field is ready, but nighttime is being nighttime about it.',
+]
+
+function scanKnownWheatField () {
+  if (!bot.entity) return { visible: false, ready: false, total: 0, mature: 0, immature: 0, loaded: 0 }
+  const mcData = require('minecraft-data')(bot.version)
+  const wheatId = mcData.blocksByName.wheat?.id
+  if (wheatId === undefined) return { visible: false, ready: false, total: 0, mature: 0, immature: 0, loaded: 0 }
+  const Vec3 = require('vec3').Vec3
+  const xs = []
+  for (let x = NORTH_FIELD_BOUNDS.xMin; x <= NORTH_FIELD_BOUNDS.xMax; x++) xs.push(x)
+  const zs = []
+  for (let z = NORTH_FIELD_BOUNDS.zMin; z <= NORTH_FIELD_BOUNDS.zMax; z++) zs.push(z)
+  for (let z = FIELD_BOUNDS.zMin; z <= FIELD_BOUNDS.zMax; z++) zs.push(z)
+
+  let total = 0, mature = 0, immature = 0, loaded = 0
+  for (const x of xs) {
+    for (const z of zs) {
+      const b = bot.blockAt(new Vec3(x, 64, z))
+      if (!b) continue
+      loaded++
+      if (b.type !== wheatId && b.name !== 'wheat') continue
+      total++
+      if (b.metadata === 7) mature++
+      else immature++
+    }
+  }
+  const visible = total >= WHEAT_FIELD_MIN_VISIBLE_TILES
+  return { visible, ready: visible && total > 0 && immature === 0, total, mature, immature, loaded }
+}
+
+function pickWheatReadyAlertLine () {
+  const night = isBedtime() || bot.time?.isDay === false
+  const pool = night ? WHEAT_READY_ALERT_LINES_NIGHT : WHEAT_READY_ALERT_LINES_DAY
+  let line = pickRandom(pool)
+  if (pool.length > 1) {
+    for (let i = 0; i < 5 && line === lastWheatReadyAlertLine; i++) line = pickRandom(pool)
+  }
+  lastWheatReadyAlertLine = line
+  return line
+}
+
+function tryWheatReadyAlert () {
+  if (!bot.entity) return
+  if (harvestBusy) return
+  const scan = scanKnownWheatField()
+  const now = Date.now()
+
+  if (!scan.visible) {
+    if (lastWheatReadyState) logEvent('wheat-alert', `field no longer visible enough (${scan.total} wheat tiles)`)
+    lastWheatReadyState = false
+    return
+  }
+
+  if (!scan.ready) {
+    if (lastWheatReadyState) logEvent('wheat-alert', `field no longer fully grown (${scan.mature}/${scan.total})`)
+    lastWheatReadyState = false
+    return
+  }
+
+  if (!lastWheatReadyState) {
+    logEvent('wheat-alert', `field ready (${scan.mature}/${scan.total})`)
+    lastWheatReadyState = true
+    lastWheatReadyAlertAt = 0 // speak immediately on transition into ready state
+  }
+
+  if (now - lastWheatReadyAlertAt < WHEAT_ALERT_CHAT_MS) return
+  lastWheatReadyAlertAt = now
+  bot.chat(pickWheatReadyAlertLine())
+}
+
+function startWheatReadyAlertTimer () {
+  if (wheatReadyAlertTimerId) clearInterval(wheatReadyAlertTimerId)
+  wheatReadyAlertTimerId = setInterval(() => {
+    try { tryWheatReadyAlert() } catch (e) { logEvent('wheat-alert-error', e.message) }
+  }, WHEAT_ALERT_CHECK_MS)
+  logEvent('wheat-alert', `timer started, check=${WHEAT_ALERT_CHECK_MS}ms chat=${WHEAT_ALERT_CHAT_MS}ms`)
 }
 
 // Order a list of {x,z} tiles into a counter-clockwise nautilus starting
@@ -4180,27 +4289,6 @@ const MUSING_TOPICS = [
 
 const FARMING_MUSING_TOPICS = [
   {
-    id: 'farm_full_field',
-    starter: "Look at this field. Every single one fully grown.",
-    branches: [
-      { response: "All golden. No bare patches.",
-        followups: [
-          { response: "No rush either. It'll wait for us.",
-            closers: ["It always does.", "One of the few things that does."] }
-        ] },
-      { response: "I never get tired of seeing it like this.",
-        followups: [
-          { response: "Funny how something so familiar can still make you stop and look.",
-            closers: ["Yeah. That's a good sign.", "If you stop noticing, that's when you should worry."] }
-        ] },
-      { response: "The chest is already full. This is all extra.",
-        followups: [
-          { response: "Extra wheat. Wheat we harvest just because we can.",
-            closers: ["Just-because wheat. Best kind.", "Doesn't need a reason."] }
-        ] }
-    ]
-  },
-  {
     id: 'farm_the_hill',
     starter: "You ever look east? Past the fence. That hill.",
     branches: [
@@ -4811,40 +4899,11 @@ function tryInitiateMusing () {
   initiateMusingFromPool(ALL_MUSING_TOPICS, 'idle')
 }
 
-function isFieldFullyGrown () {
-  if (!bot.entity) return false
-  const mcData = require('minecraft-data')(bot.version)
-  const wheatId = mcData.blocksByName.wheat?.id
-  if (wheatId == null) return false
-
-  const Vec3 = require('vec3').Vec3
-  let fieldWheat = bot.findBlocks({ matching: wheatId, maxDistance: 32, count: 400 })
-  fieldWheat = filterByHalf(fieldWheat, 'all')
-
-  if (!fieldWheat.length) return false
-
-  let mature = 0
-  for (const pos of fieldWheat) {
-    const b = bot.blockAt(new Vec3(pos.x, pos.y, pos.z))
-    if (b && b.name === 'wheat' && b.metadata === 7) mature++
-  }
-
-  return mature === fieldWheat.length
-}
-
 function tryInitiateFarmingMusing () {
   if (isMusingInitiationBlocked({ allowDuringHarvest: true })) return
   if (!bot.entity) return
   if (Object.keys(bot.players).length < 2) return
-
-  const fullFieldTopics = new Set(['farm_full_field'])
-  let pool = FARMING_MUSING_TOPICS
-
-  if (!isFieldFullyGrown()) {
-    pool = FARMING_MUSING_TOPICS.filter(t => !fullFieldTopics.has(t.id))
-  }
-
-  initiateMusingFromPool(pool, 'farming')
+  initiateMusingFromPool(FARMING_MUSING_TOPICS, 'farming')
 }
 
 let farmingMusingTimerId = null
@@ -4931,6 +4990,10 @@ function handleCommand (cmd) {
     }
     case 'deaths': {
       return { ok: true, count: deathCount }
+    }
+    case 'wheat_status': {
+      const scan = scanKnownWheatField()
+      return { ok: true, ...scan, alert_ms: WHEAT_ALERT_CHAT_MS }
     }
     case 'pos': {
       // Prefer raw protocol state — mineflayer's entity may be stuck at 0,0,0 on modded servers.
