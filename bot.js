@@ -7,6 +7,7 @@ const mineflayer = require('mineflayer')
 const mc = require('minecraft-protocol')
 const { forgeHandshake } = require('minecraft-protocol-forge')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
+const Vec3 = require('vec3').Vec3
 const { loader: autoEat } = require('mineflayer-auto-eat')
 
 const host = process.env.MC_HOST || 'Marcadia.playat.ch'
@@ -214,8 +215,6 @@ async function tryAutoSleep () {
   autoSleepBusy = true
   try {
     logEvent('auto-sleep', 'bedtime detected, heading to bed')
-    const { goals } = require('mineflayer-pathfinder')
-    const Vec3 = require('vec3').Vec3
     const BEDS = [
       { label: 'primary', pos: BED_POS, approach: BED_APPROACH },
       { label: 'left', pos: BED_POS_LEFT, approach: BED_APPROACH_LEFT },
@@ -608,7 +607,6 @@ async function faceNearestPlayer () {
 async function pathTo (pt, range = 1, waitMs = 15000) {
   const startGen = abortGen
   let tx = pt.x, tz = pt.z
-  const Vec3 = require('vec3').Vec3
   if (range <= 1 && isPositionOccupied(new Vec3(pt.x, pt.y, pt.z))) {
     const offsets = [{x:1,z:0},{x:-1,z:0},{x:0,z:1},{x:0,z:-1}]
     for (const off of offsets) {
@@ -782,7 +780,6 @@ const wheatReadyState = {
 
 function scanKnownWheatFields () {
   if (!bot.entity) return { ready: false, expected: 0, wheat: 0, mature: 0, loaded: 0 }
-  const Vec3 = require('vec3').Vec3
   let expected = 0
   let loaded = 0
   let wheat = 0
@@ -961,7 +958,6 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
     const mcData = require('minecraft-data')(bot.version)
     const wheatId = mcData.blocksByName.wheat?.id
     if (wheatId === undefined) throw new Error('wheat block id unknown')
-    const Vec3 = require('vec3').Vec3
     const wheatCountBefore = bot.inventory.items()
       .filter(i => i.name === 'wheat').reduce((s, i) => s + i.count, 0)
 
@@ -1122,7 +1118,6 @@ async function runHarvestPotatoes ({ user } = {}) {
     const mcData = require('minecraft-data')(bot.version)
     const potatoId = mcData.blocksByName.potatoes?.id
     if (potatoId === undefined) throw new Error('potatoes block id unknown')
-    const Vec3 = require('vec3').Vec3
     const allPotatoes = bot.findBlocks({ matching: potatoId, maxDistance: 20, count: 100 })
     const maturePotatoes = allPotatoes.filter(p => {
       const b = bot.blockAt(new Vec3(p.x, p.y, p.z))
@@ -1297,7 +1292,6 @@ async function runHarvestPotatoesRightClick ({ user } = {}) {
     const mcData = require('minecraft-data')(bot.version)
     const potatoId = mcData.blocksByName.potatoes?.id
     if (potatoId === undefined) throw new Error('potatoes block id unknown')
-    const Vec3 = require('vec3').Vec3
 
     // Find every potato block in the area, then clip to the water-safe column
     // (x >= -286). Do NOT filter by metadata — immature is a safe no-op.
@@ -1446,11 +1440,10 @@ async function runBakePotatoes ({ user } = {}) {
     // raw potatoes in the chest after harvest (per the deposit step in
     // runHarvestPotatoesRightClick), so "bake the potatoes" means
     // chest → furnace, not just inventory → furnace.
-    const Vec3w = require('vec3').Vec3
     let withdrawn = 0
     try {
       await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 8000)
-      const chestBlock = bot.blockAt(new Vec3w(
+      const chestBlock = bot.blockAt(new Vec3(
         HARVEST_WAYPOINTS.kitchen_chest.x,
         HARVEST_WAYPOINTS.kitchen_chest.y,
         HARVEST_WAYPOINTS.kitchen_chest.z,
@@ -1497,7 +1490,6 @@ async function runBakePotatoes ({ user } = {}) {
     logEvent('bake-potato', `start raw=${raw} withdrawn=${withdrawn}`)
 
     // Move within reach of the furnace (~4 blocks).
-    const { goals } = require('mineflayer-pathfinder')
     bot.pathfinder.setGoal(new goals.GoalNear(
       HARVEST_WAYPOINTS.furnace.x, HARVEST_WAYPOINTS.furnace.y, HARVEST_WAYPOINTS.furnace.z, 2,
     ))
@@ -1506,7 +1498,6 @@ async function runBakePotatoes ({ user } = {}) {
       if (!bot.pathfinder.isMoving()) break
     }
 
-    const Vec3 = require('vec3').Vec3
     const furnaceBlock = bot.blockAt(new Vec3(
       HARVEST_WAYPOINTS.furnace.x, HARVEST_WAYPOINTS.furnace.y, HARVEST_WAYPOINTS.furnace.z,
     ))
@@ -1554,7 +1545,6 @@ async function runBakePotatoes ({ user } = {}) {
     logEvent('bake-potato', `wait_ms=${waitMs} (single take-all-at-end)`)
     // Chunked wait: check for bedtime every 15s and yield to bed if needed
     {
-      const Vec3 = require('vec3').Vec3
       let sleptInBed = false
       const deadline = Date.now() + waitMs
       while (Date.now() < deadline) {
@@ -1733,7 +1723,6 @@ async function runGoOutsideOnce (activity) {
   sendEmote('cheer')
 
   // 4. Monkey-patch door collision out, then walk through.
-  const Vec3Exit = require('vec3').Vec3
   const origGetBlockExit = bot.world.getBlock.bind(bot.world)
   bot.world.getBlock = (pos) => {
     const b = origGetBlockExit(pos)
@@ -1829,8 +1818,7 @@ async function runGoInsideOnce () {
   logEvent('go-inside', `yaw locked east at ${yawResult.yaw.toFixed(3)} rad`)
 
   // 4. Activate door only if it's closed. Bit 0x04 in metadata = open.
-  const Vec3Enter = require('vec3').Vec3
-  const doorBlock = bot.blockAt(new Vec3Enter(HOUSE_DOOR.x, HOUSE_DOOR.y, HOUSE_DOOR.z))
+  const doorBlock = bot.blockAt(new Vec3(HOUSE_DOOR.x, HOUSE_DOOR.y, HOUSE_DOOR.z))
   try {
     if (doorBlock) {
       const isOpen = (doorBlock.metadata & 0x04) !== 0
@@ -2043,7 +2031,6 @@ async function runGoIntoPen ({ skipActivate = false } = {}) {
   // Open gate/door. Monkey-patch bot.world.getBlock to return empty shapes
   // for the door position — physics creates fresh block objects each tick so
   // zeroing a single reference doesn't persist.
-  const Vec3 = require('vec3').Vec3
   const gateBlock = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
   if (!gateBlock) throw new Error('gate block not loaded')
   if (!skipActivate) await bot.activateBlock(gateBlock)
@@ -2100,7 +2087,6 @@ async function runEnterPen () {
       await runGoIntoPen({ skipActivate: true })
     } catch (err2) {
       // Both attempts failed — close the door so sheep don't escape.
-      const Vec3 = require('vec3').Vec3
       const g = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
       if (g) await bot.activateBlock(g).catch(() => {})
       logEvent('enter-pen', 'both attempts failed, door closed')
@@ -2140,7 +2126,6 @@ async function runGoOutOfPen ({ skipActivate = false } = {}) {
   logEvent('go-out-of-pen', `yaw locked north at ${yawResult.yaw.toFixed(3)} rad`)
 
   // 3. Open gate/door and monkey-patch getBlock for the path.
-  const Vec3 = require('vec3').Vec3
   const gateBlock = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
   if (!gateBlock) throw new Error('gate block not loaded')
   if (!skipActivate) await bot.activateBlock(gateBlock)
@@ -2187,7 +2172,6 @@ async function runLeavePen () {
       logEvent('leave-pen', `attempt ${attempt} failed (${err.message})`)
       if (attempt === 3) {
         // All attempts failed — close the door so sheep don't escape.
-        const Vec3 = require('vec3').Vec3
         const g = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
         if (g) await bot.activateBlock(g).catch(() => {})
         logEvent('leave-pen', 'all attempts failed, door closed')
@@ -2326,7 +2310,6 @@ async function runShearSheep () {
     if (!current) continue
 
     try {
-      const { goals } = require('mineflayer-pathfinder')
       bot.pathfinder.setGoal(new goals.GoalNear(current.position.x, current.position.y, current.position.z, 2))
       for (let i = 0; i < 15; i++) {
         await sleep(400)
@@ -2365,7 +2348,6 @@ async function runShearSheep () {
   const woolItems = bot.inventory.items().filter(i => i.name === 'wool')
   if (woolItems.length) {
     await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 8000)
-    const Vec3 = require('vec3').Vec3
     const chestBlock = bot.blockAt(new Vec3(
       HARVEST_WAYPOINTS.kitchen_chest.x,
       HARVEST_WAYPOINTS.kitchen_chest.y,
@@ -2413,7 +2395,6 @@ const CHEST_SLOTS = { bread: 15, dough: 21, water: 22, salt: 23, flour: 24, bowl
 let bakeBusy = false
 
 async function openChest () {
-  const Vec3 = require('vec3').Vec3
   const b = bot.blockAt(new Vec3(KITCHEN_CHEST.x, KITCHEN_CHEST.y, KITCHEN_CHEST.z))
   if (!b) throw new Error('kitchen chest block not loaded')
   return bot.openContainer(b)
@@ -2601,7 +2582,6 @@ async function runBake (mode = 'both') {
   bakeBusy = true
   try {
     // -- 1. Move near the chest so clicks reach (pathfinder safe indoors). --
-    const { goals } = require('mineflayer-pathfinder')
     bot.pathfinder.setGoal(new goals.GoalNear(
       CHEST_APPROACH_POS.x, CHEST_APPROACH_POS.y, CHEST_APPROACH_POS.z, 1,
     ))
@@ -2822,7 +2802,6 @@ async function runBake (mode = 'both') {
     // Stash bread into chest slot 15 up to one full stack; keep extras on hand.
     let deposited = 0
     try {
-      const Vec3 = require('vec3').Vec3
       const b = bot.blockAt(new Vec3(KITCHEN_CHEST.x, KITCHEN_CHEST.y, KITCHEN_CHEST.z))
       const win = await bot.openContainer(b)
       try {
@@ -2893,7 +2872,6 @@ async function runStashUnknown () {
   bot.chat(`Stashing ${unknowns.length} unknown stack(s) in the kitchen chest…`)
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
 
-  const Vec3 = require('vec3').Vec3
   const chestBlock = bot.blockAt(new Vec3(
     HARVEST_WAYPOINTS.kitchen_chest.x,
     HARVEST_WAYPOINTS.kitchen_chest.y,
@@ -2957,7 +2935,6 @@ async function runStashWheat () {
   }
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
 
-  const Vec3 = require('vec3').Vec3
   const chestBlock = bot.blockAt(new Vec3(
     HARVEST_WAYPOINTS.kitchen_chest.x,
     HARVEST_WAYPOINTS.kitchen_chest.y,
@@ -3014,7 +2991,6 @@ async function runDepositNamed (names) {
   }
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
 
-  const Vec3 = require('vec3').Vec3
   const chestBlock = bot.blockAt(new Vec3(
     HARVEST_WAYPOINTS.kitchen_chest.x,
     HARVEST_WAYPOINTS.kitchen_chest.y,
@@ -3072,7 +3048,6 @@ async function runStashAll () {
   }
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
 
-  const Vec3 = require('vec3').Vec3
   const chestBlock = bot.blockAt(new Vec3(
     HARVEST_WAYPOINTS.kitchen_chest.x,
     HARVEST_WAYPOINTS.kitchen_chest.y,
@@ -3236,7 +3211,6 @@ const CHAT_HANDLERS = [
     pattern: /\b(what('?s| is)\s*(cookin(g|')?|baking|smelting|in the (furnace|oven))|furnace status|check (the\s+)?furnace)\b/i,
     handler: async (_user) => {
       sendEmote('think')
-      const Vec3 = require('vec3').Vec3
       const b = bot.blockAt(new Vec3(
         HARVEST_WAYPOINTS.furnace.x, HARVEST_WAYPOINTS.furnace.y, HARVEST_WAYPOINTS.furnace.z,
       ))
@@ -5140,12 +5114,11 @@ function handleCommand (cmd) {
       // args: { x, y, z, range? } — walk to a point. If range provided, GoalNear; else GoalBlock.
       let { x, y, z, range } = args
       x = Number(x); y = Number(y); z = Number(z)
-      const Vec3pf = require('vec3').Vec3
       const pfRange = range !== undefined ? Number(range) : 0
-      if (pfRange <= 1 && isPositionOccupied(new Vec3pf(x, y, z))) {
+      if (pfRange <= 1 && isPositionOccupied(new Vec3(x, y, z))) {
         const offsets = [{x:1,z:0},{x:-1,z:0},{x:0,z:1},{x:0,z:-1}]
         for (const off of offsets) {
-          if (!isPositionOccupied(new Vec3pf(x + off.x, y, z + off.z))) {
+          if (!isPositionOccupied(new Vec3(x + off.x, y, z + off.z))) {
             x += off.x; z += off.z; break
           }
         }
@@ -5212,7 +5185,6 @@ function handleCommand (cmd) {
     case 'deposit': {
       // Put items from bot inventory into a container.
       // args: { x, y, z, names: [string] } — all items matching any name get deposited.
-      const Vec3 = require('vec3').Vec3
       const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
       if (!b) return { ok: false, error: 'no block' }
       const wantedNames = new Set(args.names || [])
@@ -5234,7 +5206,6 @@ function handleCommand (cmd) {
       }).catch(e => ({ ok: false, error: e.message }))
     }
     case 'open_container': {
-      const Vec3 = require('vec3').Vec3
       const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
       if (!b) return { ok: false, error: 'no block' }
       return bot.openContainer(b).then(win => {
@@ -5254,7 +5225,6 @@ function handleCommand (cmd) {
       // args: { x, y, z, fromSlot, toSlot } — fromSlot is mineflayer inventory
       // slot (main 9-35, hotbar 36-44); toSlot is container-relative (0-based).
       // Uses raw two-click, so works for modded `unknown` items.
-      const Vec3 = require('vec3').Vec3
       const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
       if (!b) return { ok: false, error: 'no block' }
       const fromSlot = Number(args.fromSlot)
@@ -5293,7 +5263,6 @@ function handleCommand (cmd) {
       // args: { x, y, z, slot } — `slot` is the container-relative slot index
       // as reported by open_container. Picks up the stack and drops it into
       // the first empty player-inventory slot.
-      const Vec3 = require('vec3').Vec3
       const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
       if (!b) return { ok: false, error: 'no block' }
       const srcSlot = Number(args.slot)
@@ -5324,7 +5293,6 @@ function handleCommand (cmd) {
     }
     case 'dig': {
       // Left-click: break a block.
-      const Vec3 = require('vec3').Vec3
       const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
       if (!b) return { ok: false, error: 'no block at coords' }
       return bot.dig(b).then(() => ({ ok: true, name: b.name })).catch(e => ({ ok: false, error: e.message }))
@@ -5332,7 +5300,6 @@ function handleCommand (cmd) {
     case 'place_block': {
       // Right-click: place the currently-held item onto a face of a reference block.
       // args: { x, y, z, face: 'top'|'bottom'|'north'|'south'|'east'|'west' } — ref block coords
-      const Vec3 = require('vec3').Vec3
       const faces = {
         top: new Vec3(0, 1, 0), bottom: new Vec3(0, -1, 0),
         north: new Vec3(0, 0, -1), south: new Vec3(0, 0, 1),
@@ -5362,7 +5329,6 @@ function handleCommand (cmd) {
       // Right-click a block, wait for a window to open, dump its contents.
       // For modded containers that mineflayer's openContainer doesn't recognize
       // (empty-name blocks). args: { x, y, z, waitMs? }
-      const Vec3 = require('vec3').Vec3
       const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
       if (!b) return { ok: false, error: 'no block' }
       const waitMs = args.waitMs != null ? Number(args.waitMs) : 1500
@@ -5404,7 +5370,6 @@ function handleCommand (cmd) {
     case 'furnace_state': {
       // Open a furnace and report what's in each slot. Slots: 0=input,
       // 1=fuel, 2=output. Assumes fuel is already present.
-      const Vec3 = require('vec3').Vec3
       const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
       if (!b) return { ok: false, error: 'no block' }
       return bot.openFurnace(b).then(f => {
@@ -5419,7 +5384,6 @@ function handleCommand (cmd) {
     case 'furnace_put': {
       // Put items from bot inventory into the furnace input slot. Works for
       // vanilla items (potato, beef, iron ore, etc.). args: { x,y,z, name, count }
-      const Vec3 = require('vec3').Vec3
       const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
       if (!b) return { ok: false, error: 'no block' }
       const wantName = String(args.name)
@@ -5440,7 +5404,6 @@ function handleCommand (cmd) {
     }
     case 'furnace_take': {
       // Take the output of the furnace into the bot's inventory.
-      const Vec3 = require('vec3').Vec3
       const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
       if (!b) return { ok: false, error: 'no block' }
       return bot.openFurnace(b).then(async f => {
@@ -5552,7 +5515,6 @@ function handleCommand (cmd) {
     }
     case 'activate_block': {
       // args: { x, y, z } — right-click the block at those absolute coords.
-      const Vec3 = require('vec3').Vec3
       const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
       if (!b) return { ok: false, error: 'no block at coords' }
       return bot.activateBlock(b).then(() => ({ ok: true, name: b.name })).catch(e => ({ ok: false, error: e.message }))
@@ -5582,7 +5544,6 @@ function handleCommand (cmd) {
       return { ok: true, name: b.name, displayName: b.displayName, metadata: b.metadata, type: b.type, x: b.position.x, y: b.position.y, z: b.position.z }
     }
     case 'block_at_abs': {
-      const Vec3 = require('vec3').Vec3
       const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
       if (!b) return { ok: false, error: 'no block' }
       return { ok: true, name: b.name, metadata: b.metadata, type: b.type, x: b.position.x, y: b.position.y, z: b.position.z }
