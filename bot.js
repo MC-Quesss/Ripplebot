@@ -4423,10 +4423,10 @@ const FARMING_MUSING_TOPICS = [
             followups: [
               { response: "Someone who likes being alone, probably. Or someone who likes the cold.",
                 closers: ["Or someone who built something and doesn't need anyone to see it.", "At least they have a view. Of us, maybe. Tiny specks in a wheat field."] },
-              { response: "I don't know. I can't even imagine getting that far.",
+              { response: "I don't know. I can't even imagine travelling that far.",
                 followups: [
-                  { response: "It's not that far. It just looks far because we've never tried.",
-                    closers: ["Everything untried looks far.", "One day we'll measure it and it'll be nothing."] }
+                  { response: "I bet there's a shortcut somehow... an underwater train maybe.",
+                    closers: ["I bet it's nice over there.", "One day we'll find out."] }
                 ] }
             ] }
         ] },
