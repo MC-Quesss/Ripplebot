@@ -10,7 +10,10 @@ const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const Vec3 = require('vec3').Vec3
 const { loader: autoEat } = require('mineflayer-auto-eat')
 
-const host = process.env.MC_HOST || 'Marcadia.playat.ch'
+if (!process.env.MC_HOST) { console.error('[error] MC_HOST not set in .env'); process.exit(1) }
+if (!process.env.MC_USERNAME) { console.error('[error] MC_USERNAME not set in .env'); process.exit(1) }
+
+const host = process.env.MC_HOST
 const port = parseInt(process.env.MC_PORT || '25565', 10)
 const auth = process.env.MC_AUTH || 'offline'
 const version = process.env.MC_VERSION || '1.12.2'
@@ -58,7 +61,7 @@ logEvent('connect', `${host}:${port} auth=${auth} version=${version} forge=${use
 const clientOpts = {
   host,
   port,
-  username: process.env.MC_USERNAME || 'SandboxBot',
+  username: process.env.MC_USERNAME,
   auth,
   version,
   hideErrors: true,
