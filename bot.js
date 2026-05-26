@@ -106,6 +106,47 @@ client.on('position', (packet) => {
 const bot = mineflayer.createBot({ ...clientOpts, client })
 bot.loadPlugin(pathfinder)
 bot.loadPlugin(autoEat)
+
+// Cross-bot phrase de-duplication. Each bot remembers exact-ish lines it hears
+// in chat, then avoids picking that same phrase as its immediate next random
+// line. Because every bot hears the shared chat, this suppresses echo-chamber
+// repeats without any external coordination service.
+const RECENT_CHAT_PHRASE_TTL_MS = 5 * 60 * 1000
+const recentChatPhrases = new Map() // normalized phrase -> last seen timestamp
+function normalizeChatPhrase (text) {
+  return String(text || '')
+    .replace(/§[0-9a-fk-or]/gi, '')
+    .replace(/^\s*<[^>]+>\s*/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+function pruneRecentChatPhrases () {
+  const cutoff = Date.now() - RECENT_CHAT_PHRASE_TTL_MS
+  for (const [phrase, ts] of recentChatPhrases) {
+    if (ts < cutoff) recentChatPhrases.delete(phrase)
+  }
+}
+function rememberChatPhrase (text) {
+  const phrase = normalizeChatPhrase(text)
+  if (!phrase || phrase.length < 4) return
+  pruneRecentChatPhrases()
+  recentChatPhrases.set(phrase, Date.now())
+}
+function wasPhraseRecentlyHeard (text) {
+  pruneRecentChatPhrases()
+  return recentChatPhrases.has(normalizeChatPhrase(text))
+}
+function pickAvoidingRecentPhrase (items, toPhrase = x => x) {
+  const available = items.filter(item => !wasPhraseRecentlyHeard(toPhrase(item)))
+  const pool = available.length ? available : items
+  return pool[Math.floor(Math.random() * pool.length)]
+}
+const _origBotChat = bot.chat.bind(bot)
+bot.chat = (message, ...args) => {
+  rememberChatPhrase(message)
+  return _origBotChat(message, ...args)
+}
 bot.once('spawn', () => {
   const mcData = require('minecraft-data')(bot.version)
   const mvts = new Movements(bot, mcData)
@@ -770,7 +811,7 @@ function scanKnownWheatFields () {
 
 function pickWheatReadyLine () {
   const pool = isBedtime() ? WHEAT_READY_NIGHT_LINES : WHEAT_READY_LINES
-  return pool[Math.floor(Math.random() * pool.length)]
+  return pickAvoidingRecentPhrase(pool)
 }
 
 function snoozeWheatReadyAlerts (username = 'someone') {
@@ -786,9 +827,10 @@ function snoozeWheatReadyAlerts (username = 'someone') {
 function isWheatReadyAcknowledgement (message) {
   if (!wheatReadyState.ready || wheatReadyState.snoozed) return false
   if (!nickRe || !nickRe.test(message)) return false
+
   const stripped = message.replace(nickRe, ' ').toLowerCase()
-  const acknowledges = /(ok|okay|thanks?|thank you|got it|heard|copy|roger|understood|cool|alright|all right|noted)/i.test(stripped)
-  const asksForAction = /(harvest|reap|cut|go|get|start|do it|now)/i.test(stripped)
+  const acknowledges = /\b(ok|okay|thanks?|thank you|got it|heard|copy|roger|understood|cool|alright|all right|noted)\b/i.test(stripped)
+  const asksForAction = /\b(harvest|reap|cut|go|get|start|do it|now)\b/i.test(stripped)
   return acknowledges && !asksForAction
 }
 
@@ -3567,6 +3609,7 @@ const LOVE_RE = /\bi love you\b/i
 const BYE_RE = /\b(bye|bye bye|goodbye|good bye|see ya|see you|later|peace out|ok bye|cya|ttyl|take care)\b/i
 bot.on('chat', (username, message) => {
   if (username === bot.username) return
+  rememberChatPhrase(message)
   logEvent('chat', `<${username}> ${message}`)
   if (isWheatReadyAcknowledgement(message)) {
     facePlayer(username).catch(() => {})
@@ -3732,12 +3775,15 @@ function rippleStats () {
 // its trait is zero.
 function pickLine (pool, vars = {}) {
   const stats = rippleStats()
-  const weighted = pool.map(p => ({ text: p.text, w: Math.max(1, p.weight(stats)) }))
+  const render = (text) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '')
+  let weighted = pool.map(p => ({ text: render(p.text), w: Math.max(1, p.weight(stats)) }))
+  const fresh = weighted.filter(p => !wasPhraseRecentlyHeard(p.text))
+  if (fresh.length) weighted = fresh
   const total = weighted.reduce((s, x) => s + x.w, 0)
   let r = Math.random() * total
   let chosen = weighted[0].text
   for (const w of weighted) { r -= w.w; if (r <= 0) { chosen = w.text; break } }
-  return chosen.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '')
+  return chosen
 }
 
 function pickFarewell () { return pickLine(FAREWELLS) }
@@ -4641,6 +4687,8 @@ function nodeChildren (node) {
 }
 
 function pickRandom (items) {
+  if (!items.length) return undefined
+  if (typeof items[0] === 'string') return pickAvoidingRecentPhrase(items)
   return items[Math.floor(Math.random() * items.length)]
 }
 
@@ -4892,10 +4940,12 @@ function handleMusingMessage (username, message) {
 }
 
 function initiateMusingFromPool (pool, label) {
-  const available = pool.filter(t => !recentMusingTopics.has(t.id))
-  if (!available.length) return false
+  const available = pool.filter(t => !recentMusingTopics.has(t.id) && !wasPhraseRecentlyHeard(t.starter))
+  const fallback = pool.filter(t => !recentMusingTopics.has(t.id))
+  const topicPool = available.length ? available : fallback
+  if (!topicPool.length) return false
 
-  const topic = pickRandom(available)
+  const topic = pickRandom(topicPool)
 
   bot.chat(topic.starter)
   recentMusingTopics.add(topic.id)
