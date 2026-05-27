@@ -3038,9 +3038,10 @@ async function runDepositNamed (names) {
   logEvent('deposit-named', summary.join('; '))
 }
 
-// Stash everything except seeds (for replanting) and baked potatoes (for eating).
+// Stash everything except seeds (for replanting), baked potatoes (for eating),
+// and shears (for wool runs).
 // Uses win.deposit for known items and two-click for unknown/modded items.
-const STASH_ALL_KEEP = { wheat_seeds: 32, baked_potato: 16 }
+const STASH_ALL_KEEP = { wheat_seeds: 32, baked_potato: 16, shears: 1 }
 async function runStashAll () {
   const inv = bot.inventory.items()
   if (!inv.length) { bot.chat('Pockets already empty.'); return }
@@ -3073,6 +3074,9 @@ async function runStashAll () {
   let kept = 0
   let failed = 0
   const reserved = {} // how many we've reserved so far per keep-item
+  const usedSlots = new Set() // chest slots we've two-clicked into this session
+
+  logEvent('stash-all', `chest containerSlotCount=${containerSlotCount} windowTotal=${win.slots.length}`)
 
   try {
     for (let i = invStart; i < win.slots.length; i++) {
@@ -3097,12 +3101,16 @@ async function runStashAll () {
       if (it.name === 'unknown') {
         let destSlot = -1
         for (let j = 0; j < containerSlotCount; j++) {
+          if (usedSlots.has(j)) continue
           if (!win.slots[j]) { destSlot = j; break }
         }
         if (destSlot < 0) { failed += depositCount; continue }
         try {
           await bot.clickWindow(i, 0, 0)
+          await sleep(200)
           await bot.clickWindow(destSlot, 0, 0)
+          await sleep(200)
+          usedSlots.add(destSlot)
           deposited += depositCount
         } catch (e) {
           failed += depositCount
@@ -3113,15 +3121,36 @@ async function runStashAll () {
           await win.deposit(it.type, it.metadata, depositCount)
           deposited += depositCount
         } catch (e) {
-          failed += depositCount
-          logEvent('stash-all', `deposit fail ${it.name}: ${e.message}`)
+          // win.deposit can fail on modded servers; fall back to two-click
+          let destSlot = -1
+          for (let j = 0; j < containerSlotCount; j++) {
+            if (usedSlots.has(j)) continue
+            if (!win.slots[j]) { destSlot = j; break }
+          }
+          if (destSlot < 0) {
+            failed += depositCount
+            logEvent('stash-all', `deposit fail ${it.name}: ${e.message} (no fallback slot)`)
+          } else {
+            try {
+              await bot.clickWindow(i, 0, 0)
+              await sleep(200)
+              await bot.clickWindow(destSlot, 0, 0)
+              await sleep(200)
+              usedSlots.add(destSlot)
+              deposited += depositCount
+            } catch (e2) {
+              failed += depositCount
+              logEvent('stash-all', `deposit fail ${it.name}: two-click fallback also failed`)
+              try { await bot.clickWindow(-999, 0, 0) } catch (_) {}
+            }
+          }
         }
       }
     }
   } finally { win.close() }
 
   const parts = [`stashed ${deposited}`]
-  if (kept > 0) parts.push(`kept ${kept} (seeds/food)`)
+  if (kept > 0) parts.push(`kept ${kept} (seeds/food/shears)`)
   if (failed > 0) parts.push(`${failed} didn't fit`)
   bot.chat(parts.join(', ') + '.')
   logEvent('stash-all', `deposited=${deposited} kept=${kept} failed=${failed}`)
@@ -3569,8 +3598,11 @@ const CHAT_HANDLERS = [
 let nickRe = null
 bot.on('login', () => {
   if (!NICKNAME) NICKNAME = bot.username
-  nickRe = new RegExp(`(^|\\W)${NICKNAME}($|\\W)`, 'i')
-  logEvent('nickname', `responding to "${NICKNAME}"`)
+  const names = [bot.username]
+  if (NICKNAME.toLowerCase() !== bot.username.toLowerCase()) names.push(NICKNAME)
+  const alternation = names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  nickRe = new RegExp(`(^|\\W)(${alternation})($|\\W)`, 'i')
+  logEvent('nickname', `responding to "${names.join('" or "')}"`)
 })
 
 function extractMySegment (message) {
@@ -3611,8 +3643,13 @@ bot.on('chat', (username, message) => {
     logEvent('chat-handled', `bye <- <${username}> ${message}`)
     return
   }
-  if (handleMusingMessage(username, message)) return
-  if (!nickRe || !nickRe.test(message)) return
+  const isDirectedAtMe = nickRe && nickRe.test(message)
+  if (isDirectedAtMe && musingState.status !== 'idle') {
+    endMusingConversation()
+    logEvent('musing', `interrupted by command from ${username}`)
+  }
+  if (!isDirectedAtMe && handleMusingMessage(username, message)) return
+  if (!isDirectedAtMe) return
   // Any directed command from the followed player ends the follow.
   if (followTarget && username === followTarget) {
     bot.pathfinder.setGoal(null)
