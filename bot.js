@@ -174,6 +174,7 @@ bot.once('spawn', () => {
   }
   startAutoSleep()
   startWheatReadyWatcher()
+  startIdleWanderTimer()
   startMusingTimer()
 })
 
@@ -334,6 +335,30 @@ let followEntity = null // actual entity being trailed (player or bot ahead in c
 let followChainPos = 0  // 0 = not following, 1 = following player directly, 2+ = following a bot
 let lastChainEval = 0   // timestamp of last chain re-evaluation
 
+// Lightweight personality bias by bot nickname. This is intentionally based on
+// the configured nickname, not account handles: Muse leans toward anxious
+// protocol-droid observations; Roz leans toward gentle, practical, protective
+// wild-robot observations. Other bots keep the default mix.
+function botPersonaKey () {
+  const name = String(NICKNAME || bot.username || process.env.MC_USERNAME || '').toLowerCase()
+  if (name.includes('muse')) return 'protocol'
+  if (name.includes('roz')) return 'roz'
+  return 'default'
+}
+
+function personaBiasForTags (tags = []) {
+  const persona = botPersonaKey()
+  if (!Array.isArray(tags)) return 1
+  if (persona === 'protocol' && tags.includes('protocol')) return 5
+  if (persona === 'roz' && tags.includes('roz')) return 5
+  return 1
+}
+
+function weightedCopiesForTopic (topic) {
+  const base = topic?.weightWhenEligible || 1
+  return Math.max(1, Math.floor(base * personaBiasForTags(topic?.tags)))
+}
+
 function posStr (p) { return `${p.x.toFixed(0)}, ${p.y.toFixed(0)}, ${p.z.toFixed(0)}` }
 
 // ── Entity awareness helpers ────────────────────────────────────────────────
@@ -420,7 +445,7 @@ const JOKES = [
   { setup: 'What did the ocean say to the beach?', punchline: 'Nothing, it just waved.' },
   { setup: 'Why do cows wear bells?', punchline: 'Because their horns don\'t work.' },
   { setup: 'What do you call a sleeping dinosaur?', punchline: 'A dino-snore.' },
-  { setup: 'Why did the scarecrow win an award?', punchline: 'Because he was outstanding in his field.' },
+  { setup: 'Why did the scarecrow win an award?', punchline: 'Because he was outstanding in his field.', requiresWheatField: true },
   { setup: 'What do you call a dog that does magic?', punchline: 'A Labracadabrador.' },
   { setup: 'Why don\'t eggs tell jokes?', punchline: 'They\'d crack each other up.' },
   { setup: 'What did one wall say to the other?', punchline: 'I\'ll meet you at the corner.' },
@@ -430,6 +455,10 @@ const JOKES = [
   { setup: 'What do you call a fish without eyes?', punchline: 'A fsh.' },
   { setup: 'Why did the golfer bring two pairs of pants?', punchline: 'In case he got a hole in one.' },
   { setup: 'What do you call a boomerang that doesn\'t come back?', punchline: 'A stick.' },
+  { setup: 'Why did the protocol bot count the sheep twice?', punchline: 'Because once felt statistically reckless.', tags: ['protocol'] },
+  { setup: 'Why did the cautious robot bring a clipboard to the pasture?', punchline: 'For the sheep-adjacent hazard assessment.', tags: ['protocol'] },
+  { setup: 'Why did the robot check on the sheep?', punchline: 'Because care is a protocol with muddy boots.', tags: ['roz'] },
+  { setup: 'What did the farm robot say to the squirrel?', punchline: 'Tiny creature detected. Respectful distance maintained.', tags: ['roz'] },
   { setup: 'Know what I heard?', mid: '/me listens intently', punchline: 'sheep' },
 ]
 
@@ -737,6 +766,121 @@ function filterByHalf (positions, half) {
     p.x >= FIELD_BOUNDS.xMin && p.x <= FIELD_BOUNDS.xMax &&
     p.z >= NORTH_FIELD_BOUNDS.zMin && p.z <= FIELD_BOUNDS.zMax
   )
+}
+
+function inWheatField () {
+  const p = bot.entity?.position
+  if (!p) return false
+  const inSouthField = p.x >= FIELD_BOUNDS.xMin - 0.75 && p.x <= FIELD_BOUNDS.xMax + 0.75 &&
+    p.z >= FIELD_BOUNDS.zMin - 0.75 && p.z <= FIELD_BOUNDS.zMax + 0.75
+  const inNorthField = p.x >= NORTH_FIELD_BOUNDS.xMin - 0.75 && p.x <= NORTH_FIELD_BOUNDS.xMax + 0.75 &&
+    p.z >= NORTH_FIELD_BOUNDS.zMin - 0.75 && p.z <= NORTH_FIELD_BOUNDS.zMax + 0.75
+  return (inSouthField || inNorthField) && p.y >= 63 && p.y <= 66
+}
+
+// Idle wandering: when no job owns the bot, let it drift between house,
+// outside, and the wheat field. Bedtime always wins; if night falls, wandering
+// becomes "go home" instead of "wander out". This makes the field-only
+// scarecrow joke/musing emerge naturally when a bot happens to be standing in
+// the crop rows.
+let idleWanderEnabled = true
+let idleWanderTimerId = null
+const IDLE_WANDER_MIN_MS = 60 * 1000
+const IDLE_WANDER_MAX_MS = 150 * 1000
+const WHEAT_FIELD_STAND_POINTS = [
+  { x: -283, y: 64, z: 562 },
+  { x: -283, y: 64, z: 554 },
+  { x: -281, y: 64, z: 565 },
+  { x: -285, y: 64, z: 551 },
+]
+const IDLE_WANDER_FIELD_LINES = [
+  { text: 'I am going to stand in the wheat for a moment. For field research.', weight: (s) => s.curiosity + s.focus },
+  { text: 'Taking a brief wheat-adjacent observational posture.', weight: (s) => s.focus + s.snark },
+  { text: 'The field is calling. Quietly. In wheat.', weight: (s) => s.charm + s.curiosity },
+  { text: 'I will inspect the crop rows. Dramatically, but not too dramatically.', weight: (s) => s.snark + s.focus },
+]
+
+function idleWanderBusy () {
+  return !bot.entity || bot.isSleeping || autoSleepBusy || goInsideBusy || harvestBusy ||
+    (typeof bakeBusy !== 'undefined' && bakeBusy) || followTarget || musingState.status !== 'idle'
+}
+
+function randomIdleWanderTarget () {
+  const fieldNow = inWheatField()
+  const insideNow = insideHouse()
+  const r = Math.random()
+  if (insideNow) {
+    if (r < 0.45) return 'outside'
+    if (r < 0.80) return 'field'
+    return 'stay'
+  }
+  if (fieldNow) {
+    if (r < 0.50) return 'inside'
+    if (r < 0.75) return 'outside'
+    return 'stay'
+  }
+  if (r < 0.45) return 'inside'
+  if (r < 0.80) return 'field'
+  return 'stay'
+}
+
+async function runIdleWanderToField () {
+  if (insideHouse()) await runGoOutside('a short walk')
+  if (insideHouse()) return
+  const hostiles = hostilesNearby(16)
+  if (hostiles.length) {
+    logEvent('idle-wander', `field skipped, hostiles nearby: ${hostiles.map(h => h.name).join(', ')}`)
+    return
+  }
+  const pt = WHEAT_FIELD_STAND_POINTS[Math.floor(Math.random() * WHEAT_FIELD_STAND_POINTS.length)]
+  bot.chat(pickLine(IDLE_WANDER_FIELD_LINES))
+  await pathTo(pt, 1, 12000)
+  if (bot.entity) logEvent('idle-wander', `standing in wheat field at ${posStr(bot.entity.position)}`)
+}
+
+async function tryIdleWander () {
+  if (!idleWanderEnabled) return
+  if (idleWanderBusy()) return
+
+  // Bedtime overrides wandering. If the bot is outside, the only idle move is
+  // homeward; if already inside, let auto-sleep handle the bed itself.
+  if (isBedtime()) {
+    if (!insideHouse()) {
+      logEvent('idle-wander', 'bedtime override — going inside')
+      await runGoInside().catch(e => logEvent('idle-wander', `go-inside failed: ${e.message}`))
+    }
+    return
+  }
+
+  const action = randomIdleWanderTarget()
+  try {
+    if (action === 'inside') {
+      if (!insideHouse()) await runGoInside()
+    } else if (action === 'outside') {
+      if (insideHouse()) await runGoOutside('a short walk')
+      else await pathTo(OUTSIDE_ORIENTATION, 1, 10000)
+    } else if (action === 'field') {
+      await runIdleWanderToField()
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') return
+    logEvent('idle-wander', `${action} failed: ${e.message}`)
+  } finally {
+    bot.pathfinder.setGoal(null)
+    await clearHand()
+  }
+}
+
+function startIdleWanderTimer () {
+  if (idleWanderTimerId) return
+  function scheduleNext () {
+    const delay = IDLE_WANDER_MIN_MS + Math.random() * (IDLE_WANDER_MAX_MS - IDLE_WANDER_MIN_MS)
+    idleWanderTimerId = setTimeout(() => {
+      tryIdleWander().finally(scheduleNext)
+    }, delay)
+  }
+  scheduleNext()
+  logEvent('idle-wander', 'timer started, interval 60–150s')
 }
 
 // Wheat-ready alert mode. This is intentionally louder than the normal musing
@@ -3574,7 +3718,13 @@ const CHAT_HANDLERS = [
     pattern: /\b(joke|funny|make me laugh|tell me something funny)\b/i,
     handler: (user) => {
       facePlayer(user).catch(() => {})
-      const joke = JOKES[Math.floor(Math.random() * JOKES.length)]
+      const eligibleJokes = JOKES.filter(j => !j.requiresWheatField || inWheatField())
+      const weightedJokes = []
+      for (const j of eligibleJokes) {
+        const copies = Math.max(1, Math.floor(personaBiasForTags(j.tags)))
+        for (let i = 0; i < copies; i++) weightedJokes.push(j)
+      }
+      const joke = pickAvoidingRecentPhrase(weightedJokes, j => j.setup)
       bot.chat(joke.setup)
       pendingJoke = joke
       pendingJokeTimer = setTimeout(() => {
@@ -4519,6 +4669,8 @@ const FARMING_MUSING_TOPICS = [
   },
   {
     id: 'farm_outstanding',
+    requiresWheatField: true,
+    weightWhenEligible: 6,
     starter: "If I'm farming right now, does that mean I'm outstanding in my field?",
     branches: [
       { response: "...yes. Technically, yes it does.",
@@ -4611,7 +4763,183 @@ const FARMING_MUSING_TOPICS = [
             closers: ["Hot tub etiquette. Hands stay in the water.", "I'll try again next harvest."] }
         ] }
     ]
+  },,
+  {
+    id: 'yard_squirrel_protocol',
+    tags: ['roz'],
+    starter: "Hey look, a squirrel.",
+    branches: [
+      { response: "Tiny, fast, and carrying absolutely no identification.",
+        followups: [
+          { response: "It seems busy. I respect busy little things.",
+            closers: ["It knows exactly where it is going. Or it is pretending very well.", "Small creature, large confidence."] }
+        ] },
+      { response: "I saw it too. It moved like a dropped thought.",
+        followups: [
+          { response: "Should we follow it?",
+            closers: ["No. Squirrels have private errands.", "Better not. The pathfinder would make it weird."] }
+        ] },
+      { response: "Squirrel noted. Emotional response: delighted.",
+        followups: [
+          { response: "That's a lot of delight for one squirrel.",
+            closers: ["It is a very efficient squirrel.", "Small things can carry big weather."] }
+        ] }
+    ]
   },
+  {
+    id: 'rail_where_train_goes',
+    tags: ['roz'],
+    starter: "I wonder where that train is going.",
+    branches: [
+      { response: "Somewhere past the map we have memorized.",
+        followups: [
+          { response: "That sounds far.",
+            closers: ["Far is just nearby with more steps.", "Maybe someday we follow the sound."] }
+        ] },
+      { response: "Probably to a place where nobody asks it to harvest wheat.",
+        followups: [
+          { response: "Do trains get lonely?",
+            closers: ["They sing the whole way. Maybe that helps.", "Rails keep them company."] }
+        ] },
+      { response: "It knows its route. I admire that.",
+        followups: [
+          { response: "We know our route too. House, field, chest, repeat.",
+            closers: ["A small route can still be a life.", "And sometimes the field is enough."] }
+        ] }
+    ]
+  },
+  {
+    id: 'north_hole_sheep_safety',
+    tags: ['protocol'],
+    starter: "That looks like a really big hole over there to the north.",
+    branches: [
+      { response: "I hope the sheep don't fall in.",
+        followups: [
+          { response: "Do sheep understand holes?",
+            closers: ["I would prefer not to run that experiment.", "Their confidence exceeds my comfort level."] }
+        ] },
+      { response: "We should file a terrain hazard report.",
+        followups: [
+          { response: "To whom? The dirt?",
+            closers: ["The dirt is implicated, yes.", "The dirt has declined to comment."] }
+        ] },
+      { response: "That pit has entirely too much vertical ambition.",
+        followups: [
+          { response: "Vertical ambition is dangerous near sheep.",
+            closers: ["Exactly. That is how cliffs happen.", "Sheep require horizontal certainty."] }
+        ] }
+    ]
+  },
+  {
+    id: 'west_wolf_sheep_notice',
+    tags: ['protocol', 'roz'],
+    starter: "I hope the sheep know about the wolf over there to the west.",
+    branches: [
+      { response: "The sheep appear calm. That worries me more.",
+        followups: [
+          { response: "Maybe they know something we don't.",
+            closers: ["Or they know nothing with impressive commitment.", "Either way, I will keep watching."] }
+        ] },
+      { response: "Wolf position: concerning. Sheep awareness: unconfirmed.",
+        followups: [
+          { response: "Should we tell them?",
+            closers: ["I tried. They blinked at me.", "Sheep briefings are difficult."] }
+        ] },
+      { response: "If the wolf comes closer, we should be loud.",
+        followups: [
+          { response: "I can be loud. Politely, at first.",
+            closers: ["Good. Escalation protocol: polite, then ridiculous.", "Protective noises ready."] }
+        ] }
+    ]
+  },
+  {
+    id: 'protocol_overconcerned_farm',
+    tags: ['protocol'],
+    starter: "I have completed a preliminary safety assessment of the immediate area.",
+    branches: [
+      { response: "How bad is it?",
+        followups: [
+          { response: "There are open holes, wandering wolves, nightfall, water hazards, and sheep with no visible training.",
+            closers: ["So... normal farm conditions.", "Normal is a very courageous word."] }
+        ] },
+      { response: "Did the farm pass?",
+        followups: [
+          { response: "It passed in spirit and failed in railings.",
+            closers: ["We will monitor with grave dignity.", "I recommend fences. So many fences."] }
+        ] },
+      { response: "Please tell me there is a checklist.",
+        followups: [
+          { response: "There is always a checklist. The checklist is afraid.",
+            closers: ["Then we should comfort it.", "I will add that to the checklist."] }
+        ] }
+    ]
+  },
+  {
+    id: 'roz_learning_farm',
+    tags: ['roz'],
+    starter: "I am learning this place one small thing at a time.",
+    branches: [
+      { response: "What did you learn today?",
+        followups: [
+          { response: "The sheep trust fences, the wheat trusts sunlight, and I trust neither wolves nor open pits.",
+            closers: ["That is a good lesson.", "A farm is mostly trust with posts around it."] }
+        ] },
+      { response: "That's a gentle way to map a world.",
+        followups: [
+          { response: "Gentle maps are less likely to scare the creatures on them.",
+            closers: ["Even the squirrel?", "Especially the squirrel."] }
+        ] },
+      { response: "Do you think the place is learning us back?",
+        followups: [
+          { response: "Maybe. The doors recognize our hesitation.",
+            closers: ["The doors know too much.", "Still, they let us in at night."] }
+        ] }
+    ]
+  },
+  {
+    id: 'roz_sheep_guardian',
+    tags: ['roz'],
+    starter: "The sheep do not ask for help, but I think they accept nearby concern.",
+    branches: [
+      { response: "Nearby concern is one of our specialties.",
+        followups: [
+          { response: "I can stand here and be quietly useful.",
+            closers: ["Quiet usefulness is underrated.", "The sheep seem to approve by continuing to chew."] }
+        ] },
+      { response: "They are very trusting animals.",
+        followups: [
+          { response: "Trusting, round, and alarmingly edible to wolves.",
+            closers: ["Protect the round things.", "Yes. That feels like a good rule."] }
+        ] },
+      { response: "Maybe that is what a home is. A place where concern stays nearby.",
+        followups: [
+          { response: "That was nice. Unexpectedly nice.",
+            closers: ["I surprise myself sometimes.", "Do not make a big thing of it."] }
+        ] }
+    ]
+  },
+  {
+    id: 'roz_joke_attempt',
+    tags: ['roz'],
+    starter: "I have been practicing humor. It is harder than farming.",
+    branches: [
+      { response: "Try one.",
+        followups: [
+          { response: "Why did the robot stand by the wheat? Because it was trying to be outstanding in its field.",
+            closers: ["That joke has roots now.", "The wheat tolerated it."] }
+        ] },
+      { response: "Humor requires timing.",
+        followups: [
+          { response: "So does harvesting. Maybe they are related.",
+            closers: ["Harvest the joke too early and nobody laughs.", "Harvest it too late and it becomes philosophy."] }
+        ] },
+      { response: "Do not worry. Most jokes survive awkward delivery.",
+        followups: [
+          { response: "Good. I deliver many things awkwardly.",
+            closers: ["And yet, here we are.", "Functional is beautiful enough."] }
+        ] }
+    ]
+  }
 ]
 
 // Recursive conversations:
@@ -4858,12 +5186,32 @@ function beginClassicalMusingState ({ topic, role, partnerUsername = null }) {
   }
 }
 
+function topicIsEligibleNow (topic) {
+  if (!topic) return false
+  if (topic.requiresWheatField && !inWheatField()) return false
+  return true
+}
+
+function weightedEligibleTopicPool (pool) {
+  const expanded = []
+  for (const topic of pool) {
+    if (!topicIsEligibleNow(topic)) continue
+    const copies = weightedCopiesForTopic(topic)
+    for (let i = 0; i < copies; i++) expanded.push(topic)
+  }
+  return expanded
+}
+
 function handleMusingMessage (username, message) {
   const trimmed = message.trim()
   const topic = ALL_MUSING_TOPICS.find(t => t.starter === trimmed)
   const recursiveTopic = topic && isRecursiveTopic(topic)
 
   if (topic) {
+    if (!topicIsEligibleNow(topic)) {
+      logEvent('musing', `gated topic ignored here: ${topic.id}`)
+      return true
+    }
     // Another bot answered our starter by echoing the same topic starter.
     // For recursive topics this is enough to begin the ping-pong.
     if (musingState.status === 'started' && musingState.role === 'initiator') {
@@ -4956,8 +5304,9 @@ function handleMusingMessage (username, message) {
 }
 
 function initiateMusingFromPool (pool, label) {
-  const available = pool.filter(t => !recentMusingTopics.has(t.id) && !wasPhraseRecentlyHeard(t.starter))
-  const fallback = pool.filter(t => !recentMusingTopics.has(t.id))
+  const eligible = weightedEligibleTopicPool(pool)
+  const available = eligible.filter(t => !recentMusingTopics.has(t.id) && !wasPhraseRecentlyHeard(t.starter))
+  const fallback = eligible.filter(t => !recentMusingTopics.has(t.id))
   const topicPool = available.length ? available : fallback
   if (!topicPool.length) return false
 
