@@ -433,7 +433,7 @@ const POTATO_SWEEP_POINTS = [
 const FIELD_BOUNDS = { xMin: -287, xMax: -279, zMin: 559, zMax: 565 }
 const NORTH_FIELD_BOUNDS = { xMin: -287, xMax: -279, zMin: 551, zMax: 557 }
 const HOSTILE_NAMES = new Set([
-  'zombie', 'skeleton', 'spider', 'creeper', 'witch', 'enderman',
+  'zombie', 'skeleton', 'creeper', 'witch', 'enderman',
   'slime', 'husk', 'drowned', 'phantom', 'stray', 'cave_spider',
 ])
 
