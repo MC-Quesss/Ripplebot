@@ -5450,8 +5450,22 @@ function handleMusingMessage (username, message) {
         return true
       }
 
-      // Classical starters from another bot while we are waiting should not
-      // fork a second conversation tree. Treat it as handled and keep waiting.
+      // Classical starters from another bot while we are waiting usually should not
+      // fork a second conversation tree. Exception: farm_outstanding is often
+      // intentionally echoed by a second bot arriving in the wheat field, so answer
+      // it instead of letting both bots stare at the same pun-shaped silence.
+      if (topic.id === 'farm_outstanding' && inWheatField()) {
+        const branch = pickRandom(topic.branches)
+        if (!branch || !branch.response) {
+          logEvent('musing', `topic has no valid response branch: ${topic.id}`)
+          scheduleMusingTimeout(MUSING_START_TIMEOUT_MS)
+          return true
+        }
+        beginClassicalMusingState({ topic, role: 'responder', partnerUsername: username })
+        musingSendAndAdvance(branch.response, branch, topic.id)
+        return true
+      }
+
       scheduleMusingTimeout(MUSING_START_TIMEOUT_MS)
       return true
     }
