@@ -788,8 +788,8 @@ function inWheatField () {
 // the crop rows.
 let idleWanderEnabled = true
 let idleWanderTimerId = null
-const IDLE_WANDER_MIN_MS = 60 * 1000
-const IDLE_WANDER_MAX_MS = 150 * 1000
+const IDLE_WANDER_MIN_MS = 20 * 1000
+const IDLE_WANDER_MAX_MS = 70 * 1000
 const WHEAT_FIELD_STAND_POINTS = [
   { x: -283, y: 64, z: 562 },
   { x: -283, y: 64, z: 554 },
@@ -1018,7 +1018,7 @@ function startIdleWanderTimer () {
     }, delay)
   }
   scheduleNext()
-  logEvent('idle-wander', 'timer started, interval 60–150s')
+  logEvent('idle-wander', 'timer started, interval 20–70s')
 }
 
 // Wheat-ready alert mode. This is intentionally louder than the normal musing
