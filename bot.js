@@ -943,6 +943,14 @@ async function runIdleWanderToField ({ announce = true } = {}) {
 }
 
 async function runIdleWanderToPen () {
+  if (insideHouse()) {
+    await runGoOutside('sheep')
+    if (insideHouse()) {
+      logEvent('idle-wander', 'pen skipped, could not get outside first')
+      return
+    }
+  }
+
   const hostiles = hostilesNearby(16)
   if (hostiles.length) {
     logEvent('idle-wander', `pen skipped, hostiles nearby: ${hostiles.map(h => h.name).join(', ')}`)
