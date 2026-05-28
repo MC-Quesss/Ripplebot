@@ -142,9 +142,12 @@ function wasPhraseRecentlyHeard (text) {
   return recentChatPhrases.has(normalizeChatPhrase(text))
 }
 function pickAvoidingRecentPhrase (items, toPhrase = x => x) {
-  const available = items.filter(item => !wasPhraseRecentlyHeard(toPhrase(item)))
-  const pool = available.length ? available : items
+  const cleanItems = Array.isArray(items) ? items.filter(Boolean) : []
+  if (!cleanItems.length) return undefined
+  const available = cleanItems.filter(item => !wasPhraseRecentlyHeard(toPhrase(item)))
+  const pool = available.length ? available : cleanItems
   const picked = pool[Math.floor(Math.random() * pool.length)]
+  if (!picked) return undefined
   rememberChatPhrase(toPhrase(picked))
   return picked
 }
@@ -5032,8 +5035,10 @@ function phraseForRandomItem (item) {
 }
 
 function pickRandom (items) {
-  if (!items.length) return undefined
-  return pickAvoidingRecentPhrase(items, phraseForRandomItem)
+  if (!Array.isArray(items)) return undefined
+  const cleanItems = items.filter(Boolean)
+  if (!cleanItems.length) return undefined
+  return pickAvoidingRecentPhrase(cleanItems, phraseForRandomItem)
 }
 
 function pickRecursiveLine (topic, usedLines = new Set()) {
@@ -5194,7 +5199,9 @@ function topicIsEligibleNow (topic) {
 
 function weightedEligibleTopicPool (pool) {
   const expanded = []
+  if (!Array.isArray(pool)) return expanded
   for (const topic of pool) {
+    if (!topic || !topic.starter) continue
     if (!topicIsEligibleNow(topic)) continue
     const copies = weightedCopiesForTopic(topic)
     for (let i = 0; i < copies; i++) expanded.push(topic)
@@ -5245,6 +5252,10 @@ function handleMusingMessage (username, message) {
     }
 
     const branch = pickRandom(topic.branches)
+    if (!branch || !branch.response) {
+      logEvent('musing', `topic has no valid response branch: ${topic.id}`)
+      return true
+    }
     beginClassicalMusingState({ topic, role: 'responder', partnerUsername: username })
     musingSendAndAdvance(branch.response, branch, topic.id)
     return true
@@ -5290,9 +5301,19 @@ function handleMusingMessage (username, message) {
 
       if (children.type === 'closers') {
         const closer = pickRandom(children.items)
+        if (!closer) {
+          logEvent('musing', `no valid closer for ${musingState.currentTopicId}`)
+          endMusingConversation()
+          return true
+        }
         musingSendAndAdvance(closer, null, musingState.currentTopicId)
       } else {
         const pick = pickRandom(children.items)
+        if (!pick || !pick.response) {
+          logEvent('musing', `no valid child response for ${musingState.currentTopicId}`)
+          endMusingConversation()
+          return true
+        }
         musingSendAndAdvance(pick.response, pick, musingState.currentTopicId)
       }
 
@@ -5311,6 +5332,10 @@ function initiateMusingFromPool (pool, label) {
   if (!topicPool.length) return false
 
   const topic = pickRandom(topicPool)
+  if (!topic || !topic.starter) {
+    logEvent('musing', `no valid topic selected (${label})`)
+    return false
+  }
 
   bot.chat(topic.starter)
   recentMusingTopics.add(topic.id)
