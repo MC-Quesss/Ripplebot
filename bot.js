@@ -819,6 +819,46 @@ const IDLE_WANDER_FIELD_LINES = [
   { text: 'I feel a sudden need to stand in a field.', weight: (s) => s.curiosity + s.snark },
   { text: 'The wheat and I need to have a conversation.', weight: (s) => s.charm + s.curiosity },
 ]
+const IDLE_WANDER_FIELD_JOIN_LINES = [
+  { text: 'That sounds nice. I will join you.', weight: (s) => s.charm + s.curiosity },
+  { text: 'The wheat field? I could use a little field time.', weight: (s) => s.curiosity + s.charm },
+  { text: 'I will come stand in the wheat too. For science, probably.', weight: (s) => s.curiosity + s.snark },
+  { text: 'A field visit seems sensible. I am coming over.', weight: (s) => s.focus + s.charm },
+  { text: 'Wheat-adjacent companionship sounds acceptable.', weight: (s) => s.snark + s.charm },
+  { text: 'I suppose the field can accommodate one more thoughtful robot.', weight: (s) => s.snark + s.patience },
+  { text: 'I like the field. I will come with you.', weight: (s) => s.charm + s.patience },
+]
+const IDLE_WANDER_FIELD_JOIN_CHANCE = 0.55
+const IDLE_WANDER_FIELD_JOIN_COOLDOWN_MS = 2 * 60 * 1000
+let lastFieldJoinAt = 0
+
+function isIdleWanderFieldAnnouncement (message) {
+  const heard = normalizeChatPhrase(message)
+  return IDLE_WANDER_FIELD_LINES.some(line => normalizeChatPhrase(line.text) === heard)
+}
+
+function canJoinFieldWanderNow () {
+  if (!idleWanderEnabled) return false
+  if (idleWanderBusy()) return false
+  if (isBedtime()) return false
+  if (inWheatField()) return false
+  if (Date.now() - lastFieldJoinAt < IDLE_WANDER_FIELD_JOIN_COOLDOWN_MS) return false
+  return Math.random() < IDLE_WANDER_FIELD_JOIN_CHANCE
+}
+
+async function tryJoinFieldWanderFromChat (username, message) {
+  if (!isIdleWanderFieldAnnouncement(message)) return false
+  if (!canJoinFieldWanderNow()) return false
+  lastFieldJoinAt = Date.now()
+  bot.chat(pickLine(IDLE_WANDER_FIELD_JOIN_LINES))
+  logEvent('idle-wander', `joining ${username} in wheat field`)
+  try {
+    await runIdleWanderToField({ announce: false })
+  } catch (e) {
+    if (e.name !== 'AbortError') logEvent('idle-wander', `field join failed: ${e.message}`)
+  }
+  return true
+}
 const IDLE_WANDER_PEN_LINES = [
   { text: 'I am going to check on the sheep.', weight: (s) => s.charm + s.focus },
   { text: 'The sheep require supervision.', weight: (s) => s.focus + s.snark },
@@ -888,7 +928,7 @@ function randomIdleWanderTarget () {
   return 'stay'
 }
 
-async function runIdleWanderToField () {
+async function runIdleWanderToField ({ announce = true } = {}) {
   if (insideHouse()) await runGoOutside('a short walk')
   if (insideHouse()) return
   const hostiles = hostilesNearby(16)
@@ -897,7 +937,7 @@ async function runIdleWanderToField () {
     return
   }
   const pt = WHEAT_FIELD_STAND_POINTS[Math.floor(Math.random() * WHEAT_FIELD_STAND_POINTS.length)]
-  bot.chat(pickLine(IDLE_WANDER_FIELD_LINES))
+  if (announce) bot.chat(pickLine(IDLE_WANDER_FIELD_LINES))
   await pathTo(pt, 1, 12000)
   if (bot.entity) logEvent('idle-wander', `standing in wheat field at ${posStr(bot.entity.position)}`)
 }
@@ -3896,6 +3936,7 @@ bot.on('chat', (username, message) => {
   if (username === bot.username) return
   rememberChatPhrase(message)
   logEvent('chat', `<${username}> ${message}`)
+  if (tryJoinFieldWanderFromChat(username, message)) return
   if (isWheatReadyAcknowledgement(message)) {
     facePlayer(username).catch(() => {})
     snoozeWheatReadyAlerts(username)
