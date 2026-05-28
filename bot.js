@@ -831,6 +831,8 @@ const IDLE_WANDER_FIELD_JOIN_LINES = [
 const IDLE_WANDER_FIELD_JOIN_CHANCE = 0.55
 const IDLE_WANDER_FIELD_JOIN_COOLDOWN_MS = 2 * 60 * 1000
 let lastFieldJoinAt = 0
+let lastFieldOutstandingAt = 0
+const FIELD_OUTSTANDING_COOLDOWN_MS = 2 * 60 * 1000
 
 function isIdleWanderFieldAnnouncement (message) {
   const heard = normalizeChatPhrase(message)
@@ -854,11 +856,42 @@ async function tryJoinFieldWanderFromChat (username, message) {
   logEvent('idle-wander', `joining ${username} in wheat field`)
   try {
     await runIdleWanderToField({ announce: false })
+    if (Math.random() < 0.999) triggerOutstandingFieldMusingOnArrival({ force: true })
   } catch (e) {
     if (e.name !== 'AbortError') logEvent('idle-wander', `field join failed: ${e.message}`)
   }
   return true
 }
+function triggerOutstandingFieldMusingOnArrival ({ force = false } = {}) {
+  if (!inWheatField()) return false
+  if (musingState.status !== 'idle') return false
+  if (!force && Date.now() - lastFieldOutstandingAt < FIELD_OUTSTANDING_COOLDOWN_MS) return false
+  const topic = ALL_MUSING_TOPICS.find(t => t && t.id === 'farm_outstanding')
+  if (!topic || !topic.starter) {
+    logEvent('musing', 'farm_outstanding topic not found')
+    return false
+  }
+
+  lastFieldOutstandingAt = Date.now()
+  bot.chat(topic.starter)
+  recentMusingTopics.add(topic.id)
+  rememberChatPhrase(topic.starter)
+
+  if (recentMusingTopics.size >= Math.floor(ALL_MUSING_TOPICS.length * 0.8)) {
+    recentMusingTopics.clear()
+  }
+
+  if (isRecursiveTopic(topic)) {
+    beginRecursiveMusingState({ topic, role: 'initiator' })
+  } else {
+    beginClassicalMusingState({ topic, role: 'initiator' })
+  }
+
+  logEvent('musing', `initiated (field-arrival): ${topic.id}`)
+  scheduleMusingTimeout(MUSING_START_TIMEOUT_MS)
+  return true
+}
+
 const IDLE_WANDER_PEN_LINES = [
   { text: 'I am going to check on the sheep.', weight: (s) => s.charm + s.focus },
   { text: 'The sheep require supervision.', weight: (s) => s.focus + s.snark },
@@ -906,25 +939,26 @@ function randomIdleWanderTarget () {
   const penNow = inPen()
   const r = Math.random()
   if (penNow) {
-    if (r < 0.60) return 'outside'
-    if (r < 0.85) return 'inside'
+    if (r < 0.70) return 'outside'
+    if (r < 0.92) return 'inside'
     return 'stay'
   }
   if (insideNow) {
-    if (r < 0.35) return 'outside'
-    if (r < 0.65) return 'field'
-    if (r < 0.88) return 'pen'
+    if (r < 0.25) return 'outside'
+    if (r < 0.78) return 'field'
+    if (r < 0.90) return 'pen'
     return 'stay'
   }
   if (fieldNow) {
-    if (r < 0.35) return 'inside'
+    if (r < 0.30) return 'stay'
     if (r < 0.55) return 'outside'
-    if (r < 0.80) return 'pen'
+    if (r < 0.82) return 'inside'
+    if (r < 0.92) return 'pen'
     return 'stay'
   }
-  if (r < 0.35) return 'inside'
-  if (r < 0.60) return 'field'
-  if (r < 0.82) return 'pen'
+  if (r < 0.25) return 'inside'
+  if (r < 0.72) return 'field'
+  if (r < 0.86) return 'pen'
   return 'stay'
 }
 
@@ -940,6 +974,7 @@ async function runIdleWanderToField ({ announce = true } = {}) {
   if (announce) bot.chat(pickLine(IDLE_WANDER_FIELD_LINES))
   await pathTo(pt, 1, 12000)
   if (bot.entity) logEvent('idle-wander', `standing in wheat field at ${posStr(bot.entity.position)}`)
+  triggerOutstandingFieldMusingOnArrival()
 }
 
 async function runIdleWanderToPen () {
