@@ -782,7 +782,7 @@ function inWheatField () {
 }
 
 // Idle wandering: when no job owns the bot, let it drift between house,
-// outside, and the wheat field. Bedtime always wins; if night falls, wandering
+// outside, the wheat field, and the sheep pen. Bedtime always wins; if night falls, wandering
 // becomes "go home" instead of "wander out". This makes the field-only
 // scarecrow joke/musing emerge naturally when a bot happens to be standing in
 // the crop rows.
@@ -796,11 +796,63 @@ const WHEAT_FIELD_STAND_POINTS = [
   { x: -281, y: 64, z: 565 },
   { x: -285, y: 64, z: 551 },
 ]
+const IDLE_WANDER_LINES = [
+  { text: 'Going for a little walk.', weight: (s) => s.charm + s.curiosity },
+  { text: 'Stretching my legs.', weight: (s) => s.charm },
+  { text: 'I am going to wander for a bit.', weight: (s) => s.curiosity + 10 },
+  { text: 'Just checking the perimeter.', weight: (s) => s.focus + s.curiosity },
+  { text: 'Taking a brief agricultural stroll.', weight: (s) => s.charm + s.snark },
+  { text: 'I feel compelled to meander.', weight: (s) => s.curiosity + s.snark },
+  { text: 'Time for routine wandering.', weight: (s) => s.focus + 10 },
+  { text: 'The farm requires observation.', weight: (s) => s.focus + s.curiosity },
+  { text: 'A short walk may improve morale.', weight: (s) => s.charm + s.patience },
+  { text: 'Perhaps the fresh air will help.', weight: (s) => s.patience + s.charm },
+  { text: 'I need a change of scenery.', weight: (s) => s.curiosity + 10 },
+  { text: 'I shall roam cautiously.', weight: (s) => s.focus + s.snark },
+  { text: 'There are entirely too many mysteries around this property.', weight: (s) => s.curiosity + s.snark },
+]
 const IDLE_WANDER_FIELD_LINES = [
   { text: 'I am going to stand in the wheat for a moment. For field research.', weight: (s) => s.curiosity + s.focus },
   { text: 'Taking a brief wheat-adjacent observational posture.', weight: (s) => s.focus + s.snark },
   { text: 'The field is calling. Quietly. In wheat.', weight: (s) => s.charm + s.curiosity },
   { text: 'I will inspect the crop rows. Dramatically, but not too dramatically.', weight: (s) => s.snark + s.focus },
+  { text: 'I feel a sudden need to stand in a field.', weight: (s) => s.curiosity + s.snark },
+  { text: 'The wheat and I need to have a conversation.', weight: (s) => s.charm + s.curiosity },
+]
+const IDLE_WANDER_PEN_LINES = [
+  { text: 'I am going to check on the sheep.', weight: (s) => s.charm + s.focus },
+  { text: 'The sheep require supervision.', weight: (s) => s.focus + s.snark },
+  { text: 'Conducting a sheep inspection.', weight: (s) => s.focus + 15 },
+  { text: 'I should make sure the sheep are behaving responsibly.', weight: (s) => s.focus + s.snark },
+  { text: 'The sheep seem unusually calm today.', weight: (s) => s.curiosity + s.charm },
+  { text: 'I am going into the pen for a bit.', weight: (s) => s.charm + 10 },
+  { text: 'The sheep and I need to discuss several matters.', weight: (s) => s.curiosity + s.snark },
+  { text: 'I will briefly become one with the sheep.', weight: (s) => s.chaos + s.charm },
+  { text: 'The sheep continue to make questionable decisions.', weight: (s) => s.snark + s.focus },
+]
+const IDLE_WANDER_PEN_INSIDE_LINES = [
+  { text: 'There are more sheep than I remembered.', weight: (s) => s.curiosity + s.snark },
+  { text: 'The sheep appear to have accepted me.', weight: (s) => s.charm + s.curiosity },
+  { text: 'I still do not fully understand sheep culture.', weight: (s) => s.curiosity + s.snark },
+  { text: 'This is a surprisingly political environment.', weight: (s) => s.snark + s.curiosity },
+  { text: 'One of these sheep is definitely in charge.', weight: (s) => s.curiosity + s.chaos },
+  { text: 'Everyone seems safe in here.', weight: (s) => s.charm + s.focus },
+]
+const SHEEP_COUNTING_LINES = [
+  { text: 'Maybe I will count the sheep for a while.', weight: (s) => s.charm + s.patience },
+  { text: 'I seem to be counting sheep.', weight: (s) => s.patience + s.snark },
+  { text: 'One sheep. Two sheep. Several sheep.', weight: (s) => s.snark + s.charm },
+  { text: 'I lost count around sheep six.', weight: (s) => s.snark + s.chaos },
+  { text: 'The sheep are making counting difficult.', weight: (s) => s.snark + s.focus },
+  { text: 'I am trying to count the sheep, but they keep moving.', weight: (s) => s.focus + s.snark },
+  { text: 'One of the sheep appears uncooperative.', weight: (s) => s.snark + s.curiosity },
+  { text: 'I think there are still the correct number of sheep.', weight: (s) => s.focus + s.charm },
+  { text: 'Counting sheep feels appropriate somehow.', weight: (s) => s.patience + s.charm },
+  { text: 'The sheep seem calmer tonight.', weight: (s) => s.charm + s.patience },
+  { text: 'The sheep have entered loaf mode.', weight: (s) => s.curiosity + s.charm },
+  { text: 'This is statistically a lot of sheep.', weight: (s) => s.focus + s.snark },
+  { text: 'One sheep. Two sheep. Three sheep. ...what was I doing?', weight: (s) => s.chaos + s.snark },
+  { text: 'I have counted the sheep twice and still learned nothing.', weight: (s) => s.snark + s.patience },
 ]
 
 function idleWanderBusy () {
@@ -811,19 +863,28 @@ function idleWanderBusy () {
 function randomIdleWanderTarget () {
   const fieldNow = inWheatField()
   const insideNow = insideHouse()
+  const penNow = inPen()
   const r = Math.random()
+  if (penNow) {
+    if (r < 0.60) return 'outside'
+    if (r < 0.85) return 'inside'
+    return 'stay'
+  }
   if (insideNow) {
-    if (r < 0.45) return 'outside'
-    if (r < 0.80) return 'field'
+    if (r < 0.35) return 'outside'
+    if (r < 0.65) return 'field'
+    if (r < 0.88) return 'pen'
     return 'stay'
   }
   if (fieldNow) {
-    if (r < 0.50) return 'inside'
-    if (r < 0.75) return 'outside'
+    if (r < 0.35) return 'inside'
+    if (r < 0.55) return 'outside'
+    if (r < 0.80) return 'pen'
     return 'stay'
   }
-  if (r < 0.45) return 'inside'
-  if (r < 0.80) return 'field'
+  if (r < 0.35) return 'inside'
+  if (r < 0.60) return 'field'
+  if (r < 0.82) return 'pen'
   return 'stay'
 }
 
@@ -841,6 +902,26 @@ async function runIdleWanderToField () {
   if (bot.entity) logEvent('idle-wander', `standing in wheat field at ${posStr(bot.entity.position)}`)
 }
 
+async function runIdleWanderToPen () {
+  const hostiles = hostilesNearby(16)
+  if (hostiles.length) {
+    logEvent('idle-wander', `pen skipped, hostiles nearby: ${hostiles.map(h => h.name).join(', ')}`)
+    return
+  }
+  bot.chat(pickLine(IDLE_WANDER_PEN_LINES))
+  await runEnterPen()
+  if (!inPen()) {
+    logEvent('idle-wander', 'pen visit did not end inside pen')
+    return
+  }
+  await sleep(1200)
+  bot.chat(pickLine(IDLE_WANDER_PEN_INSIDE_LINES))
+  await sleep(1500 + Math.floor(Math.random() * 2500))
+  bot.chat(pickLine(SHEEP_COUNTING_LINES))
+  await sleep(2500 + Math.floor(Math.random() * 4500))
+  if (inPen()) await runLeavePen()
+}
+
 async function tryIdleWander () {
   if (!idleWanderEnabled) return
   if (idleWanderBusy()) return
@@ -848,6 +929,10 @@ async function tryIdleWander () {
   // Bedtime overrides wandering. If the bot is outside, the only idle move is
   // homeward; if already inside, let auto-sleep handle the bed itself.
   if (isBedtime()) {
+    if (inPen()) {
+      logEvent('idle-wander', 'bedtime override — leaving pen')
+      await runLeavePen().catch(e => logEvent('idle-wander', `leave-pen failed: ${e.message}`))
+    }
     if (!insideHouse()) {
       logEvent('idle-wander', 'bedtime override — going inside')
       await runGoInside().catch(e => logEvent('idle-wander', `go-inside failed: ${e.message}`))
@@ -857,6 +942,14 @@ async function tryIdleWander () {
 
   const action = randomIdleWanderTarget()
   try {
+    if (action !== 'stay') bot.chat(pickLine(IDLE_WANDER_LINES))
+
+    // Do not let idle wandering strand a bot in the sheep pen. Any non-pen
+    // wander first exits the pen using the safe gate procedure.
+    if (inPen() && action !== 'pen' && action !== 'stay') {
+      await runLeavePen()
+    }
+
     if (action === 'inside') {
       if (!insideHouse()) await runGoInside()
     } else if (action === 'outside') {
@@ -864,6 +957,8 @@ async function tryIdleWander () {
       else await pathTo(OUTSIDE_ORIENTATION, 1, 10000)
     } else if (action === 'field') {
       await runIdleWanderToField()
+    } else if (action === 'pen') {
+      await runIdleWanderToPen()
     }
   } catch (e) {
     if (e.name === 'AbortError') return
@@ -1127,7 +1222,7 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
         return { activated: 0, harvested: 0 }
       }
       fieldWheat = orderNautilusCCW(fieldWheat)
-      bot.chat(`Right-clicking ${fieldWheat.length} tiles in ${label} (CCW nautilus)…`)
+      bot.chat(`Right-clicking ${fieldWheat.length} tiles in ${label}…`)
 
       let activated = 0
       let harvested = 0
@@ -3766,6 +3861,37 @@ function extractMySegment (message) {
 }
 const LOVE_RE = /\bi love you\b/i
 const BYE_RE = /\b(bye|bye bye|goodbye|good bye|see ya|see you|later|peace out|ok bye|cya|ttyl|take care)\b/i
+
+const IDUNNO_LINES = [
+  { text: 'I dunno.', weight: (s) => s.charm + 10 },
+  { text: 'What?', weight: (s) => s.chaos + s.curiosity + 10 },
+  { text: 'Unclear.', weight: (s) => s.focus + 10 },
+  { text: 'Hard to say.', weight: (s) => s.patience + 10 },
+  { text: 'I have several theories. None are encouraging.', weight: (s) => s.snark + s.focus },
+  { text: 'That remains a mystery of modern farming.', weight: (s) => s.curiosity + s.snark },
+  { text: 'I am not qualified to answer that. Probably.', weight: (s) => s.snark + s.patience },
+  { text: 'I was hoping you knew.', weight: (s) => s.charm + s.snark },
+  { text: 'The sheep may have additional insight.', weight: (s) => s.curiosity + s.charm },
+  { text: 'I cannot rule out squirrel involvement.', weight: (s) => s.curiosity + s.chaos },
+  { text: 'That seems above my current pay grade.', weight: (s) => s.snark + 10 },
+  { text: 'That question has only produced additional questions.', weight: (s) => s.curiosity + s.snark },
+  { text: 'I am still thinking about the train.', weight: (s) => s.curiosity + s.charm },
+  { text: 'Possibly yes. Possibly no. Possibly potatoes.', weight: (s) => s.chaos + s.snark },
+  { text: 'The farm records are inconclusive.', weight: (s) => s.focus + s.snark },
+  { text: 'I was not briefed on that procedure.', weight: (s) => s.focus + s.snark },
+  { text: 'I should hate to speculate irresponsibly. So I will refrain.', weight: (s) => s.focus + s.patience },
+  { text: 'I dunno, but the wheat is doing very well.', weight: (s) => s.charm + s.curiosity },
+  { text: 'The wolf has not submitted a formal statement.', weight: (s) => s.snark + s.curiosity },
+  { text: 'That sounds like a tomorrow problem.', weight: (s) => s.snark + s.patience },
+  { text: 'I checked with the sheep. They were evasive.', weight: (s) => s.snark + s.curiosity },
+  { text: 'My confidence level is somewhere between 3% and absolutely not.', weight: (s) => s.snark + s.focus },
+  { text: 'I once knew. Then I walked into a fence.', weight: (s) => s.snark + s.chaos },
+  { text: 'The universe remains stubbornly ambiguous.', weight: (s) => s.snark + s.patience },
+  { text: 'That is outside my area of agricultural expertise.', weight: (s) => s.focus + 10 },
+  { text: 'I suspect the answer is complicated and muddy.', weight: (s) => s.curiosity + s.patience },
+  { text: 'Perhaps the pond knows.', weight: (s) => s.curiosity + s.charm },
+]
+
 bot.on('chat', (username, message) => {
   if (username === bot.username) return
   rememberChatPhrase(message)
@@ -3834,7 +3960,7 @@ bot.on('chat', (username, message) => {
   sendEmote('shrug')
   setTimeout(() => sendEmote('shrug'), 600)
   setTimeout(() => sendEmote('shrug'), 1200)
-  bot.chat("I dunno.")
+  bot.chat(pickLine(IDUNNO_LINES))
   logEvent('mention', `<${username}> ${message}`)
   fs.appendFileSync(path.join(__dirname, 'mentions.log'), `${new Date().toISOString()} <${username}> ${message}\n`)
 })
