@@ -949,12 +949,17 @@ async function runIdleWanderToPen () {
     return
   }
   bot.chat(pickLine(IDLE_WANDER_PEN_LINES))
-  await runEnterPen()
+  await runEnterPen({ allowNight: true })
   if (!inPen()) {
     logEvent('idle-wander', 'pen visit did not end inside pen')
     return
   }
   await sleep(1200)
+  if (isBedtime()) {
+    bot.chat(pickLine(SHEEP_COUNTING_LINES))
+    if (inPen()) await runLeavePen()
+    return
+  }
   bot.chat(pickLine(IDLE_WANDER_PEN_INSIDE_LINES))
   await sleep(1500 + Math.floor(Math.random() * 2500))
   bot.chat(pickLine(SHEEP_COUNTING_LINES))
@@ -2271,9 +2276,9 @@ async function runGoInside () {
 //   6. Verify on inside pad.
 //
 // Total open-window: ~700ms. Sheep can't escape in that gap.
-async function runGoIntoPen ({ skipActivate = false } = {}) {
+async function runGoIntoPen ({ skipActivate = false, allowNight = false } = {}) {
   const t = bot.time || {}
-  if (!t.isDay || (t.timeOfDay ?? 0) >= 11500) {
+  if (!allowNight && (!t.isDay || (t.timeOfDay ?? 0) >= 11500)) {
     bot.chat(`Can't enter pen — too late in the day.`)
     return
   }
@@ -2353,11 +2358,11 @@ async function runGoIntoPen ({ skipActivate = false } = {}) {
   logEvent('go-into-pen', `arrived ${posStr(bot.entity.position)} onPad=${atInside.ok}`)
 }
 
-async function runEnterPen () {
+async function runEnterPen ({ allowNight = false } = {}) {
   const startHP = bot.health ?? 20
   const startDeaths = deathCount
   try {
-    await runGoIntoPen()
+    await runGoIntoPen({ allowNight })
     return
   } catch (err) {
     const hpDelta = startHP - (bot.health ?? 20)
@@ -2369,7 +2374,7 @@ async function runEnterPen () {
     await sleep(500)
     await pathTo({ x: -278, y: 64, z: 571 }, 0, 6000).catch(() => {})
     try {
-      await runGoIntoPen({ skipActivate: true })
+      await runGoIntoPen({ skipActivate: true, allowNight })
     } catch (err2) {
       // Both attempts failed — close the door so sheep don't escape.
       const g = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
@@ -3936,7 +3941,12 @@ bot.on('chat', (username, message) => {
   if (username === bot.username) return
   rememberChatPhrase(message)
   logEvent('chat', `<${username}> ${message}`)
-  if (tryJoinFieldWanderFromChat(username, message)) return
+  if (isIdleWanderFieldAnnouncement(message)) {
+    tryJoinFieldWanderFromChat(username, message).catch(e => {
+      if (e.name !== 'AbortError') logEvent('idle-wander', `field join chat handler failed: ${e.message}`)
+    })
+    return
+  }
   if (isWheatReadyAcknowledgement(message)) {
     facePlayer(username).catch(() => {})
     snoozeWheatReadyAlerts(username)
