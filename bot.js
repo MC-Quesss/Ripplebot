@@ -5011,12 +5011,12 @@ const RECURSIVE_MUSING_TOPICS = [
 ]
 
 
-const CLASSICAL_MUSING_TOPICS = [...MUSING_TOPICS, ...FARMING_MUSING_TOPICS]
-const ALL_MUSING_TOPICS = [...CLASSICAL_MUSING_TOPICS, ...RECURSIVE_MUSING_TOPICS]
+const CLASSICAL_MUSING_TOPICS = [...MUSING_TOPICS, ...FARMING_MUSING_TOPICS].filter(t => t && typeof t.starter === 'string')
+const ALL_MUSING_TOPICS = [...CLASSICAL_MUSING_TOPICS, ...RECURSIVE_MUSING_TOPICS].filter(t => t && typeof t.starter === 'string')
 const MUSING_STARTERS = new Set(ALL_MUSING_TOPICS.map(t => t.starter))
 
 function isRecursiveTopic (topic) {
-  return Array.isArray(topic.nodes)
+  return !!topic && Array.isArray(topic.nodes)
 }
 
 const MUSING_START_TIMEOUT_MS = 90000
