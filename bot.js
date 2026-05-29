@@ -833,6 +833,8 @@ const IDLE_WANDER_FIELD_JOIN_COOLDOWN_MS = 2 * 60 * 1000
 let lastFieldJoinAt = 0
 let lastFieldOutstandingAt = 0
 const FIELD_OUTSTANDING_COOLDOWN_MS = 2 * 60 * 1000
+let lastFieldRepairAt = 0
+const FIELD_WANDER_REPAIR_COOLDOWN_MS = 60 * 1000
 
 function isIdleWanderFieldAnnouncement (message) {
   const heard = normalizeChatPhrase(message)
@@ -889,6 +891,16 @@ function triggerOutstandingFieldMusingOnArrival ({ force = false } = {}) {
 
   logEvent('musing', `initiated (field-arrival): ${topic.id}`)
   scheduleMusingTimeout(MUSING_START_TIMEOUT_MS)
+  return true
+}
+
+async function maybeRepairBareWheatTilesWhileWandering () {
+  if (!inWheatField()) return false
+  if (Date.now() - lastFieldRepairAt < FIELD_WANDER_REPAIR_COOLDOWN_MS) return false
+  const bare = findBareWheatTiles()
+  if (!bare.length) return false
+  lastFieldRepairAt = Date.now()
+  await repairBareWheatTilesFromFieldVisit({ announce: true })
   return true
 }
 
@@ -974,6 +986,7 @@ async function runIdleWanderToField ({ announce = true } = {}) {
   if (announce) bot.chat(pickLine(IDLE_WANDER_FIELD_LINES))
   await pathTo(pt, 1, 12000)
   if (bot.entity) logEvent('idle-wander', `standing in wheat field at ${posStr(bot.entity.position)}`)
+  await maybeRepairBareWheatTilesWhileWandering()
   triggerOutstandingFieldMusingOnArrival()
 }
 
@@ -1135,6 +1148,98 @@ function scanKnownWheatFields () {
     expected, loaded, wheat, mature,
   }
 }
+
+function knownWheatTilePositions () {
+  const tiles = []
+  for (const section of WHEAT_CROP_ROWS) {
+    for (const z of section.zs) {
+      for (let x = section.xMin; x <= section.xMax; x++) {
+        tiles.push({ x, y: 64, z, section: section.label })
+      }
+    }
+  }
+  return tiles
+}
+
+function findBareWheatTiles () {
+  const bare = []
+  for (const tile of knownWheatTilePositions()) {
+    const cropBlock = bot.blockAt(new Vec3(tile.x, tile.y, tile.z))
+    const below = bot.blockAt(new Vec3(tile.x, tile.y - 1, tile.z))
+    if (!below || below.name !== 'farmland') continue
+    if (!cropBlock || cropBlock.name === 'air') {
+      bare.push({ ...tile, reason: !cropBlock ? 'unloaded_or_air' : 'air' })
+      continue
+    }
+    if (['tallgrass', 'deadbush'].includes(cropBlock.name)) {
+      bare.push({ ...tile, reason: `replaceable:${cropBlock.name}` })
+    }
+  }
+  return bare
+}
+
+async function repairBareWheatTilesFromFieldVisit ({ announce = true, limit = 108 } = {}) {
+  if (!inWheatField()) return { repaired: 0, bare: 0, skipped: 'not_in_field' }
+
+  const bare = findBareWheatTiles().slice(0, limit)
+  if (!bare.length) return { repaired: 0, bare: 0 }
+
+  const seedItem = bot.inventory.items().find(i => i.name === 'wheat_seeds' || i.name === 'seeds')
+  if (!seedItem) {
+    if (announce) bot.chat(`I found ${bare.length} bare wheat tile${bare.length === 1 ? '' : 's'}, but I do not have seeds.`)
+    logEvent('wheat-repair', `bare=${bare.length} no seeds`)
+    return { repaired: 0, bare: bare.length, noSeeds: true }
+  }
+
+  if (announce) bot.chat(`I found ${bare.length} bare wheat tile${bare.length === 1 ? '' : 's'}. Replanting.`)
+  logEvent('wheat-repair', `start bare=${bare.length}`)
+
+  let repaired = 0
+  try {
+    for (const tile of bare) {
+      await pathTo({ x: tile.x, y: tile.y, z: tile.z }, 1, 5000)
+      await sleep(150)
+
+      const freshCrop = bot.blockAt(new Vec3(tile.x, tile.y, tile.z))
+      const freshBelow = bot.blockAt(new Vec3(tile.x, tile.y - 1, tile.z))
+      if (!freshBelow || freshBelow.name !== 'farmland') continue
+      if (freshCrop && freshCrop.name === 'wheat') continue
+      if (freshCrop && freshCrop.name !== 'air' && !['tallgrass', 'deadbush'].includes(freshCrop.name)) {
+        logEvent('wheat-repair', `skip ${tile.x},${tile.y},${tile.z}: occupied by ${freshCrop.name}`)
+        continue
+      }
+
+      const seeds = bot.inventory.items().find(i => i.name === 'wheat_seeds' || i.name === 'seeds')
+      if (!seeds) {
+        logEvent('wheat-repair', 'ran out of seeds')
+        break
+      }
+
+      try {
+        await bot.equip(seeds, 'hand')
+        await bot.placeBlock(freshBelow, new Vec3(0, 1, 0))
+        repaired++
+        logEvent('wheat-repair', `replanted ${tile.x},${tile.y},${tile.z}`)
+        await sleep(250)
+      } catch (e) {
+        const afterFail = bot.blockAt(new Vec3(tile.x, tile.y, tile.z))
+        if (afterFail && afterFail.name === 'wheat') {
+          repaired++
+          logEvent('wheat-repair', `replanted ${tile.x},${tile.y},${tile.z} despite timeout`)
+        } else {
+          logEvent('wheat-repair', `plant fail ${tile.x},${tile.y},${tile.z}: ${e.message}`)
+        }
+      }
+    }
+  } finally {
+    await clearHand()
+  }
+
+  if (announce) bot.chat(`Wheat repair done: replanted ${repaired}/${bare.length} bare tile${bare.length === 1 ? '' : 's'}.`)
+  logEvent('wheat-repair', `done repaired=${repaired}/${bare.length}`)
+  return { repaired, bare: bare.length }
+}
+
 
 function pickWheatReadyLine () {
   const pool = isBedtime() ? WHEAT_READY_NIGHT_LINES : WHEAT_READY_LINES
