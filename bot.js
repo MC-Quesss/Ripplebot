@@ -544,6 +544,16 @@ const POTATO_ASK_LINES = [
   "Spuds acquired. Bake or stash?",
   "What's the plan for these bad boys — furnace or chest?",
 ]
+const WHEAT_ASK_LINES = [
+  "Wheat's all bundled up — hopper or chest?",
+  "Got the wheat. Want it in the hopper or the chest?",
+  "Where's this wheat headed — hopper or chest?",
+  "Harvest's in hand. Hopper or chest for the wheat?",
+  "Wheat secured. Drop it in the hopper, or stash it in the chest?",
+]
+// Hopper inside the house (vanilla container). Wheat can be routed here as an
+// alternative to the kitchen chest after a harvest. See journal/places/house-hopper.
+const HOPPER = { x: -266, y: 65, z: 573 }
 
 function waitForChatReply (testFn, timeoutMs = 60000) {
   return new Promise((resolve) => {
@@ -938,7 +948,7 @@ const IDLE_WANDER_PEN_INSIDE_LINES = [
   { text: 'There are more sheep than I remembered.', weight: (s) => s.curiosity + s.snark },
   { text: 'The sheep appear to have accepted me.', weight: (s) => s.charm + s.curiosity },
   { text: 'I still do not fully understand sheep culture.', weight: (s) => s.curiosity + s.snark },
-  { text: 'This is a surprisingly political environment.', weight: (s) => s.snark + s.curiosity },
+  { text: 'Mathematical!', weight: (s) => s.snark + s.curiosity },
   { text: 'One of these sheep is definitely in charge.', weight: (s) => s.curiosity + s.chaos },
   { text: 'Everyone seems safe in here.', weight: (s) => s.charm + s.focus },
 ]
@@ -1503,6 +1513,46 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
     const gained = wheatOnHand - wheatCountBefore
     bot.chat(pickLine(HARVEST_DONE_LINES, { dug: totalHarvested, gained, onhand: wheatOnHand }))
     logEvent('harvest-rc', `activated=${totalActivated} harvested=${totalHarvested} gained=${gained} onhand=${wheatOnHand} kept-on-hand`)
+
+    // Ask where the wheat should go — hopper or chest. No answer in 30s → keep it.
+    if (wheatOnHand > 0) {
+      bot.chat(WHEAT_ASK_LINES[Math.floor(Math.random() * WHEAT_ASK_LINES.length)])
+      logEvent('harvest-rc', `asking user: hopper or chest? (${wheatOnHand} wheat)`)
+      const dest = await waitForChatReply((username, msg) => {
+        if (/\bhopper\b/i.test(msg)) return 'hopper'
+        if (/\b(chest|stash|store|deposit|box)\b/i.test(msg)) return 'chest'
+        return undefined
+      }, 30000)
+
+      if (dest === 'hopper' || dest === 'chest') {
+        try {
+          if (!insideHouse()) await runGoInside()
+          if (deathCount > startDeaths) throw new Error('died entering house')
+          // chest_approach is within reach of both the chest (~2.4) and the hopper (~3.2).
+          await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+          const target = dest === 'hopper' ? HOPPER : HARVEST_WAYPOINTS.kitchen_chest
+          const block = bot.blockAt(new Vec3(target.x, target.y, target.z))
+          if (!block) throw new Error(`${dest} block not loaded`)
+          const win = await bot.openContainer(block)
+          let deposited = 0
+          for (const it of bot.inventory.items().filter(i => i.name === 'wheat')) {
+            try { await win.deposit(it.type, it.metadata, it.count); deposited += it.count } catch (e) { break }
+          }
+          win.close()
+          const leftover = wheatOnHand - deposited
+          bot.chat(leftover > 0
+            ? `Put ${deposited} wheat in the ${dest}; ${leftover} didn't fit, keeping those.`
+            : `Put all ${deposited} wheat in the ${dest}.`)
+          logEvent('harvest-rc', `deposited ${deposited} wheat to ${dest} (${leftover} kept)`)
+        } catch (e) {
+          bot.chat(`Couldn't reach the ${dest} — hanging onto the wheat. (${e.message})`)
+          logEvent('harvest-rc', `${dest} deposit failed: ${e.message}`)
+        }
+      } else {
+        bot.chat("Ok, I'll just hang on to it I guess.")
+        logEvent('harvest-rc', 'no reply after 30s, keeping wheat on hand')
+      }
+    }
   } finally {
     harvestBusy = false
     stopFarmingMusingTimer()

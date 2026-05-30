@@ -85,6 +85,24 @@ To use this in a procedure:
 4. Read inventory delta to confirm. (No `find_blocks` re-check needed since the block stays as `wheat`.)
 5. If the bot needs to move to reach the next tile, walk; the [[nautilus-sweep-pattern]] is the proposed traversal.
 
+## Post-harvest disposition (updated 2026-05-30)
+
+The harvest tail changed twice:
+
+1. **2026-05-29 — keeps wheat on hand.** Previously it walked back inside and deposited all
+   wheat into the kitchen chest. Now it tosses trash, tallies wheat, reports, and **stays
+   outside with the wheat on hand** (it's needed for sheep/crafting tasks). No auto-deposit.
+2. **2026-05-30 — asks hopper or chest.** After the done message, if it has wheat it asks
+   `WHEAT_ASK_LINES` ("hopper or chest?") and waits **30s** via `waitForChatReply`:
+   - "hopper" → deposits into the [[house-hopper|hopper]] (-266,65,573).
+   - "chest"/"stash"/"store"/"deposit" → the [[../chests/house-kitchen-chest|kitchen chest]] (-266,67,569).
+   - **No answer in 30s → "Ok, I'll just hang on to it I guess"**, keeps wheat on hand.
+   - Deposit path: come inside → pathfind `chest_approach` (-267,65,570), within reach of
+     both targets → `openContainer` + `win.deposit`. Overflow (hopper full) is kept on hand.
+
+Mirrors the [[harvest-potatoes-right-click|potato bake/stash question]].
+
 ## Related
 - [[nautilus-sweep-pattern]] — companion movement pattern
+- [[house-hopper]] / [[../chests/house-kitchen-chest]] — wheat destinations
 - [[../observations/_log]] — session log

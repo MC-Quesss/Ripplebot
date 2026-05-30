@@ -41,6 +41,14 @@ close-range / control test (chest open) is the next step. Experiment still block
 now primary(-268) → left(-269) → right(-267); bot takes the first un-occupied one. See
 [[../places/house-bed]].
 
+**Hopper + wheat-routing question.** Found a vanilla hopper at (-266, 65, 573) — bot-visible
+(see [[../places/house-hopper]]). Added a post-harvest prompt: now that harvests keep wheat
+on hand, `runHarvestRightClick` asks "hopper or chest?" (`WHEAT_ASK_LINES`), waits 30s via
+`waitForChatReply`; "hopper" → deposits to the hopper, "chest"/stash/store/deposit → kitchen
+chest, no answer → "Ok, I'll just hang on to it I guess" and keeps it. `HOPPER` const +
+deposit path (come inside → chest_approach, in reach of both). Mirrors the potato question.
+Needs a restart to go live (added after the current process launched).
+
 ## 2026-05-29 — Harvest keeps wheat; idle-autonomy toggle added (day 42846)
 
 **Bot state at start:** inside [[../places/house]] area, HP 20, food 19, deaths 0, daytime (day 42846).
