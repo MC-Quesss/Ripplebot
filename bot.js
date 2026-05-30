@@ -1360,9 +1360,10 @@ function scanKnownWheatFields () {
       }
     }
   }
+  const maturePct = expected > 0 ? (mature / expected) * 100 : 0
   return {
     ready: expected > 0 && loaded === expected && wheat === expected && mature === expected,
-    expected, loaded, wheat, mature,
+    expected, loaded, wheat, mature, maturePct,
   }
 }
 
@@ -1821,9 +1822,9 @@ async function runSustainFarm (user) {
   try {
     while (sustainState.active) {
       const scan = scanKnownWheatFields()
-      if (scan.ready && !foodSafetyBusy) {
+      if (scan.maturePct >= 85 && !foodSafetyBusy) {
         sustainState.cycles++
-        logEvent('sustain', `field ready (mature=${scan.mature}/${scan.expected}) — cycle ${sustainState.cycles}`)
+        logEvent('sustain', `field ready (mature=${scan.mature}/${scan.expected}, ${scan.maturePct.toFixed(0)}%) — cycle ${sustainState.cycles}`)
         try {
           await runHarvestRightClick({ half: 'all', user: sustainState.startedBy, autoDeposit: 'hopper' })
         } catch (e) {
