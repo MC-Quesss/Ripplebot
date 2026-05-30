@@ -1,60 +1,72 @@
 ---
 type: chest
 name: house_kitchen_chest
-coords: [-267, 67, 569]
+coords: [-266, 67, 569]
 approach_from: [-267, 65, 570]
 approach_range: 1
-purpose: food_and_wheat_deposit
-container_size: 54
-double_chest: true
+purpose: bake_ingredients_and_food
+container_size: 27
+double_chest: false
 confirmed: true
 ---
 
 # House Kitchen Chest
 
-Upper chest, right of [[house-bed]]. The canonical [[../items/wheat|wheat]] deposit and food storage.
+Right of [[house-bed]]. Holds the [[../recipes/bread|bread]]-baking ingredients and
+tools (a Pam's HarvestCraft two-stage recipe), plus iron and finished bread. The bot
+drives it by **fixed slot index** because every ingredient/tool reports as `unknown`
+in mineflayer's registry — see [[../items/wheat]] context and the bake procedure.
 
-- **Block coords:** (-267, 67, 569)
-- **Approach:** pathfind to (-267, 65, 570) range=1 — reach works from y=65 up to the y=67 chest.
-- **Capacity:** **54 slots (double chest)**, upgraded from 27 on 2026-05-14.
+- **Block coords:** (-266, 67, 569)
+- **Approach:** pathfind to (-267, 65, 570) range=1 — still reaches the new block (~2.4 blocks, verified 2026-05-30).
+- **Capacity:** **27 slots (single chest).**
 
-## Double-chest upgrade (2026-05-14)
+## Slot layout (re-mapped 2026-05-30)
 
-User upgraded the kitchen chest from single (27 slots) to double (54 slots). Container behavior:
-- `open_container` returns `containerSize: 54`, `block: chest`.
-- All existing code paths continue to work because they use either `win.deposit(type, meta, count)` (vanilla API, slot-count agnostic) or compute `containerSlotCount = win.slots.length - 36` dynamically. **No bot.js changes were required.**
-- Existing items kept their slot positions (0..26); new room is at slots 27..53.
+Mirrors `CHEST_SLOTS` in `bot.js`. A single 27-slot chest is a 3-row × 9-column grid
+(row 0 = 0–8, row 1 = 9–17, row 2 = 18–26).
 
-## Contents (audit 2026-05-14, day 41330)
-
-| Slot | Item | Count |
+| Slot | Item | Notes |
 |---|---|---|
-| 0 | wheat | 58 |
-| 4, 5 | `unknown` | 64, 1 |
-| 6 | bread | 64 |
-| 7, 8 | string | 18, 64 |
-| 13, 14 | `unknown` | 64, 64 |
-| 15 | bread | 64 |
-| 16 | `unknown` | 33 |
-| 17 | dye | 12 |
-| 24, 25, 26 | `unknown` | 64, 1, 1 |
-| 27..53 | empty | — |
+| 0 | **pot** | salt-making station, user-managed. **DO NOT TOUCH** — not in `CHEST_SLOTS`. |
+| 7 | salt | user keeps topped up (`unknown`) |
+| 8 | bakeware | reusable, returns here after craft (`unknown`) |
+| 16 | water | fresh water, user keeps topped up (`unknown`) |
+| 17 | mixing bowl | reusable, returns here after craft (`unknown`) |
+| 18 | iron | iron ingots (vanilla `iron_ingot`) |
+| 24 | bread | finished-loaf storage (vanilla `bread`) |
+| 25 | dough | intermediate storage (`unknown`) |
+| 26 | flour | wheat flour, user keeps topped up (`unknown`) |
 
-**No `poisonous_potato`** in the chest as of this audit (per the user rule in [[../items/poisonous-potato]] — they should never end up here anyway, but worth confirming the historical record is clean).
+Only **iron (18)** and **bread (24)** are bot-visible by name; the rest are identified
+purely by slot index.
+
+## Update 2026-05-30 — double → single, re-mapped
+
+The chest **was a 54-slot double** at (-267, 67, 569) + (-266, 67, 569). The user removed
+the **left half** (-267), leaving a single 27-slot chest at **(-266, 67, 569)**. This
+renumbered every slot, so the whole layout was re-mapped using a **white bed as a visible
+cursor**: the user placed the bed in a target slot, the bot read back its index (the bed
+is vanilla and visible), then the modded item was swapped in. Verified slot-by-slot.
+
+`bot.js` changes (same session):
+- `KITCHEN_CHEST` and `HARVEST_WAYPOINTS.kitchen_chest`: (-267,67,569) → (-266,67,569).
+- `CHEST_SLOTS`: `{bread:15,dough:21,water:22,salt:23,flour:24,bowl:25,bakeware:26,iron:45}`
+  → `{bread:24,dough:25,water:16,salt:7,flour:26,bowl:17,bakeware:8,iron:18}`.
+- Approach coords left at (-267,65,570) — still in reach.
+
+### Prior history (pre-2026-05-30, double chest)
+Was upgraded single→double on 2026-05-14 (27→54). All deposit code is vanilla-deposit-API
+based (`win.deposit`) or computes the chest portion as `win.slots.length - 36`, so it
+adapts to the slot count automatically; only the fixed `CHEST_SLOTS` indices and the
+block coords needed manual re-mapping.
 
 ## Used by
-- [[../procedures/stash-wheat]] — single-item wheat deposit
-- [[../procedures/deposit-named]] — multi-item bread/wheat/seeds deposit
-- [[../procedures/right-click-harvest]] — harvest deposit tail
-- `runBakePotatoes` post-bake stash
-- `runStashUnknown` — stashes any modded `unknown`-named items here
+- [[../procedures/bake-potatoes]] / bread bake routine — fixed-slot ingredient staging
+- [[../procedures/stash-wheat]], [[../procedures/deposit-named]] — dynamic deposits (slot-agnostic)
+- [[../procedures/right-click-harvest]] — harvest deposit tail (now keeps wheat on hand instead; see log)
+- `runStashUnknown` — stashes modded `unknown` items here
 
-## Code-path safety summary
-
-All deposit code is **vanilla-deposit-API based** (`win.deposit(type, meta, count)`). The double-chest upgrade is fully backward compatible.
-
-`runStashUnknown` uses raw slot indices but computes them from `win.slots.length - 36`, which auto-adapts:
-- Single chest: `54 - 36 = 18` ❌ (wait, single chest window is 27 + 36 = 63, so 63 - 36 = 27, correct)
-- Double chest: `90 - 36 = 54` ✅
-
-Mid-air correction: the formula is `(window total) - (player inventory size 36)`, not a constant. So it always returns the chest portion correctly.
+## Related
+- [[house-crafting-chest]] — separate chest above the [[../places/house-crafting-table]]
+- [[../recipes/bread]]

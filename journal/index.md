@@ -14,7 +14,7 @@ A network of notes mapping the known parts of this world. Each note is a single 
 - **[[items/]]** — what each item does, where it comes from, how to handle it
 - **[[chests/]]** — every container's contents, slot conventions, deposit rules
 - **[[recipes/]]** — crafting and cooking recipes (bread first, more later)
-- **[[procedures/]]** — multi-step routines (exit house, sleep, [[procedures/right-click-harvest|right-click harvest]], [[procedures/harvest-potatoes-right-click|potato harvest]], [[procedures/stash-wheat|stash wheat]], [[procedures/deposit-named|deposit named]], [[procedures/bake-potatoes|bake potatoes]], [[procedures/shear-sheep|shear sheep]], [[procedures/tell-joke|jokes]], [[procedures/emotes|emotes]])
+- **[[procedures/]]** — multi-step routines (exit house, sleep, [[procedures/right-click-harvest|right-click harvest]], [[procedures/harvest-potatoes-right-click|potato harvest]], [[procedures/stash-wheat|stash wheat]], [[procedures/deposit-named|deposit named]], [[procedures/bake-potatoes|bake potatoes]], [[procedures/shear-sheep|shear sheep]], [[procedures/tell-joke|jokes]], [[procedures/emotes|emotes]], [[procedures/idle-autonomy-toggle|stand down / chill]])
 - **[[creatures/]]** — entities encountered, hostility, behavior
 - **[[observations/]]** — session-by-session journal entries; raw notes that may later promote to canonical entries
 

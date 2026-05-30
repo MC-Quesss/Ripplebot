@@ -7,6 +7,66 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-05-30 — Kitchen chest re-mapped (double → single); idle_wander action
+
+**Kitchen chest re-mapped.** User removed the **left half** of the double kitchen chest,
+leaving a single 27-slot chest at **(-266, 67, 569)** (was (-267,67,569) double, 54 slots).
+Full re-map of [[../chests/house-kitchen-chest]] using a **white bed as a visible cursor**:
+user drops the bed in a slot, bot reads its index (bed is vanilla/visible), then swaps in
+the modded item. New layout — `0=pot (DO NOT TOUCH, salt station), 7=salt, 8=bakeware,
+16=water, 17=mixing bowl, 18=iron, 24=bread, 25=dough, 26=flour`. Only iron(18) and
+bread(24) are bot-visible; rest identified by position.
+
+`bot.js` edits (need a restart to take effect):
+- `KITCHEN_CHEST` and `HARVEST_WAYPOINTS.kitchen_chest`: (-267,67,569) → (-266,67,569).
+- `CHEST_SLOTS`: re-mapped to the new single-chest indices above. Audited: all 8 keys, 19
+  call sites, no stray numeric chest slots — updating the one map covers everything.
+- Approach coords left at (-267,65,570) — still reaches (~2.4 blocks).
+- Slot-layout doc comment rewritten.
+
+**New `idle_wander` bot-ctl action.** Programmatic equivalent of the "stand down" / "do
+your thing" chat commands: `{"action":"idle_wander","args":{"enabled":false}}` disables and
+also cancels+freezes; omit `enabled` to query. Added so experiments can stop the bot
+wandering off without depending on a human typing the chat command.
+
+**Crafting-table diagnostic added.** Raw `client.on('open_window')` / `close_window`
+loggers (+`lastRawWindow`) to investigate why the 3×3 table won't surface a window. Test
+inconclusive so far — bot couldn't be positioned closer than ~4.3 blocks (interior
+pathfinding bails toward the north wall) and no `open_window` fired at that range; a clean
+close-range / control test (chest open) is the next step. Experiment still blocked.
+
+**Third bed added.** User placed a 3rd bed to the right of the existing two, at
+(-267, 65, 569). Wired as the third auto-sleep fallback (`BED_POS_RIGHT` /
+`BED_APPROACH_RIGHT`) in both `BEDS` arrays (`tryAutoSleep` + bake-time sleep). Order is
+now primary(-268) → left(-269) → right(-267); bot takes the first un-occupied one. See
+[[../places/house-bed]].
+
+## 2026-05-29 — Harvest keeps wheat; idle-autonomy toggle added (day 42846)
+
+**Bot state at start:** inside [[../places/house]] area, HP 20, food 19, deaths 0, daytime (day 42846).
+
+**Change 1 — harvest no longer deposits wheat.**
+- `runHarvestRightClick` tail rewritten: after harvest + sweep it tosses trash, tallies wheat on hand, and reports — **no walk back inside, no chest deposit.** Bot keeps the wheat and stays outside where the sweep ended.
+- `HARVEST_DONE_LINES` reworded off "deposited / in the chest" → "keeping it on hand."
+- Reason: wheat is needed on hand for upcoming tasks (sheep, crafting experiments).
+
+**Change 2 — idle-autonomy toggle (new ability).**
+- New chat commands suspend/resume idle autonomy. See [[../procedures/idle-autonomy-toggle]].
+- Off: "stand down" / "just chill" (+ chill out, at ease, settle down). On: "do your thing" / "as you were" (+ carry on, go on then).
+- Off cancels in-progress wander/musing, freezes the bot in place, and gates wandering + pen/field joins + musings via `idleWanderEnabled`.
+- Auto-sleep, auto-eat, and explicit commands deliberately unaffected.
+- **Confirmed working in-session** ("chill appeared to be working" per user). An unrelated crash ended that bot process; relaunched clean.
+
+**Crafting-table experiment (incomplete) — finding worth keeping:**
+- Goal was to test the chest pattern (8 wheat in a 3×3 ring) on the [[../places/house-crafting-table]] and take the modded output, then "stash unknowns."
+- **The bot could not open a tracked crafting-table window.** `activate_block` hits the table (`name: crafting_table`) and `activate_and_read` was tried at 4.2 blocks AND point-blank (~1.3 blocks) — both returned `no window opened`, `currentWindow: null`.
+- So distance is NOT the cause. The bake routine only ever uses the 2×2 *inventory* grid; this appears to be the first real attempt to drive the 3×3 table, and `bot.activateBlock` doesn't surface a usable window. Likely needs a dedicated open-crafting-table action in bot.js (e.g. listen for `windowOpen` / `bot.openBlock`) before the experiment can proceed.
+- Also noted: **interior pathfinding to the table area is unreliable** — pathing to interior tiles near the north wall (z=569–570, x≤-268) routes the bot *out the door and around*, which can't reach an interior wall. `come_inside` + manual `walk_until` got it adjacent; the chest approach (-267,65,570) is the only reliably-pathable interior spot.
+
+**Open questions:**
+- How to open/track the 3×3 crafting-table window for modded recipes (code change needed).
+- Why interior pathfinding bails outside for north-wall targets.
+
 ## 2026-05-21 — North field added to harvest routine (day 42108)
 
 **Session goal:** integrate the second wheat field (north of the original) into the harvest routine.

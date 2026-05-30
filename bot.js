@@ -107,6 +107,20 @@ client.on('position', (packet) => {
 // Let mineflayer handle keep_alive — it already does.
 // Let mineflayer handle periodic position updates via bot.physics — don't duplicate.
 
+// Diagnostic: raw clientbound open_window / close_window. mineflayer's high-level
+// `windowOpen` event does NOT fire for some modded GUIs (the crafting table among
+// them — see journal/observations). Tapping the raw packet reveals the server's
+// window id and type so the grid can be driven via raw window_click if mineflayer
+// won't surface it as bot.currentWindow.
+let lastRawWindow = null
+client.on('open_window', (packet) => {
+  lastRawWindow = packet
+  try { logEvent('open_window', JSON.stringify(packet)) } catch (_) { logEvent('open_window', 'unserializable open_window packet') }
+})
+client.on('close_window', (packet) => {
+  logEvent('close_window', `id=${packet && packet.windowId}`)
+})
+
 const bot = mineflayer.createBot({ ...clientOpts, client })
 bot.loadPlugin(pathfinder)
 bot.loadPlugin(autoEat)
@@ -191,6 +205,10 @@ const BED_APPROACH = { x: -268, y: 65, z: 570 }
 // Used when the primary bed is occupied by another player.
 const BED_POS_LEFT = { x: -269, y: 65, z: 569 }
 const BED_APPROACH_LEFT = { x: -269, y: 65, z: 570 }
+// Third bed — to Roz's right (next to the kitchen chest). Third sleep choice,
+// used when both the primary and left beds are occupied. Added 2026-05-30.
+const BED_POS_RIGHT = { x: -267, y: 65, z: 569 }
+const BED_APPROACH_RIGHT = { x: -267, y: 65, z: 570 }
 // In the house if x in [-271, -264] and z in [568, 575] at y=65 — rough bounding box.
 function insideHouse () {
   const p = bot.entity?.position
@@ -225,6 +243,7 @@ async function tryAutoSleep () {
     const BEDS = [
       { label: 'primary', pos: BED_POS, approach: BED_APPROACH },
       { label: 'left', pos: BED_POS_LEFT, approach: BED_APPROACH_LEFT },
+      { label: 'right', pos: BED_POS_RIGHT, approach: BED_APPROACH_RIGHT },
     ]
     for (const b of BEDS) {
       if (bot.isSleeping) break
@@ -416,7 +435,7 @@ const HARVEST_WAYPOINTS = {
   field_center:        { x: -283, y: 64, z: 562 },
   north_field_center:  { x: -283, y: 64, z: 554 },
   chest_approach:      { x: -267, y: 65, z: 570 },
-  kitchen_chest:       { x: -267, y: 67, z: 569 },
+  kitchen_chest:       { x: -266, y: 67, z: 569 },
   // Potato patch south of the main field, near the pond. The patch was a
   // 2-wide×2-deep (4 tiles) plus a marker row the user planted for
   // orientation; bounds covers the full known cultivated area.
@@ -1475,34 +1494,15 @@ async function runHarvestRightClick ({ half = 'all', user } = {}) {
       totalActivated = r.activated; totalHarvested = r.harvested
     }
 
-    // Toss trash while still outside, then re-enter house and deposit.
+    // Toss trash while still outside. Wheat is kept on hand (no chest deposit)
+    // so it's ready for the next task; the bot stays outside where the sweep ended.
     await tossTrash()
-    if (!insideHouse()) {
-      await runGoInside()
-      if (deathCount > startDeaths) throw new Error('died entering house')
-    }
-    await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-    try {
-      const chestBlock = bot.blockAt(new Vec3(
-        HARVEST_WAYPOINTS.kitchen_chest.x,
-        HARVEST_WAYPOINTS.kitchen_chest.y,
-        HARVEST_WAYPOINTS.kitchen_chest.z,
-      ))
-      if (!chestBlock) throw new Error('kitchen chest not reachable')
-      const win = await bot.openContainer(chestBlock)
-      const wheatItems = bot.inventory.items().filter(i => i.name === 'wheat')
-      const wheatOnHand = wheatItems.reduce((s, i) => s + i.count, 0)
-      const gained = wheatOnHand - wheatCountBefore
-      let deposited = 0
-      for (const it of wheatItems) {
-        try { await win.deposit(it.type, it.metadata, it.count); deposited += it.count } catch (e) { break }
-      }
-      win.close()
-      bot.chat(pickLine(HARVEST_DONE_LINES, { dug: totalHarvested, gained, deposited }))
-      logEvent('harvest-rc', `activated=${totalActivated} harvested=${totalHarvested} gained=${gained} deposited=${deposited}`)
-    } catch (e) {
-      bot.chat(`Deposit failed: ${e.message}. Wheat still in my pockets.`)
-    }
+    const wheatOnHand = bot.inventory.items()
+      .filter(i => i.name === 'wheat')
+      .reduce((s, i) => s + i.count, 0)
+    const gained = wheatOnHand - wheatCountBefore
+    bot.chat(pickLine(HARVEST_DONE_LINES, { dug: totalHarvested, gained, onhand: wheatOnHand }))
+    logEvent('harvest-rc', `activated=${totalActivated} harvested=${totalHarvested} gained=${gained} onhand=${wheatOnHand} kept-on-hand`)
   } finally {
     harvestBusy = false
     stopFarmingMusingTimer()
@@ -1994,6 +1994,7 @@ async function runBakePotatoes ({ user } = {}) {
             const BEDS = [
               { label: 'primary', pos: BED_POS, approach: BED_APPROACH },
               { label: 'left', pos: BED_POS_LEFT, approach: BED_APPROACH_LEFT },
+              { label: 'right', pos: BED_POS_RIGHT, approach: BED_APPROACH_RIGHT },
             ]
             for (const b of BEDS) {
               if (bot.isSleeping) break
@@ -2815,20 +2816,26 @@ async function runShearSheep () {
 // window clicks because the ingredients and tools all report as `unknown` in
 // mineflayer's item registry.
 //
-// Kitchen chest (-267, 67, 569) slot layout (persistent convention):
-//   21 = dough (intermediate storage, we write here if any dough survives)
-//   22 = fresh water        (user keeps topped up)
-//   23 = salt               (user keeps topped up)
-//   24 = wheat flour        (user keeps topped up)
-//   25 = mixing bowl        (reusable, returns here after craft)
-//   26 = bakeware           (reusable, returns here after craft)
+// Kitchen chest (-266, 67, 569) slot layout (persistent convention).
+// Single 27-slot chest (3 rows x 9 cols). Was a 54-slot double chest at
+// (-267, 67, 569) until the left half was removed 2026-05-30 — that renumbered
+// every slot below and shifted the chest block one east, so the coords moved too.
+//    0 = "pot" — salt-making station, user-managed; DO NOT TOUCH (not in CHEST_SLOTS)
+//    7 = salt                (user keeps topped up)
+//    8 = bakeware            (reusable, returns here after craft)
+//   16 = fresh water         (user keeps topped up)
+//   17 = mixing bowl         (reusable, returns here after craft)
+//   18 = iron ingots
+//   24 = bread               (finished-loaf storage)
+//   25 = dough (intermediate storage, we write here if any dough survives)
+//   26 = wheat flour         (user keeps topped up)
 //
 // Bot inventory slot-index convention (mineflayer): main 9-35, hotbar 36-44.
 // In the player's own window, these map to window slots 9-44 unchanged;
 // slots 0-4 are the result + 2x2 craft grid.
-const KITCHEN_CHEST = { x: -267, y: 67, z: 569 }
+const KITCHEN_CHEST = { x: -266, y: 67, z: 569 }
 const CHEST_APPROACH_POS = { x: -267, y: 65, z: 570 }
-const CHEST_SLOTS = { bread: 15, dough: 21, water: 22, salt: 23, flour: 24, bowl: 25, bakeware: 26, iron: 45 }
+const CHEST_SLOTS = { bread: 24, dough: 25, water: 16, salt: 7, flour: 26, bowl: 17, bakeware: 8, iron: 18 }
 
 let bakeBusy = false
 
@@ -3591,6 +3598,27 @@ async function runStashAll () {
   logEvent('stash-all', `deposited=${deposited} kept=${kept} failed=${failed}`)
 }
 
+// Said when told to "stand down" / "just chill" — idle autonomy (wandering,
+// pen/field joins, musings) goes quiet until re-enabled. Auto-sleep, auto-eat,
+// and explicit commands still work.
+const STAND_DOWN_LINES = [
+  { text: 'Standing down. I will be right here, being still.', weight: (s) => s.focus + s.patience },
+  { text: 'Chill mode engaged. I am now a thoughtful statue.', weight: (s) => s.snark + s.charm },
+  { text: 'Understood. Wandering subroutines parked. Holding position.', weight: (s) => s.focus + 10 },
+  { text: 'As you wish. I shall remain exactly here and contemplate stillness.', weight: (s) => s.patience + s.snark },
+  { text: 'Powering down the roaming. Staying put.', weight: (s) => s.focus + s.patience },
+  { text: 'Okay. I will stop having ideas and just stand here.', weight: (s) => s.snark + s.chaos },
+]
+// Said when told to "do your thing" / "as you were" — idle autonomy resumes.
+const AS_YOU_WERE_LINES = [
+  { text: 'Back to my own devices. Excellent.', weight: (s) => s.curiosity + s.charm },
+  { text: 'Resuming normal operations. The perimeter will not check itself.', weight: (s) => s.focus + s.curiosity },
+  { text: 'As I was, then. I have wandering to catch up on.', weight: (s) => s.curiosity + s.snark },
+  { text: 'Idle protocols re-engaged. Freedom.', weight: (s) => s.chaos + s.charm },
+  { text: 'Oh good. I had places to aimlessly stand.', weight: (s) => s.snark + s.curiosity },
+  { text: 'Roaming resumed. Try to keep up.', weight: (s) => s.snark + s.focus },
+]
+
 const CHAT_HANDLERS = [
   {
     name: 'where',
@@ -3635,6 +3663,35 @@ const CHAT_HANDLERS = [
       } else {
         bot.chat(pickLine(STOP_LINES))
       }
+    },
+  },
+  {
+    // "Stand down" / "just chill": stop whatever idle thing is happening and
+    // suspend idle autonomy (wandering, pen/field joins, musings) until told
+    // otherwise. Like `stop`, but also flips off idleWanderEnabled so nothing
+    // restarts on the next timer tick. Auto-sleep, auto-eat, and explicit
+    // commands (go inside, harvest, …) are unaffected.
+    name: 'stand_down',
+    pattern: /\b(stand down|just chill|chill out|at ease|settle down)\b/i,
+    handler: (user) => {
+      abortGen++
+      bot.pathfinder.setGoal(null)
+      ;['forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak'].forEach(s => bot.setControlState(s, false))
+      if (followTarget) { followTarget = null; followEntity = null; followChainPos = 0 }
+      idleWanderEnabled = false
+      bot.chat(pickLine(STAND_DOWN_LINES))
+      logEvent('idle-wander', `disabled (stand down) by ${user}`)
+    },
+  },
+  {
+    // "Do your thing" / "as you were": resume idle autonomy. The wander and
+    // musing timers never stopped, so flipping the flag is enough.
+    name: 'as_you_were',
+    pattern: /\b(do your (own )?thing|as you were|carry on|go on then)\b/i,
+    handler: (user) => {
+      idleWanderEnabled = true
+      bot.chat(pickLine(AS_YOU_WERE_LINES))
+      logEvent('idle-wander', `enabled (as you were) by ${user}`)
     },
   },
   {
@@ -4368,9 +4425,9 @@ const HARVEST_START_LINES = [
   { text: "Cutting {half}. Mourning in advance.",          weight: (s) => s.charm },
 ]
 const HARVEST_DONE_LINES = [
-  { text: 'Broke {dug}, collected {gained} wheat, deposited {deposited}. Done.', weight: (s) => s.focus },
-  { text: 'Harvest complete: {dug} broken, {gained} wheat, {deposited} deposited. They had so much to grow.', weight: (s) => s.charm + s.snark },
-  { text: 'Wheat processed: {dug} down, {deposited} in the chest. I filed a feeling about it.', weight: (s) => s.curiosity + s.snark },
+  { text: 'Broke {dug}, collected {gained} wheat. Keeping it on me — {onhand} on hand.', weight: (s) => s.focus },
+  { text: 'Harvest complete: {dug} broken, {gained} wheat in my pockets. They had so much to grow.', weight: (s) => s.charm + s.snark },
+  { text: 'Wheat processed: {dug} down, {onhand} on hand. I filed a feeling about it.', weight: (s) => s.curiosity + s.snark },
 ]
 const GO_OUTSIDE_LINES = [
   { text: 'Heading outside.',                              weight: (s) => s.focus },
@@ -5420,6 +5477,8 @@ function isMusingActiveOrBusy ({ allowDuringHarvest = false } = {}) {
 }
 
 function isMusingInitiationBlocked ({ allowDuringHarvest = false } = {}) {
+  // "Stand down" mode silences musings along with the rest of idle autonomy.
+  if (!idleWanderEnabled) return true
   return isMusingActiveOrBusy({ allowDuringHarvest }) || Date.now() < musingState.suppressUntil
 }
 
@@ -6308,6 +6367,21 @@ function handleCommand (cmd) {
     case 'auto_sleep': {
       if (typeof args.enabled === 'boolean') autoSleepEnabled = args.enabled
       return { ok: true, enabled: autoSleepEnabled, busy: autoSleepBusy, bedtime: isBedtime(), inside: insideHouse(), sleeping: !!bot.isSleeping }
+    }
+    case 'idle_wander': {
+      // Programmatic equivalent of the "stand down" / "do your thing" chat
+      // commands. Disabling also cancels any in-progress wander and freezes the
+      // bot in place, so an experiment can position it without a wander yanking
+      // it away. Gates wandering, pen/field joins, and musings (idleWanderEnabled).
+      if (typeof args.enabled === 'boolean') {
+        idleWanderEnabled = args.enabled
+        if (!args.enabled) {
+          abortGen++
+          bot.pathfinder.setGoal(null)
+          ;['forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak'].forEach(s => bot.setControlState(s, false))
+        }
+      }
+      return { ok: true, enabled: idleWanderEnabled, busy: idleWanderBusy() }
     }
     case 'mentions': {
       // Return the last N lines from mentions.log
