@@ -98,7 +98,17 @@ The harvest tail changed twice:
    - "chest"/"stash"/"store"/"deposit" → the [[../chests/house-kitchen-chest|kitchen chest]] (-266,67,569).
    - **No answer in 30s → "Ok, I'll just hang on to it I guess"**, keeps wheat on hand.
    - Deposit path: come inside → pathfind `chest_approach` (-267,65,570), within reach of
-     both targets → `openContainer` + `win.deposit`. Overflow (hopper full) is kept on hand.
+     both targets.
+3. **2026-05-30 — robust deposit + seed management.** Two fixes after the hopper deposit was
+   found to silently fail (it reported "didn't fit" while wheat had actually moved):
+   - **Wheat deposit now uses `depositQuickMove()`** (server-side quick-move + retry +
+     verify-by-inventory-delta) instead of `win.deposit()`. The [[house-hopper|hopper]] drains
+     continuously into the bio-fuel machine, which desyncs `win.deposit()`'s client-side slot
+     prediction. See [[deposit-wheat]] for the full mechanism. Reports `backedUp` if the
+     machine is jammed rather than looping.
+   - **Surplus seeds auto-deposit.** After the wheat step, if `wheat_seeds > 16` the bot
+     stashes the excess into the kitchen chest, keeping 16 (see [[deposit-seeds]]). Seeds are
+     pure surplus since the right-click harvest auto-replants.
 
 Mirrors the [[harvest-potatoes-right-click|potato bake/stash question]].
 

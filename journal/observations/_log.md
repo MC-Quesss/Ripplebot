@@ -7,6 +7,161 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-05-30 — Bugfix: bedtime yield crashed the sustain loop
+
+**Symptom (user):** the bot correctly came in at night but did not resume in the morning.
+
+**Cause:** `BEDTIME_YIELD_LINES` and `MORNING_RESUME_LINES` were **plain-string arrays**, but
+`pickLine` requires weighted `{text, weight(stats)}` objects (it reads `p.text`). The moment a
+harvest hit bedtime, `yieldToBedtime` called `pickLine(BEDTIME_YIELD_LINES)` →
+`Cannot read properties of undefined (reading 'replace')` → the harvest threw → the sustain loop
+caught it, logged `loop error`, and **stopped** (`active=false`). The bot still "came in" because
+auto-sleep is independent (no pickLine), but the dead loop never resumed at dawn. Latent since the
+bedtime-yield was written (it had never actually triggered with a live harvest until tonight). Log
+evidence: `[sustain] loop error: …'replace' → stopped after 3 cycle(s)`.
+
+**Fix:** converted both pools to weighted `{text, weight}` objects. **Audited all 30 `pickLine`
+pools** — these two were the only plain-string ones; the rest are correct. This is the third time
+this bug class has surfaced (SUSTAIN_*_LINES, then these) — *any pool passed to `pickLine` must be
+weighted objects, never bare strings.*
+
+## 2026-05-30 — Non-blocking bake + collect-later watcher
+
+Refinement so a long bake doesn't tie up the bot, and so "keep the fire going" stays the
+priority. See [[../procedures/bake-potatoes]] (non-blocking section) + [[../procedures/food-safety-loop]].
+
+**Change:** `runBakePotatoes` no longer blocks ~13 min at the furnace. It loads the furnace, sets
+`pendingBake = {active, doneAt}`, and returns. A new `tryCollectBake()` on the 5s timer collects
+the batch later when the bot is free — and **defers to the wheat cycle**: if the sustain loop is
+active and the field is ripe, it lets the wheat harvest + hopper/seed deposits finish first, then
+collects the potatoes. Bedtime handled for free (furnace cooks overnight; collection waits for
+morning + idle). Partial-collect path: if fuel ran low and raw remains, it takes what's done and
+reschedules. Also `then:'bake'` flag on the potato harvest skips the "bake or stash?" prompt on
+the autonomous path. New ctl `collect_bake` (manual trigger + recovers a restart-orphaned batch,
+since `pendingBake` is in-memory only).
+
+**Tested (day 42935):** restarted mid-bake (64 in furnace), `collect_bake` →
+`[collect-bake] taken=57 input_left=36 onhand=73 — rescheduled` (collected the done ones, came
+back for the rest), bot free throughout. Fire loop re-armed and correctly waiting at
+`mature=107/108` (one tile still ripening — verified all 108 tiles have crops, so not a stall).
+
+**Note on the strict-maturity gate:** confirmed the `107/108` wait is a *lagging tile*, not a bare
+one (`find_blocks wheat` = 108). The stall risk only applies if a tile fails to replant entirely.
+
+## 2026-05-30 — Food safety loop (auto-restock baked potatoes)
+
+New background safety net so the bots never run out of food. See
+[[../procedures/food-safety-loop]].
+
+**What it does:** on the same 5s timer as auto-sleep, if `baked_potato < foodSafetyMin` (16) and
+the bot is idle, safe, and it's daytime, it autonomously runs the potato harvest then bake,
+keeping the baked output on hand. On by default; toggle/tune via ctl `auto_food`
+(`{enabled}` / `{min}`).
+
+**`bot.js`:** `tryFoodSafety()` + `foodSafetyEnabled/Busy/Min` + `countBakedPotatoes()`; added to
+the `startAutoSleep` interval; sustain loop now checks `!foodSafetyBusy` before a wheat cycle
+(mutual yielding). ctl `auto_food`.
+
+**Tested (day 42935):** bumped floor to 17 with baked=16 → `[food-safety] baked=16 < 17 —
+harvesting + baking potatoes` → potato harvest started, sustain loop paused (`foodSafetyBusy`),
+task `harvest_potatoes_rc`. Floor reset to 16.
+
+**Rough edge:** `runHarvestPotatoesRightClick` asks "bake these?" and waits ~60s for a reply the
+autonomous loop never gives, then the loop calls bake itself — works but wastes 60s. Candidate:
+give the potato harvest a `then:'bake'` hand-off flag like the wheat `autoDeposit`.
+
+**Sustain loop re-verified:** restarted "keep the fire going" this session; bot slept through the
+night and woke at dawn with the loop still active, waiting for the field to regrow to 108/108
+(cycle detection already proven in the run below).
+
+## 2026-05-30 — "Keep the fire going" autonomous sustain loop
+
+New capability: a hands-off farm loop tied to the wheat-ready detection, so the bot keeps the
+bio-fuel hopper fed on its own. See [[../procedures/keep-the-fire-going]].
+
+**What it does:** say **"keep the fire going"** → bot watches the field, and when fully mature
+(108/108) harvests both halves → wheat into the [[../places/house-hopper]] → surplus seeds into
+the kitchen chest (keep 16) → waits for regrowth → repeats. Stops on **"chill" / "stand down" /
+"stop"**.
+
+**`bot.js`:** `runSustainFarm()` + `sustainState`; new `autoDeposit` flag on
+`runHarvestRightClick` (skips the "hopper or chest?" question and feeds the hopper directly);
+`keep_fire` chat rule (before the generic harvest rule); `stop`/`stand_down` handlers now clear
+`sustainState.active`; added "chill" to the stand-down pattern; ctl actions `keep_fire`,
+`sustain_status`, `sustain_stop`. The harvest stays the task (one-at-a-time, bedtime-aware); the
+loop holds no task between cycles.
+
+**Bug found + fixed during the build:** `pickLine` requires weighted `{text, weight(stats)}`
+objects, not plain strings — first version of the SUSTAIN_*_LINES pools were plain strings and
+threw `Cannot read properties of undefined (reading 'replace')`. Converted to weighted objects.
+
+**Tested live (day 42933):** said "keep the fire going" → `field ready (mature=108/108) — cycle
+1` → harvested → `deposited 107 wheat to hopper (quick-move, 2 rounds)` (no prompt) →
+`wheat_seeds: 101 (kept 16)` → back to waiting (`active:true, busy:false`) → `sustain_stop` →
+`stopped after 1 cycle(s)`. Zero deaths.
+
+**Open:** loop only re-fires at 100% maturity (relies on full replant each cycle). If tiles fail
+to replant it waits forever; heartbeat log surfaces a stall. Stop tested via ctl; the chat
+phrases use the same flag (wired, not yet exercised via live chat).
+
+## 2026-05-30 — Mastering the hopper: quick-move deposit + seed management
+
+**Why:** the prior harvest reported "deposited 19 wheat to hopper (64 kept) — didn't fit."
+User pushed back: a 5-slot hopper has room for far more than 2 stacks, so "didn't fit" was wrong.
+
+**Root cause (traced through mineflayer source + tested live):**
+- The [[../places/house-hopper]] **drains continuously** into a bio-fuel machine (user lore:
+  it powers the neighboring town). Draining is the hopper's normal state.
+- `win.deposit()` picks a stack onto the cursor then left-clicks a slot it computed
+  client-side. The hopper drains that slot underneath the click → server rejects the
+  transaction → `deposit()` throws `'destination full'` (mineflayer `inventory.js:323`). The
+  old harvest code caught it and printed its own "didn't fit" regardless of the real error.
+- **Counter-intuitive live finding:** server-side quick-move (`clickWindow(slot,0,1)`) ALSO
+  throws *"Server rejected transaction"* against the draining hopper — **but the items move
+  anyway.** The rejection is the client's mis-prediction being corrected, not a real failure.
+
+**Fix (in `bot.js`):** new `depositQuickMove(itemName, target, {keep})` — quick-move per stack,
+retry with a fresh window each round, **verify by inventory delta** (not by the transaction
+confirmation). Returns `{deposited, remaining, rounds, backedUp}`; surfaces `backedUp` if the
+machine is jammed instead of looping. `runHarvestRightClick` hopper branch + new `deposit_wheat`
+ctl action both use it.
+
+**Seed management (user directive):** right-click harvest auto-replants without consuming
+inventory seeds, so seeds are pure surplus. Policy: **keep 16 on hand, deposit the rest to the
+kitchen chest.** `KEEP_SEEDS` changed 32→16; harvest tail auto-deposits seed overflow via
+`runDepositNamed(['wheat_seeds'])` (the chest is stable, so plain `win.deposit` is fine there).
+
+**Live tests (day 42929):**
+- Wheat → hopper: 18 on hand → quick-move threw "Server rejected transaction" round 1 **but
+  deposited=18 remaining=0**. Re-checked inventory after a delay: still 0 (no desync). Hopper
+  read empty ~10s later (drained into the machine). ✓
+- Seeds → chest: 351 on hand → **deposited 335, kept 16**. Chest re-opened: 5×64 + 15 = 335. ✓
+
+**Open / next:** wire harvest→hopper to fire automatically off the wheat-ready alert
+(`tryWheatReadyAlert`) so the bio-fuel line stays fed without a human in the loop. Not built
+yet — deposit foundation proven first. Notes: [[../places/house-hopper]],
+[[../procedures/deposit-wheat]], [[../procedures/deposit-seeds]], [[../procedures/right-click-harvest]].
+
+## 2026-05-30 — Unified task system + bedtime yield (tested live)
+
+**Problem solved.** Conflicting commands (a `come_inside`/auto-sleep firing during a harvest) used to fight over the pathfinder, oscillating the bot between the door and the field. Root cause: scattered `*Busy` booleans (`harvestBusy`, `bakeBusy`, etc.) with no cross-function coordination, and fire-and-forget command dispatch.
+
+**Code change in bot.js:**
+- New unified `activeTask` state (`{name, detail, startedAt, sleeping}`) with `startTask()` / `endTask()` / `taskBusy()` / `taskStatus()`. Replaced `harvestBusy` + `bakeBusy` entirely (zero refs left). `goInsideBusy` / `autoSleepBusy` kept as re-entry guards for their own primitives.
+- Command dispatch now rejects conflicting work: `come_inside`, `go_outside`, `go_into_pen`, `go_out_of_pen` return `{ok:false, error:"busy", task, ...}` while a task is active instead of racing the pathfinder.
+- New `task_status` ctl command. `stop` clears the active task + bumps `abortGen`.
+- **Bedtime yield** (`yieldToBedtime` + `waitForMorning`): harvest/bake never refuse for time-of-day. If started at night, sleep first then begin at dawn; if bedtime arrives mid-harvest (checked every 10 tiles), announce → go inside → auto-sleep takes the bed → wake → walk back → resume. During yield `task_status` shows `sleeping:true, busy:false` so auto-sleep proceeds.
+
+**Live test this session (day 42929, started timeOfDay ~6500):**
+- Started a full harvest, then sent `come_inside` ~3s in → **rejected** `{ok:false, error:"busy", task:"harvest"}`. Oscillation bug confirmed gone.
+- Harvest ran both fields: north 54 + south 54 = **activated=108, gained=83 wheat**. Deposit prompt fired; in-game reply "hopper" → deposited 19 to hopper, 64 kept. **`[task] ended: harvest`**, `busy:false`.
+- All **108 tiles replanted** (right-click harvest replants in-action). HP 20, food 19 (auto-ate up from 15), **deaths 0** throughout.
+- Bedtime yield **not** exercised — harvest finished mid-day; crops just replanted (immature) so a dusk re-harvest isn't possible yet. Code path verified by `node -c` + read-through only.
+
+Open question to chase: catch a real bedtime yield on the next dusk harvest of grown wheat.
+
+[[../procedures/harvest-wheat]] behavior changed (task registration + bedtime yield) — update when next touched.
+
 ## 2026-05-30 — Kitchen chest re-mapped (double → single); idle_wander action
 
 **Kitchen chest re-mapped.** User removed the **left half** of the double kitchen chest,

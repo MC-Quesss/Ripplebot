@@ -23,10 +23,30 @@ Convert raw `potato` into `baked_potato` using the [[../places/house-furnace]]. 
 2. **Walk to the kitchen chest and pull all raw `potato` stacks from it into inventory.** Added 2026-05-14 — raw potatoes harvested by [[harvest-potatoes-right-click]] are deposited in the chest, so "bake the potatoes" implies *take them out and put them in the furnace*, not just smelt what's in pocket.
 3. Bail with "No raw potatoes — none in inventory or the chest" if neither source has any.
 4. Pathfind to within 2 blocks of [[../places/house-furnace]] at (-265, 65, 571).
-5. **Open furnace, dump all `potato` stacks into the input slot, close furnace.**
-6. **Walk away. Wait `(N × 10s) + 8s buffer`** where N is the count loaded.
-7. **Open furnace once, drain the entire output slot, close.** Sanity check: warn if input still has unsmelted potatoes (means fuel ran out or the wait estimate was low).
-8. **Done.** Baked potatoes stay in inventory.
+5. **Open furnace, dump all `potato` stacks into the input slot, close furnace.** Input stacks
+   cap at **64** — a larger harvest leaves the remainder (e.g. 76 → 64 in, 12 left) in inventory
+   for the next run.
+6. **Record when the batch finishes** (`(N × 10s) + 8s buffer`) in `pendingBake` and **return —
+   non-blocking.** The bot does NOT stand at the furnace; the furnace cooks server-side on its
+   own. Changed 2026-05-30 (see below).
+7. **Collection is a separate background step** — `tryCollectBake()` on the 5s timer (the same one
+   as auto-sleep). When the batch is due and the bot is free, it walks to the furnace, drains the
+   output, and (if fuel ran low and raw remains) reschedules to come back for the rest.
+8. **Baked potatoes stay in inventory.**
+
+## Non-blocking bake (2026-05-30)
+
+Originally the bake **blocked the bot at the furnace** for the whole smelt (`N × 10s` — ~13 min
+for a full batch), with an in-line bedtime-sleep loop. That tied the bot up doing nothing while
+it had a "keep the fire going" wheat field to tend.
+
+Now the bake is **fire-and-forget**: `runBakePotatoes` loads the furnace, sets
+`pendingBake = {active, doneAt}`, and returns (releasing its task). The bot is free to harvest
+wheat or idle. `tryCollectBake()` collects later, and **defers to the wheat cycle**: if the
+sustain loop is active and the field is ripe, it lets the wheat harvest + deposit go first, then
+collects the potatoes. Bedtime is handled for free — collection just waits for morning + an idle
+moment (the furnace cooks through the night). Manual / recovery trigger: ctl `collect_bake`
+(also recovers a batch orphaned by a restart, since `pendingBake` is in-memory only).
 
 ## User rule (2026-05-14): no auto-stash after bake
 

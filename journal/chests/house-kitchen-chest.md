@@ -21,6 +21,26 @@ in mineflayer's registry — see [[../items/wheat]] context and the bake procedu
 - **Approach:** pathfind to (-267, 65, 570) range=1 — still reaches the new block (~2.4 blocks, verified 2026-05-30).
 - **Capacity:** **27 slots (single chest).**
 
+## Cooperative handoff surface (user, 2026-05-30)
+
+This chest is the **shared handoff point between the user and the bot** — neither side can reach
+into the other's inventory directly, so the chest is how items pass between them. This shapes how
+to treat it:
+
+- **Bot → user:** the bot deposits here what the user can't pull from its "pockets." Surplus
+  [[../procedures/deposit-seeds|seeds]] land here (they can't go in the [[../places/house-hopper|hopper]]
+  — only wheat feeds the bio-fuel machine). Commands like **"stash everything"** / **"stash
+  unknown"** exist precisely so the user can recover something the bot picked up
+  (`runStashAll` / `runStashUnknown`).
+- **User → bot:** the user **prepares the bread ingredients** (flour/salt/water/bowl/bakeware)
+  and **keeps iron stocked** so the bot can craft new shears when needed. So the bot should
+  *expect* to find these staged here and not be surprised by them appearing/refilling.
+- **Reserved slots** (below) exist so both parties agree on what each modded `unknown` item is —
+  the fixed indices are the shared contract, not just a bot convenience.
+
+It is **cooperative and dynamic**: contents change from both sides between sessions. Always read
+live state before relying on a count; the slot *roles* are stable, the *amounts* are not.
+
 ## Slot layout (re-mapped 2026-05-30)
 
 Mirrors `CHEST_SLOTS` in `bot.js`. A single 27-slot chest is a 3-row × 9-column grid
@@ -28,7 +48,7 @@ Mirrors `CHEST_SLOTS` in `bot.js`. A single 27-slot chest is a 3-row × 9-column
 
 | Slot | Item | Notes |
 |---|---|---|
-| 0 | **pot** | salt-making station, user-managed. **DO NOT TOUCH** — not in `CHEST_SLOTS`. |
+| 6 | **pot** | salt-making station, user-managed. **DO NOT TOUCH** — not in `CHEST_SLOTS`. Moved from slot 0 → 6 by the user 2026-05-30 (verified in-session: slot 0 empty, slot 6 = `unknown`×1). |
 | 7 | salt | user keeps topped up (`unknown`) |
 | 8 | bakeware | reusable, returns here after craft (`unknown`) |
 | 16 | water | fresh water, user keeps topped up (`unknown`) |
