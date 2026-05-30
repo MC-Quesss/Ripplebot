@@ -1604,6 +1604,11 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null } 
       logEvent('harvest-rc', 'inside house — exiting first')
       await runGoOutside('wheat')
       if (deathCount > startDeaths) throw new Error('died exiting house')
+      if (insideHouse()) {
+        logEvent('harvest-rc', 'still inside after exit attempt — aborting')
+        bot.chat('Still inside — too late to head out. Will try next cycle.')
+        return
+      }
     }
 
     // Travel: detour around the tree, then to the target field center.
@@ -2067,6 +2072,11 @@ async function runHarvestPotatoesRightClick ({ user, then = null } = {}) {
       logEvent('harvest-potato-rc', 'inside house — exiting first')
       await runGoOutside('potatoes')
       if (deathCount > startDeaths) throw new Error('died exiting house')
+      if (insideHouse()) {
+        logEvent('harvest-potato-rc', 'still inside after exit attempt — aborting')
+        bot.chat('Still inside — too late to head out. Will try next cycle.')
+        return
+      }
     }
 
     await pathTo(HARVEST_WAYPOINTS.potato_approach, 1, 12000)
