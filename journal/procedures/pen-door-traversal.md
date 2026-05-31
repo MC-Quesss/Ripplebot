@@ -39,11 +39,18 @@ Key coords:
      start the exit from the **deep runway at z=577**, giving a 3-block run to
      reach walking speed before the threshold (mirrors the entry runway).
 
-## Sheep-safety rule
+## Sheep-safety rules
 
 **Never toggle the door blindly.** Use idempotent open/close helpers that check
 the `0x04` bit first. On any failed attempt, **ensure the door is closed** before
 repositioning, and **re-open it** (don't assume it was left open) on the retry.
+
+**Don't dwell on the outside pressure plate (-278, 64, 573).** It holds the door
+open via redstone — lingering there lets sheep follow the bot out. A background
+guard (`startPenPlateGuard`, 1s tick) kicks the bot north off the plate if it
+sits there > 3s, then ensures the door is closed. The guard is suppressed while a
+traversal is actively crossing (`penTraversalBusy`), so a normal in/out — which
+clears the plate in well under a second — is never interrupted.
 
 ## Confirmed (2026-05-30)
 

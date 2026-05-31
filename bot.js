@@ -2780,7 +2780,6 @@ async function runGoInsideOnce () {
   if (!walk.reached) throw new Error(`didn't reach house_center (x=${walk.x})`)
 
   const atInside = verifyAtOrientation(HOUSE_CENTER, 1.5, 1.2)
-  bot.chat('Inside now.')
   logEvent('go-inside', `arrived ${posStr(bot.entity.position)} onPad=${atInside.ok}`)
 }
 
@@ -2849,7 +2848,7 @@ async function runGoOutside (activity) {
     }
     logEvent('go-outside', `attempt 1 failed gracefully (${err.message}); retrying`)
     sendEmote('facepalm')
-    bot.chat(`First attempt didn't take — trying once more.`)
+    bot.chat(pickLine(RETRY_LINES))
     await sleep(500)
     // Reset to the inside pad before retry — runGoOutsideOnce starts from
     // HOUSE_CENTER, and we may be stranded in the door jamb after the snag.
@@ -2884,7 +2883,7 @@ async function runGoInside () {
           throw err
         }
         sendEmote('facepalm')
-        bot.chat(attempt === 1 ? `First attempt didn't take — trying again.` : `Attempt ${attempt} failed — one more go.`)
+        bot.chat(pickLine(RETRY_LINES))
         await sleep(500)
         await resetToHouseSide(OUTSIDE_ORIENTATION)
       }
@@ -3010,7 +3009,7 @@ async function runEnterPen ({ allowNight = false } = {}) {
     if (!isGracefulDoorFailure(err, hpDelta, deathDelta)) throw err
     logEvent('enter-pen', `attempt 1 failed (${err.message}); retrying`)
     sendEmote('facepalm')
-    bot.chat(`Didn't make it through — closing gate and trying again.`)
+    bot.chat(pickLine(RETRY_LINES))
     await ensurePenDoorClosed()
     await sleep(500)
     await pathTo({ x: -278, y: 64, z: 571 }, 0, 6000).catch(() => {})
@@ -3119,7 +3118,7 @@ async function runLeavePen () {
         throw err
       }
       sendEmote('facepalm')
-      bot.chat(`Didn't make it through — closing gate and trying again.`)
+      bot.chat(pickLine(RETRY_LINES))
       await ensurePenDoorClosed()
       await sleep(500)
       await pathTo(PEN_INSIDE, 0, 6000).catch(() => {})
@@ -4686,6 +4685,22 @@ bot.on('chat', (username, message) => {
     logEvent('chat-handled', `wheat-snooze <- <${username}> ${message}`)
     return
   }
+  // "Who's keeping the fire going?" — directed at all bots, not one nickname.
+  // The sustaining bot owns it immediately; others disavow after a beat so the
+  // real keeper is heard first.
+  if (/(?:who(?:'s| is| has been| is currently)?|which\s+(?:bot|one)\s+is|any(?:one|body|bot)?)\s+keep(?:ing|s)?\s+the\s+fire\s+going/i.test(message)) {
+    if (sustainState.active) {
+      bot.chat(pickLine(FIRE_KEEPER_YES_LINES))
+      logEvent('chat-handled', `fire-keeper YES <- <${username}>`)
+    } else {
+      const jitter = 5000 + Math.floor(Math.random() * 1500)
+      setTimeout(() => {
+        if (!sustainState.active) bot.chat(pickLine(FIRE_KEEPER_NO_LINES))
+      }, jitter)
+      logEvent('chat-handled', `fire-keeper NO (replying in ~5s) <- <${username}>`)
+    }
+    return
+  }
   if (pendingJoke) {
     deliverPunchline()
     return
@@ -5005,6 +5020,44 @@ const TOO_LATE_LINES = [
   'Maybe in the morning.',
   'Not safe out there after dark.',
   'I\'d rather not meet a creeper right now.',
+]
+// Said when a door/gate traversal snags and the bot is about to retry. Should
+// read as a character shrugging it off — not a debug log ("Attempt 2 failed").
+const RETRY_LINES = [
+  'Hm. That door has opinions. Let me try again.',
+  'Okay, take two.',
+  'Whoops. One more time, with feeling.',
+  'That didn\'t take. Re-approaching with dignity.',
+  'Stubborn thing. Round two.',
+  'Nope. Let\'s pretend that didn\'t happen.',
+  'The door and I are having a disagreement. Trying again.',
+  'Almost had it. Once more.',
+  'Right. Doing that again, properly this time.',
+  'Hold on — let me line that up better.',
+  'Not my smoothest move. Again.',
+  'These things take practice, apparently.',
+]
+// "Who's keeping the fire going?" — the bot currently sustaining answers right
+// away (clever, owns it); bots that AREN'T wait ~5s (so the real one speaks
+// first) then disavow, nose-goes style.
+const FIRE_KEEPER_YES_LINES = [
+  "That'd be me. The wheat doesn't burn itself.",
+  'Guilty. The hopper and I have an understanding.',
+  'Me. Tending the flame, as it were.',
+  'This unit. Fire\'s warm, wheat\'s flowing, all is well.',
+  'Me — you can relax, I\'ve got the field.',
+  'Right here. Keeper of the eternal harvest.',
+  'Me. It\'s a calling, really.',
+]
+const FIRE_KEEPER_NO_LINES = [
+  'Not I.',
+  '*puts finger to its nose*',
+  'Not me. I checked.',
+  '*slowly points elsewhere*',
+  'Wasn\'t me. I was contemplating the pond.',
+  'Not this unit.',
+  'Nose goes. Not it.',
+  'I plead agricultural innocence.',
 ]
 const COME_INSIDE_LINES = [
   { text: 'Heading inside.',                               weight: (s) => s.focus },
@@ -6216,10 +6269,28 @@ function weightedEligibleTopicPool (pool) {
   return expanded
 }
 
+// Heuristic: companion bots are named like "Musebot", "Ripplebot", "Rainbot6032"
+// — "bot" optionally followed by digits. Used to keep the musing matcher from
+// treating one bot's STATUS announcements ("Leaving the pen.", "Nailed it!") as
+// freeform conversation input. Humans (e.g. "Quesss") can still freeform-join.
+function looksLikeBot (username) {
+  return /bot\d*$/i.test(String(username || ''))
+}
+
 function handleMusingMessage (username, message) {
   const trimmed = message.trim()
   const topic = ALL_MUSING_TOPICS.find(t => t.starter === trimmed)
   const recursiveTopic = topic && isRecursiveTopic(topic)
+
+  // Partner-lock: once we're conversing with someone, ignore musing lines from
+  // any other speaker. Without this, a third bot reciting the same topic tree
+  // gets pulled into our thread and both ends echo identical scripted lines in
+  // unison instead of holding a 1:1 conversation. (partnerUsername is null until
+  // the first responder locks in, so this never blocks a fresh exchange.)
+  if ((musingState.status === 'active' || musingState.status === 'started') &&
+      musingState.partnerUsername && username !== musingState.partnerUsername) {
+    return true
+  }
 
   if (topic) {
     if (!topicIsEligibleNow(topic)) {
@@ -6303,9 +6374,12 @@ function handleMusingMessage (username, message) {
     let matched = musingState.pendingOptions.find(n => n.response === trimmed)
 
     // Human freeform reply fallback:
-    // if someone answers during the musing window, continue the tree
-    // even if they didn't say the exact scripted bot phrase.
-    if (!matched && !MUSING_STARTERS.has(trimmed)) {
+    // if a HUMAN answers during the musing window, continue the tree even if
+    // they didn't say the exact scripted phrase. Bots must match an exact
+    // scripted line — otherwise their status announcements ("Leaving the pen.",
+    // "Nailed it!") get mistaken for musing replies and the bots "respond" to
+    // each other's chatter, which reads as nonsense.
+    if (!matched && !MUSING_STARTERS.has(trimmed) && !looksLikeBot(username)) {
       matched = pickRandom(musingState.pendingOptions)
       logEvent('musing', `freeform reply from ${username}: "${trimmed}"`)
     }
