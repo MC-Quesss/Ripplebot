@@ -229,7 +229,7 @@ async function tryAutoSleep () {
   if (!autoSleepEnabled || autoSleepBusy) return
   if (bot.isSleeping) return
   if (!isBedtime()) return
-  if (goInsideBusy || taskBusy()) return
+  if (goInsideBusy || taskBusy() || penTraversalBusy) return
   if (!insideHouse()) {
     logEvent('auto-sleep', 'bedtime but outside — heading in first')
     try { await runGoInside() } catch (e) {
@@ -1192,7 +1192,7 @@ const SHEEP_COUNTING_LINES = [
 ]
 
 function idleWanderBusy () {
-  return !bot.entity || bot.isSleeping || autoSleepBusy || goInsideBusy ||
+  return !bot.entity || bot.isSleeping || autoSleepBusy || goInsideBusy || penTraversalBusy ||
     activeTask.name !== null || followTarget || musingState.status !== 'idle'
 }
 
@@ -2425,7 +2425,7 @@ function countBakedPotatoes () {
 
 async function tryFoodSafety () {
   if (!foodSafetyEnabled || foodSafetyBusy) return
-  if (taskBusy() || goInsideBusy || autoSleepBusy) return // don't interrupt active work
+  if (taskBusy() || goInsideBusy || autoSleepBusy || penTraversalBusy) return // don't interrupt active work
   if (!bot.entity || bot.isSleeping || isBedtime()) return // don't start a long run at night
   if (pendingBake.active) return // a batch is already in the furnace — wait for it
   if (countBakedPotatoes() >= foodSafetyMin) return
@@ -2455,7 +2455,7 @@ async function tryFoodSafety () {
 // what's ready and reschedules to come back for the rest.
 async function tryCollectBake () {
   if (!pendingBake.active || pendingBakeBusy) return
-  if (taskBusy() || goInsideBusy || autoSleepBusy || foodSafetyBusy) return
+  if (taskBusy() || goInsideBusy || autoSleepBusy || foodSafetyBusy || penTraversalBusy) return
   if (!bot.entity || bot.isSleeping || isBedtime()) return
   if (Date.now() < pendingBake.doneAt) return
   // Wheat first: if the sustain loop is on and the field is ripe, let it harvest
@@ -2891,7 +2891,7 @@ async function runGoOutside (activity) {
 
 // Wrap runGoInsideOnce with up to 3 retries on graceful failure.
 async function runGoInside () {
-  if (goInsideBusy) return
+  if (goInsideBusy || penTraversalBusy) return // never enter the house mid-pen-traversal
   goInsideBusy = true
   try {
     const startHP = bot.health ?? 20
