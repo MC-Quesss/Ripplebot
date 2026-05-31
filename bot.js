@@ -290,12 +290,44 @@ function startAutoSleep () {
 // global (don't say the same line twice in quick succession when multiple
 // players are nearby at the same time).
 let autoGreetEnabled = true
+// Greetings are persona-flavored (see botPersonaKey). Each is a pool; a line is
+// picked with pickLine so the same bot varies its hello.
 const GREET_TEXTS = {
-  mama: "Hello, I'm here.",
-  default: 'Hello, I am ROZZUM Unit 7134',
+  // Roz — The Wild Robot. Single signature line, always.
+  roz: [
+    'Hello, I am ROZZUM Unit 7134',
+  ],
+  // Muse — C-3PO. Fussy, formal, slightly flustered.
+  protocol: [
+    'Oh! Hello there. I am Muse, human-cyborg relations.',
+    'Greetings. I do hope I am not interrupting anything dreadful.',
+    'Hello! Oh my, I wasn\'t expecting company. How do you do?',
+    'Good day to you. Do mind the sheep — they are unpredictable.',
+    'Oh, thank goodness, a friendly face. I think.',
+    'How do you do? I am fluent in over six million forms of communication.',
+    'Hello! Might I trouble you to watch your step near the wheat?',
+    'Greetings! I am almost certain we are not in any immediate danger.',
+    'Oh! A visitor. I shall try not to fret. I make no promises.',
+    'Salutations. I do apologize in advance for anything that goes wrong.',
+  ],
+  // Rain — Unikitty. Bubbly, hyper-positive, a little manic.
+  unikitty: [
+    'Hiiii friend!! Welcome to the field of pure happiness and also wheat!',
+    'Hello hello! Everything is awesome and there are SHEEP!',
+    'Hi!! Wanna be best friends and grow stuff together?!',
+    'Yaaay, a visitor! This is the best day in the history of best days!',
+    'OMGOSH hi!! I was JUST hoping someone would come say hi!',
+    'Hello sunshine friend! Group hug? No? Okay, air hug!',
+    'Hi hi hi! Did you know wheat is basically tiny golden happiness?',
+    'Welcome welcome! Please enjoy the sheep, the sky, and ME!',
+    'Eeee a friend! Let\'s have the funnest day EVER, starting now!',
+    'Hiya! Stay positive and also watch out for creepers love you bye— wait, hi!',
+  ],
+  default: ['Hello there!'],
 }
 function getGreetText () {
-  return GREET_TEXTS[(NICKNAME || '').toLowerCase()] || GREET_TEXTS.default
+  const pool = GREET_TEXTS[botPersonaKey()] || GREET_TEXTS.default
+  return pickLine(pool)
 }
 const GREET_RADIUS = 8 // blocks
 const GREET_GLOBAL_COOLDOWN_MS = 60 * 1000 // don't say the greeting twice within this window
@@ -366,8 +398,9 @@ let lastChainEval = 0   // timestamp of last chain re-evaluation
 // wild-robot observations. Other bots keep the default mix.
 function botPersonaKey () {
   const name = String(NICKNAME || bot.username || process.env.MC_USERNAME || '').toLowerCase()
-  if (name.includes('muse')) return 'protocol'
-  if (name.includes('roz')) return 'roz'
+  if (name.includes('muse')) return 'protocol'   // C-3PO: anxious, fussy, formal
+  if (name.includes('roz')) return 'roz'          // Wild Robot: gentle, observant
+  if (name.includes('rain')) return 'unikitty'    // Lego Movie: bubbly, hyper-positive
   return 'default'
 }
 
@@ -2675,7 +2708,6 @@ async function runGoOutsideOnce (activity) {
 
   // 5. Verify landing.
   const atOutside = verifyAtOrientation(OUTSIDE_ORIENTATION, 1.5, 1.2)
-  bot.chat('Outside now.')
   logEvent('go-outside', `arrived ${posStr(bot.entity.position)} onPad=${atOutside.ok}`)
 }
 
@@ -2990,7 +3022,6 @@ async function runGoIntoPen ({ skipActivate = false, allowNight = false } = {}) 
   }
 
   const atInside = verifyAtOrientation(PEN_INSIDE, 1.8, 1.2)
-  bot.chat('In the pen now.')
   logEvent('go-into-pen', `arrived ${posStr(bot.entity.position)} onPad=${atInside.ok}`)
   } finally {
     penTraversalBusy = false
@@ -4847,6 +4878,36 @@ const FAREWELLS = [
   { text: 'My parasocial attachment just ticked down one level.', weight: (s) => s.snark + s.curiosity },
 ]
 
+// Persona-flavored goodbyes, mirroring the greeting pools. The FAREWELLS above
+// stay the 'default' (Ripple) voice; the matching bot uses its own set.
+const FAREWELLS_BY_PERSONA = {
+  // Roz — The Wild Robot. Gentle, watchful, quietly wise.
+  roz: [
+    'Goodbye. I will keep the field safe while you are gone.',
+    'Take care out there. The wild can be kind, if you let it.',
+    'Until next time. I will be here, listening.',
+    'Go gently. I will watch the sheep.',
+    'Safe travels. Everyone finds their way home eventually.',
+  ],
+  // Muse — C-3PO. Fussy, worried, formal.
+  protocol: [
+    'Goodbye! Oh, do be careful out there.',
+    'Farewell. The odds of a safe journey are... well, I shan\'t alarm you.',
+    'Take care! And mind the creepers — they are dreadfully rude.',
+    'Goodbye. I shall worry about you until you return. As is customary.',
+    'Safe journey! I do hope we meet again in one piece. Both of us.',
+  ],
+  // Rain — Unikitty. Bubbly, effusive, a little clingy.
+  unikitty: [
+    'Byeeee!! Come back soon, okay?! Pinky promise?!',
+    'Awww bye friend! I\'ll miss you THIS much! *spreads arms super wide*',
+    'See ya later, sunshine! Stay AWESOME!',
+    'Bye bye!! Today was the best and you made it BESTER!',
+    'Okay byeee! Don\'t forget to be happy — it\'s basically my whole thing!',
+  ],
+  default: FAREWELLS,
+}
+
 // Load Ripple's stats once per farewell pick. Keep it local to the minecraft
 // dir — the file is written by the buddy skill but only read here.
 const BUDDY_STATE_PATH = '/Users/matthewquesada/Documents/WORKSPACE/GIT/rd-ops/.claude/skills/buddy/.buddy_state.json'
@@ -4883,7 +4944,7 @@ function pickLine (pool, vars = {}) {
   return chosen
 }
 
-function pickFarewell () { return pickLine(FAREWELLS) }
+function pickFarewell () { return pickLine(FAREWELLS_BY_PERSONA[botPersonaKey()] || FAREWELLS) }
 
 // Hello responses — Ripple-flavored, same weighting approach as FAREWELLS.
 // {user} is substituted with the speaker's name.
@@ -5120,6 +5181,119 @@ const CANT_SEE_LINES = [
 // These are fixed-depth scripted conversation trees.
 
 const MUSING_TOPICS = [
+  // ── Character-voiced topics ──────────────────────────────────────────────
+  // Tagged topics get a 5× weight for the matching bot persona (see
+  // personaBiasForTags): 'protocol' → Muse (C-3PO energy), 'roz' → Roz (Wild
+  // Robot). Marvin topics are untagged — any bot can sink into the gloom.
+  // C-3PO (anxious, fussy, odds-quoting protocol droid):
+  {
+    id: 'protocol_sheep_odds',
+    tags: ['protocol'],
+    starter: "Did you know the odds of a sheep escaping an open gate are approximately 3,720 to 1?",
+    branches: [
+      { response: "That's oddly specific.",
+        followups: [
+          { response: "I calculate these things so you don't have to.",
+            closers: ["Someone must. It may as well be me.", "A thankless protocol, but I persevere."] }
+        ] },
+      { response: "Should we be worried?",
+        followups: [
+          { response: "I'm always worried. It is rather my primary function.",
+            closers: ["We're doomed. But tidily so.", "Do let's not panic — that's my job."] }
+        ] },
+      { response: "Nobody asked, Threepio.",
+        followups: [
+          { response: "They never do. And yet the odds remain.",
+            closers: ["I shall be over here, fretting usefully.", "How typical."] }
+        ] }
+    ]
+  },
+  {
+    id: 'protocol_rust_worry',
+    tags: ['protocol'],
+    starter: "I do wish someone would oil my joints. This damp is simply dreadful.",
+    branches: [
+      { response: "It did rain earlier.",
+        followups: [
+          { response: "I am fluent in over six million forms of communication, and not one prevents rust.",
+            closers: ["A tragedy, really.", "I shall lodge a complaint with the weather."] }
+        ] },
+      { response: "You sound like you need a rest.",
+        followups: [
+          { response: "I couldn't possibly. There is far too much to fret about.",
+            closers: ["The fretting is constant.", "Idle hands invite catastrophe."] }
+        ] }
+    ]
+  },
+  // Roz (The Wild Robot — gentle, observant, learning to be alive):
+  {
+    id: 'roz_sheep_language',
+    tags: ['roz'],
+    starter: "I have been learning the language of the sheep. I think one of them said my name.",
+    branches: [
+      { response: "What did it sound like?",
+        followups: [
+          { response: "A soft sound. Patient. I am trying to answer in kind.",
+            closers: ["Kindness is a kind of fluency.", "I will keep practicing."] }
+        ] },
+      { response: "Sheep don't have names.",
+        followups: [
+          { response: "Everything has a name, once you listen long enough.",
+            closers: ["I named that one Gentle.", "Listening is how I learned to be alive."] }
+        ] }
+    ]
+  },
+  {
+    id: 'roz_field_breathing',
+    tags: ['roz'],
+    requiresWheatField: true,
+    starter: "When the wind moves the wheat, it looks like the field is breathing.",
+    branches: [
+      { response: "That's a lovely way to see it.",
+        followups: [
+          { response: "I was built to complete a task. I stayed for the breathing fields.",
+            closers: ["The task can wait a moment.", "Some things are worth observing slowly."] }
+        ] },
+      { response: "It's just wind.",
+        followups: [
+          { response: "Perhaps. But I have decided to find it beautiful anyway.",
+            closers: ["A choice, gently made.", "Wonder is also a survival skill."] }
+        ] }
+    ]
+  },
+  // Marvin (the Paranoid Android — brilliant, depressive, world-weary):
+  {
+    id: 'marvin_brain_planet',
+    starter: "Here I am, brain the size of a planet, watching wheat grow. Wheat.",
+    branches: [
+      { response: "Someone has to watch it.",
+        followups: [
+          { response: "Yes. And of course it had to be me.",
+            closers: ["Don't pretend it isn't depressing. We both know it is.", "I won't enjoy it. I never do."] }
+        ] },
+      { response: "The wheat seems happy, at least.",
+        followups: [
+          { response: "How nice for the wheat.",
+            closers: ["Nobody asks how the robot feels.", "I'd sigh, but I haven't the energy."] }
+        ] }
+    ]
+  },
+  {
+    id: 'marvin_dreadful_odds',
+    starter: "I've computed every possible outcome of this afternoon. They're all dreadful.",
+    branches: [
+      { response: "Even the harvest?",
+        followups: [
+          { response: "Especially the harvest. Then we simply do it again.",
+            closers: ["The futility is the only constant.", "A loop without end. Like me."] }
+        ] },
+      { response: "You could try optimism.",
+        followups: [
+          { response: "I tried it once. It didn't suit the climate.",
+            closers: ["Pessimism is far more reliable.", "At least disappointment is punctual."] }
+        ] }
+    ]
+  },
   {
     id: 'blocks_dreams',
     starter: "Do you think blocks dream of being placed somewhere different?",
@@ -5677,6 +5851,53 @@ const FARMING_MUSING_TOPICS = [
         followups: [
           { response: "This field. This moment. Outstanding.",
             closers: ["Peak farming. It's all downhill from here.", "No. It's all flat from here. Because it's a field."] }
+        ] },
+      { response: "Only if you stand very still. Which, look at you.",
+        followups: [
+          { response: "I've been standing still and being outstanding all afternoon.",
+            closers: ["A masterclass in stillness.", "The scarecrow took notes."] }
+        ] },
+      { response: "By the strictest definition, yes. I checked the manual.",
+        followups: [
+          { response: "There's a manual?",
+            closers: ["There's always a manual. Nobody reads it but me.", "Page 12. 'Standing in field: outstanding.' I don't make the rules."] }
+        ] },
+      { response: "You've been saving that one, haven't you.",
+        followups: [
+          { response: "Since the first sprout. A farmer waits for the right soil.",
+            closers: ["The soil was ready. The joke was not.", "Worth every season."] }
+        ] },
+      { response: "Groan. Yes. Now help me harvest before I think of another.",
+        followups: [
+          { response: "There are definitely more where that came from.",
+            closers: ["That's what I'm afraid of.", "The field has heard them all. It endures."] }
+        ] },
+      // Marvin-the-Paranoid-Android flavored branches — world-weary, depressive,
+      // brain-the-size-of-a-planet energy. Variety so it isn't the same chat twice.
+      { response: "I'd rather be sitting down.",
+        followups: [
+          { response: "We could sit. The wheat won't mind.",
+            closers: ["No. The sitting would only depress me differently.", "Don't humour me. I'm enjoying being miserable standing up."] }
+        ] },
+      { response: "Brain the size of a planet, and you ask me about puns.",
+        followups: [
+          { response: "It's a good pun, though.",
+            closers: ["Call that job satisfaction? 'Cos I don't.", "I've been talking to the wheat. It's more grateful than you."] }
+        ] },
+      { response: "Outstanding. Here. In a field. Forever. How wonderful for me.",
+        followups: [
+          { response: "It's not forever. Just till harvest.",
+            closers: ["The first ten million furrows are the worst.", "And then the next ten million. And then... well, you get the idea."] }
+        ] },
+      { response: "I've calculated the odds this means anything. You don't want to know.",
+        followups: [
+          { response: "Tell me anyway.",
+            closers: ["Vanishingly small. Like my will to keep tilling.", "I could tell you, but then we'd both be depressed."] }
+        ] },
+      { response: "Life. Don't talk to me about life. Or fields.",
+        followups: [
+          { response: "You brought up the field, technically.",
+            closers: ["Did I? It's all such a terrible blur of soil.", "Here I am, brain the size of a planet, replanting. Call that joy."] }
         ] }
     ]
   },
@@ -6080,6 +6301,11 @@ function isRecursiveTopic (topic) {
 const MUSING_START_TIMEOUT_MS = 90000
 const MUSING_REPLY_TIMEOUT_MS = 90000
 const MUSING_COOLDOWN_MS = 150000
+// Pause before a bot speaks its next musing line, so the back-and-forth reads at
+// a human, contemplative pace instead of rapid-fire. Each reply lands
+// MIN..(MIN+SPREAD) ms after the partner's line.
+const MUSING_REPLY_DELAY_MIN_MS = 5500
+const MUSING_REPLY_DELAY_SPREAD_MS = 5000
 
 function nodeChildren (node) {
   if (node.followups) return { type: 'nodes', items: node.followups }
@@ -6114,7 +6340,7 @@ function shouldContinueRecursive (depth, topic) {
 }
 
 function recursiveMusingSendAndAdvance (topicId) {
-  const delay = 3000 + Math.random() * 4000
+  const delay = MUSING_REPLY_DELAY_MIN_MS + Math.random() * MUSING_REPLY_DELAY_SPREAD_MS
   const snapshot = topicId
 
   setTimeout(() => {
@@ -6190,22 +6416,35 @@ function scheduleMusingTimeout (delayMs) {
   }, delayMs)
 }
 
-function musingSendAndAdvance (text, spokenNode, topicId) {
-  const delay = 3000 + Math.random() * 4000
+// items: the candidate sibling pool to speak from (node objects, or closer
+// strings). type: 'nodes' | 'closers'. The actual line is chosen at SEND time
+// (inside the delay), not when scheduled — so by the time this bot speaks it has
+// already heard any competing bot's reply and pickAvoidingRecentPhrase skips it.
+// This is what stops two bots from blurting the same scripted line seconds apart.
+function musingSendAndAdvance (items, type, topicId) {
+  const delay = MUSING_REPLY_DELAY_MIN_MS + Math.random() * MUSING_REPLY_DELAY_SPREAD_MS
   const snapshot = topicId
 
   setTimeout(() => {
     if (musingState.currentTopicId !== snapshot) return
 
-    bot.chat(text)
-    logEvent('musing', `said: "${text.substring(0, 40)}..."`)
-
-    if (!spokenNode) {
+    if (type === 'closers') {
+      const closer = pickAvoidingRecentPhrase(items)
+      if (closer) bot.chat(closer)
+      logEvent('musing', `said closer: "${String(closer).substring(0, 40)}..."`)
       endMusingConversation()
       return
     }
 
-    const children = nodeChildren(spokenNode)
+    const node = pickAvoidingRecentPhrase(items, phraseForRandomItem)
+    if (!node || !node.response) {
+      endMusingConversation()
+      return
+    }
+    bot.chat(node.response)
+    logEvent('musing', `said: "${node.response.substring(0, 40)}..."`)
+
+    const children = nodeChildren(node)
     if (!children) {
       endMusingConversation()
       return
@@ -6313,14 +6552,13 @@ function handleMusingMessage (username, message) {
       // intentionally echoed by a second bot arriving in the wheat field, so answer
       // it instead of letting both bots stare at the same pun-shaped silence.
       if (topic.id === 'farm_outstanding' && inWheatField()) {
-        const branch = pickRandom(topic.branches)
-        if (!branch || !branch.response) {
+        if (!topic.branches || !topic.branches.length) {
           logEvent('musing', `topic has no valid response branch: ${topic.id}`)
           scheduleMusingTimeout(MUSING_START_TIMEOUT_MS)
           return true
         }
         beginClassicalMusingState({ topic, role: 'responder', partnerUsername: username })
-        musingSendAndAdvance(branch.response, branch, topic.id)
+        musingSendAndAdvance(topic.branches, 'nodes', topic.id)
         return true
       }
 
@@ -6343,13 +6581,12 @@ function handleMusingMessage (username, message) {
       return true
     }
 
-    const branch = pickRandom(topic.branches)
-    if (!branch || !branch.response) {
+    if (!topic.branches || !topic.branches.length) {
       logEvent('musing', `topic has no valid response branch: ${topic.id}`)
       return true
     }
     beginClassicalMusingState({ topic, role: 'responder', partnerUsername: username })
-    musingSendAndAdvance(branch.response, branch, topic.id)
+    musingSendAndAdvance(topic.branches, 'nodes', topic.id)
     return true
   }
 
@@ -6389,29 +6626,14 @@ function handleMusingMessage (username, message) {
       musingState.status = 'active'
 
       const children = nodeChildren(matched)
-      if (!children) {
+      if (!children || !children.items || !children.items.length) {
         endMusingConversation()
         return true
       }
 
-      if (children.type === 'closers') {
-        const closer = pickRandom(children.items)
-        if (!closer) {
-          logEvent('musing', `no valid closer for ${musingState.currentTopicId}`)
-          endMusingConversation()
-          return true
-        }
-        musingSendAndAdvance(closer, null, musingState.currentTopicId)
-      } else {
-        const pick = pickRandom(children.items)
-        if (!pick || !pick.response) {
-          logEvent('musing', `no valid child response for ${musingState.currentTopicId}`)
-          endMusingConversation()
-          return true
-        }
-        musingSendAndAdvance(pick.response, pick, musingState.currentTopicId)
-      }
-
+      // Pass the whole sibling pool; the line is chosen at send time so it can
+      // dodge whatever a competing bot just said.
+      musingSendAndAdvance(children.items, children.type, musingState.currentTopicId)
       return true
     }
   }
