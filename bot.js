@@ -2485,6 +2485,29 @@ const OUTSIDE_ORIENTATION = { x: -275, y: 64, z: 572 }
 const PEN_GATE       = { x: -278, y: 64, z: 574 }
 const PEN_OUTSIDE    = { x: -278, y: 64, z: 573 }  // pad north of gate (outside the pen)
 const PEN_INSIDE     = { x: -278, y: 64, z: 575 }  // pad south of gate (inside the pen)
+
+// Pen door state helper — metadata bit 0x04 = open (same check as house door).
+// The pen uses a real door (not a fence gate) because bots couldn't handle gates.
+function penDoorIsOpen () {
+  const d = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
+  return d ? (d.metadata & 0x04) !== 0 : null
+}
+async function ensurePenDoorClosed () {
+  const d = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
+  if (!d) return
+  if ((d.metadata & 0x04) !== 0) {
+    await bot.activateBlock(d).catch(() => {})
+    logEvent('pen-door', 'closed door (was open)')
+  }
+}
+async function ensurePenDoorOpen () {
+  const d = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
+  if (!d) return
+  if ((d.metadata & 0x04) === 0) {
+    await bot.activateBlock(d).catch(() => {})
+    logEvent('pen-door', 'opened door (was closed)')
+  }
+}
 const BED_APPROACH_ALT = { x: -268, y: 65, z: 570 }
 const HOUSE_DOOR = { x: -272, y: 65, z: 572 }
 // Door-traversal strafe direction and duration. Configurable at runtime via
@@ -2877,13 +2900,13 @@ async function runGoIntoPen ({ skipActivate = false, allowNight = false } = {}) 
   }
   logEvent('go-into-pen', `aligned at ${posStr(bot.entity.position)}, yaw south locked`)
 
-  // Open gate/door. Monkey-patch bot.world.getBlock to return empty shapes
-  // for the door position — physics creates fresh block objects each tick so
-  // zeroing a single reference doesn't persist.
-  const gateBlock = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
-  if (!gateBlock) throw new Error('gate block not loaded')
-  if (!skipActivate) await bot.activateBlock(gateBlock)
-  logEvent('go-into-pen', `gate ${skipActivate ? 'already open' : 'activated'}`)
+  // Open pen door only if it's closed — never toggle blindly (sheep escape risk).
+  const doorBlock = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
+  if (!doorBlock) throw new Error('pen door block not loaded')
+  if (!skipActivate) {
+    await ensurePenDoorOpen()
+  }
+  logEvent('go-into-pen', `door ${skipActivate ? 'skip-activate' : 'ensured open'} (meta=${doorBlock.metadata})`)
 
   const origGetBlock = bot.world.getBlock.bind(bot.world)
   bot.world.getBlock = (pos) => {
@@ -2929,16 +2952,16 @@ async function runEnterPen ({ allowNight = false } = {}) {
     if (!isGracefulDoorFailure(err, hpDelta, deathDelta)) throw err
     logEvent('enter-pen', `attempt 1 failed (${err.message}); retrying`)
     sendEmote('facepalm')
-    bot.chat(`Didn't make it through — trying again.`)
+    bot.chat(`Didn't make it through — closing gate and trying again.`)
+    await ensurePenDoorClosed()
     await sleep(500)
     await pathTo({ x: -278, y: 64, z: 571 }, 0, 6000).catch(() => {})
     try {
       await runGoIntoPen({ skipActivate: true, allowNight })
     } catch (err2) {
-      // Both attempts failed — close the door so sheep don't escape.
-      const g = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
-      if (g) await bot.activateBlock(g).catch(() => {})
-      logEvent('enter-pen', 'both attempts failed, door closed')
+      // Both attempts failed — ensure door is closed so sheep don't escape.
+      await ensurePenDoorClosed()
+      logEvent('enter-pen', 'both attempts failed, door ensured closed')
       throw err2
     }
   }
@@ -2974,11 +2997,13 @@ async function runGoOutOfPen ({ skipActivate = false } = {}) {
   }
   logEvent('go-out-of-pen', `yaw locked north at ${yawResult.yaw.toFixed(3)} rad`)
 
-  // 3. Open gate/door and monkey-patch getBlock for the path.
-  const gateBlock = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
-  if (!gateBlock) throw new Error('gate block not loaded')
-  if (!skipActivate) await bot.activateBlock(gateBlock)
-  logEvent('go-out-of-pen', `gate ${skipActivate ? 'already open' : 'opened'}`)
+  // 3. Open pen door only if closed — never toggle blindly (sheep escape risk).
+  const doorBlock = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
+  if (!doorBlock) throw new Error('pen door block not loaded')
+  if (!skipActivate) {
+    await ensurePenDoorOpen()
+  }
+  logEvent('go-out-of-pen', `door ${skipActivate ? 'skip-activate' : 'ensured open'} (meta=${doorBlock.metadata})`)
 
   const origGetBlock = bot.world.getBlock.bind(bot.world)
   bot.world.getBlock = (pos) => {
@@ -3020,14 +3045,14 @@ async function runLeavePen () {
       if (!isGracefulDoorFailure(err, hpDelta, deathDelta)) throw err
       logEvent('leave-pen', `attempt ${attempt} failed (${err.message})`)
       if (attempt === 3) {
-        // All attempts failed — close the door so sheep don't escape.
-        const g = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
-        if (g) await bot.activateBlock(g).catch(() => {})
-        logEvent('leave-pen', 'all attempts failed, door closed')
+        // All attempts failed — ensure door is closed so sheep don't escape.
+        await ensurePenDoorClosed()
+        logEvent('leave-pen', 'all attempts failed, door ensured closed')
         throw err
       }
       sendEmote('facepalm')
-      bot.chat(`Didn't make it through — trying again.`)
+      bot.chat(`Didn't make it through — closing gate and trying again.`)
+      await ensurePenDoorClosed()
       await sleep(500)
       await pathTo(PEN_INSIDE, 0, 6000).catch(() => {})
     }
