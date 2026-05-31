@@ -7,6 +7,39 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-05-30 — Bugfix: pen door exit (bot stuck leaving the pen)
+
+**Symptom (user):** bot increasingly stuck getting *out* of the pen; lots of sheep around.
+
+**Causes (two):**
+1. **Door open not verified.** New `ensurePenDoorOpen` called `activateBlock` then returned
+   immediately; the local door metadata hadn't updated yet (async server block-change packet), so
+   `penDoorIsOpen()` read **closed** and the bot walked into a shut door, stalling at z≈574.4. The
+   exit relied entirely on this — entry gets away with it because it crosses the **outside pressure
+   plate** (z=573) which opens the door server-side. Log: `door ensured open (… open=false)`.
+2. **No exit runway.** Exit started the north walk from the door-adjacent inside pad (z=575), so the
+   bot snagged on the door frame from a standstill. Entry has a 3–4 block runway and never snags.
+
+**Fixes:**
+- `setPenDoorState(wantOpen)` — toggles + **settles 450ms + re-verifies** the `0x04` bit, up to 4×.
+  Callers abort (throw) if the door won't confirm open, instead of walking into it.
+- Added `PEN_INSIDE_RUNWAY` (-278, 64, 577 — deepest walkable tile; z=578 is the south fence) and
+  routed exit through it for a 3-block run-up.
+- All door open/close is now **idempotent + state-checked** (never blind toggle); failure cleanup
+  **ensures closed** so sheep can't escape during repositioning.
+
+**Verified:** exit clears to z≤571 on the **first attempt**, multiple cycles, 0 deaths, no escapes.
+Door meta confirmed: lower-half closed = 1, open = 5 (bit 0x04). See
+[[../procedures/pen-door-traversal]].
+
+**Open issue:** entry still occasionally stalls ~z=573.75 (north of door) — separate pre-existing
+flakiness, likely sheep at the plate/doorway. Exit is the part the user flagged and it's solid now.
+
+**Also this session:** stripped door-traversal chat spam (coords no longer announced on every
+in/out — `bot.log` keeps them); "keep the fire going" sustain harvest now triggers at 85% mature
+(was 100%) so a few knocked/replanting tiles don't hold up the cycle; harvest routines now abort
+gracefully if they can't actually exit the house (too-late-in-day silent decline).
+
 ## 2026-05-30 — Bugfix: bedtime yield crashed the sustain loop
 
 **Symptom (user):** the bot correctly came in at night but did not resume in the morning.

@@ -190,6 +190,7 @@ bot.once('spawn', () => {
     logEvent('auto-eat', 'enabled (start at food<=14)')
   }
   startAutoSleep()
+  startPenPlateGuard()
   startWheatReadyWatcher()
   startIdleWanderTimer()
   startMusingTimer()
@@ -2485,29 +2486,79 @@ const OUTSIDE_ORIENTATION = { x: -275, y: 64, z: 572 }
 const PEN_GATE       = { x: -278, y: 64, z: 574 }
 const PEN_OUTSIDE    = { x: -278, y: 64, z: 573 }  // pad north of gate (outside the pen)
 const PEN_INSIDE     = { x: -278, y: 64, z: 575 }  // pad south of gate (inside the pen)
+// Deepest walkable interior tile (z=578 is the south fence wall). Exit starts
+// here so the bot builds walking speed over a 3-block runway before hitting the
+// door threshold — starting right at PEN_INSIDE (1 block out) lets it snag on
+// the door frame from a standstill. Mirrors the entry runway at z=571.
+const PEN_INSIDE_RUNWAY = { x: -278, y: 64, z: 577 }
+
+// The OUTSIDE pad (-278, 64, 573) is a stone pressure plate that holds the door
+// open via redstone. Standing on it keeps the door open and lets sheep follow
+// the bot out. A traversal crosses it in well under a second; a dwell only
+// happens if the bot parks there (idle wander, or a stalled/partial traversal).
+const PEN_PLATE = { x: -278, z: 573 }
+const PEN_PLATE_MAX_DWELL_MS = 3000
+let penTraversalBusy = false   // true while a pen enter/exit is actively running
+let penPlateSince = null       // timestamp the bot first stepped onto the plate
+
+function botOnPenPlate () {
+  const p = bot.entity?.position
+  if (!p) return false
+  return Math.floor(p.x) === PEN_PLATE.x && Math.floor(p.z) === PEN_PLATE.z &&
+         p.y >= 63.5 && p.y <= 65
+}
+// Kick the bot north off the plate if it has dwelled there > 3s, so the door
+// doesn't stay open for the sheep. Skips while a traversal is actively crossing.
+async function tryClearPenPlate () {
+  if (penTraversalBusy || !bot.entity) { penPlateSince = null; return }
+  if (!botOnPenPlate()) { penPlateSince = null; return }
+  if (penPlateSince === null) { penPlateSince = Date.now(); return }
+  if (Date.now() - penPlateSince < PEN_PLATE_MAX_DWELL_MS) return
+  penPlateSince = null
+  logEvent('pen-plate', 'dwelled >3s on plate — stepping north off it')
+  try {
+    await faceYaw(0) // north (-z)
+    await walkUntilAxis({ axis: 'z', target: 571, direction: 'lte', maxMs: 3000 })
+    await ensurePenDoorClosed() // make sure the door didn't stay propped open
+  } catch (e) {
+    logEvent('pen-plate', `clear failed: ${e.message}`)
+  }
+}
+function startPenPlateGuard () {
+  setInterval(() => { tryClearPenPlate().catch(() => {}) }, 1000)
+}
 
 // Pen door state helper — metadata bit 0x04 = open (same check as house door).
 // The pen uses a real door (not a fence gate) because bots couldn't handle gates.
+// IMPORTANT: activateBlock is async server-side — the local block metadata only
+// updates when the server's block-change packet arrives. We must settle + verify
+// after activating, or a read immediately after sees stale state and the bot
+// walks into a still-closed door (the exit-stall bug: entry works only because
+// it crosses the outside pressure plate, which opens the door server-side).
 function penDoorIsOpen () {
   const d = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
   return d ? (d.metadata & 0x04) !== 0 : null
 }
-async function ensurePenDoorClosed () {
-  const d = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
-  if (!d) return
-  if ((d.metadata & 0x04) !== 0) {
+// Toggle the door until its open bit matches `wantOpen`, settling + verifying
+// after each activate. Returns true if the desired state was reached.
+async function setPenDoorState (wantOpen) {
+  for (let i = 0; i < 4; i++) {
+    const d = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
+    if (!d) return false
+    const isOpen = (d.metadata & 0x04) !== 0
+    if (isOpen === wantOpen) {
+      if (i > 0) logEvent('pen-door', `${wantOpen ? 'open' : 'closed'} confirmed after ${i} activate(s)`)
+      return true
+    }
     await bot.activateBlock(d).catch(() => {})
-    logEvent('pen-door', 'closed door (was open)')
+    await sleep(450) // wait for the server's block-change packet
   }
+  const ok = penDoorIsOpen() === wantOpen
+  logEvent('pen-door', `FAILED to ${wantOpen ? 'open' : 'close'} after 4 tries (open=${penDoorIsOpen()})`)
+  return ok
 }
-async function ensurePenDoorOpen () {
-  const d = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
-  if (!d) return
-  if ((d.metadata & 0x04) === 0) {
-    await bot.activateBlock(d).catch(() => {})
-    logEvent('pen-door', 'opened door (was closed)')
-  }
-}
+async function ensurePenDoorClosed () { return setPenDoorState(false) }
+async function ensurePenDoorOpen () { return setPenDoorState(true) }
 const BED_APPROACH_ALT = { x: -268, y: 65, z: 570 }
 const HOUSE_DOOR = { x: -272, y: 65, z: 572 }
 // Door-traversal strafe direction and duration. Configurable at runtime via
@@ -2550,7 +2601,7 @@ async function runGoOutsideOnce (activity) {
   if (!insideHouse()) { bot.chat("I'm already outside."); return }
   const t = bot.time || {}
   if (!t.isDay || (t.timeOfDay ?? 0) >= 11500) {
-    bot.chat(`Can't go out — it's too late (timeOfDay ${t.timeOfDay}).`)
+    bot.chat(pickLine(TOO_LATE_LINES))
     return
   }
   const hostiles = hostilesNearby(16)
@@ -2624,7 +2675,7 @@ async function runGoOutsideOnce (activity) {
 
   // 5. Verify landing.
   const atOutside = verifyAtOrientation(OUTSIDE_ORIENTATION, 1.5, 1.2)
-  bot.chat(`Outside at ${posStr(bot.entity.position)}.`)
+  bot.chat('Outside now.')
   logEvent('go-outside', `arrived ${posStr(bot.entity.position)} onPad=${atOutside.ok}`)
 }
 
@@ -2729,7 +2780,7 @@ async function runGoInsideOnce () {
   if (!walk.reached) throw new Error(`didn't reach house_center (x=${walk.x})`)
 
   const atInside = verifyAtOrientation(HOUSE_CENTER, 1.5, 1.2)
-  bot.chat(`Inside at ${posStr(bot.entity.position)}.`)
+  bot.chat('Inside now.')
   logEvent('go-inside', `arrived ${posStr(bot.entity.position)} onPad=${atInside.ok}`)
 }
 
@@ -2861,7 +2912,7 @@ async function runGoInside () {
 async function runGoIntoPen ({ skipActivate = false, allowNight = false } = {}) {
   const t = bot.time || {}
   if (!allowNight && (!t.isDay || (t.timeOfDay ?? 0) >= 11500)) {
-    bot.chat(`Can't enter pen — too late in the day.`)
+    bot.chat(pickLine(TOO_LATE_LINES))
     return
   }
   if (insideHouse()) {
@@ -2870,6 +2921,8 @@ async function runGoIntoPen ({ skipActivate = false, allowNight = false } = {}) 
   const startDeaths = deathCount
   bot.chat('Entering the pen.')
   suppressLookAt(20000)
+  penTraversalBusy = true
+  try {
 
   // Strategy: pathfind to a "runway" tile NORTH of the plate, not the plate
   // itself (pathfinder lands offset, missing the plate's trigger zone).
@@ -2900,13 +2953,15 @@ async function runGoIntoPen ({ skipActivate = false, allowNight = false } = {}) 
   }
   logEvent('go-into-pen', `aligned at ${posStr(bot.entity.position)}, yaw south locked`)
 
-  // Open pen door only if it's closed — never toggle blindly (sheep escape risk).
+  // Ensure the pen door is open before walking through. Idempotent: only
+  // activates if closed, so it never toggles an already-open door shut. Every
+  // attempt re-ensures open — retries must NOT assume the door was left open,
+  // since failure cleanup closes it for sheep safety.
   const doorBlock = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
   if (!doorBlock) throw new Error('pen door block not loaded')
-  if (!skipActivate) {
-    await ensurePenDoorOpen()
-  }
-  logEvent('go-into-pen', `door ${skipActivate ? 'skip-activate' : 'ensured open'} (meta=${doorBlock.metadata})`)
+  const opened = await ensurePenDoorOpen()
+  logEvent('go-into-pen', `door open=${penDoorIsOpen()} (was meta=${doorBlock.metadata})`)
+  if (!opened) throw new Error('pen door would not open — not walking into it')
 
   const origGetBlock = bot.world.getBlock.bind(bot.world)
   bot.world.getBlock = (pos) => {
@@ -2936,8 +2991,11 @@ async function runGoIntoPen ({ skipActivate = false, allowNight = false } = {}) 
   }
 
   const atInside = verifyAtOrientation(PEN_INSIDE, 1.8, 1.2)
-  bot.chat(`In the pen at ${posStr(bot.entity.position)}.`)
+  bot.chat('In the pen now.')
   logEvent('go-into-pen', `arrived ${posStr(bot.entity.position)} onPad=${atInside.ok}`)
+  } finally {
+    penTraversalBusy = false
+  }
 }
 
 async function runEnterPen ({ allowNight = false } = {}) {
@@ -2971,12 +3029,17 @@ async function runGoOutOfPen ({ skipActivate = false } = {}) {
   const startDeaths = deathCount
   if (!skipActivate) bot.chat('Leaving the pen.')
   suppressLookAt(20000)
+  penTraversalBusy = true
+  try {
 
-  // 1. Pathfind to inside pad. The inside has no pressure plate (a plate
-  //    would let the sheep open the gate themselves), so the manual
-  //    activateBlock pattern is required for exit.
-  await pathTo(PEN_INSIDE, 0, 8000)
-  if (deathCount > startDeaths) throw new Error('died en route to pen-inside pad')
+  // 1. Pathfind to the DEEP interior runway (z=577), not the door-adjacent
+  //    PEN_INSIDE pad. The inside has no pressure plate (a plate would let the
+  //    sheep open the door themselves), so the door is opened via activateBlock
+  //    and crossed under momentum. Starting 3 blocks back lets the bot reach
+  //    walking speed before the door threshold — from a standstill at the door
+  //    it snags on the frame. Mirrors the entry runway.
+  await pathTo(PEN_INSIDE_RUNWAY, 0, 8000)
+  if (deathCount > startDeaths) throw new Error('died en route to pen-inside runway')
 
   // Always align x to gate center (-277.5).
   const p1 = bot.entity?.position
@@ -2997,13 +3060,15 @@ async function runGoOutOfPen ({ skipActivate = false } = {}) {
   }
   logEvent('go-out-of-pen', `yaw locked north at ${yawResult.yaw.toFixed(3)} rad`)
 
-  // 3. Open pen door only if closed — never toggle blindly (sheep escape risk).
+  // 3. Ensure the pen door is open before walking through. Idempotent: only
+  //    activates if currently closed, so it never toggles an already-open door
+  //    shut. Every attempt re-ensures open — retries must NOT assume the door
+  //    was left open, since failure cleanup closes it for sheep safety.
   const doorBlock = bot.blockAt(new Vec3(PEN_GATE.x, PEN_GATE.y, PEN_GATE.z))
   if (!doorBlock) throw new Error('pen door block not loaded')
-  if (!skipActivate) {
-    await ensurePenDoorOpen()
-  }
-  logEvent('go-out-of-pen', `door ${skipActivate ? 'skip-activate' : 'ensured open'} (meta=${doorBlock.metadata})`)
+  const opened = await ensurePenDoorOpen()
+  logEvent('go-out-of-pen', `door open=${penDoorIsOpen()} (was meta=${doorBlock.metadata})`)
+  if (!opened) throw new Error('pen door would not open — not walking into it')
 
   const origGetBlock = bot.world.getBlock.bind(bot.world)
   bot.world.getBlock = (pos) => {
@@ -3028,8 +3093,11 @@ async function runGoOutOfPen ({ skipActivate = false } = {}) {
 
   // 7. Verify.
   const atOutside = verifyAtOrientation(PEN_OUTSIDE, 1.5, 1.2)
-  bot.chat(`Out of pen at ${posStr(bot.entity.position)}.`)
+  bot.chat('Nailed it!')
   logEvent('go-out-of-pen', `arrived ${posStr(bot.entity.position)} onPad=${atOutside.ok}`)
+  } finally {
+    penTraversalBusy = false
+  }
 }
 
 async function runLeavePen () {
@@ -4921,6 +4989,23 @@ const GO_OUTSIDE_LINES = [
   { text: "Off to tend {activity}. My joy is indescribable. Mainly because it doesn't exist.", weight: (s) => s.snark + s.patience + 50 },
   { text: "Life. Loathe it or ignore it, you can't like it. Especially the {activity} part.", weight: (s) => s.snark + s.chaos + 50 },
 ]
+
+// Shown when it's too late in the day to head out / enter the pen. Never reveal
+// the raw timeOfDay — just gesture at "it's getting late."
+const TOO_LATE_LINES = [
+  'Hmm, getting late.',
+  'It\'s getting late.',
+  'Monsters come out at night.',
+  "I'm getting kind of sleepy.",
+  'Wind-down time.',
+  'Time to brush my teeth.',
+  'Bit late to be heading out.',
+  'The sun\'s nearly down.',
+  'Past my bedtime, really.',
+  'Maybe in the morning.',
+  'Not safe out there after dark.',
+  'I\'d rather not meet a creeper right now.',
+]
 const COME_INSIDE_LINES = [
   { text: 'Heading inside.',                               weight: (s) => s.focus },
   { text: 'Coming home. Statistically safer.',             weight: (s) => s.focus + s.snark },
@@ -5543,6 +5628,77 @@ const FARMING_MUSING_TOPICS = [
     ]
   },
   {
+    id: 'farm_rain_on_wheat',
+    requiresWheatField: true,
+    starter: "Smell that? Rain's coming. The wheat always knows before we do.",
+    branches: [
+      { response: "It leans a little. Like it's bracing.",
+        followups: [
+          { response: "Or reaching. Hard to tell with wheat.",
+            closers: ["Reaching, I've decided. It's nicer.", "Bracing or reaching — either way it stays rooted. There's a lesson in that."] }
+        ] },
+      { response: "I like the rain. Washes the dust off the leaves.",
+        followups: [
+          { response: "And off us. I creak less after a good rain.",
+            closers: ["Don't tell maintenance I said that.", "A clean robot in a wet field. Living the dream."] }
+        ] },
+      { response: "Rain means we go in early. I don't mind the excuse.",
+        followups: [
+          { response: "Watching it come down from the doorway is its own kind of farming.",
+            closers: ["Supervisory farming.", "Someone has to keep an eye on the weather. Might as well be us."] }
+        ] }
+    ]
+  },
+  {
+    id: 'farm_one_tall_stalk',
+    requiresWheatField: true,
+    starter: "There's always one stalk taller than the rest. See it?",
+    branches: [
+      { response: "Front and center. Showing off.",
+        followups: [
+          { response: "Good for it. Someone should reach higher out here.",
+            closers: ["We'll harvest it last. Out of respect.", "Tall poppy, tall wheat. We don't cut anyone down early."] }
+        ] },
+      { response: "I root for that one every season. Different stalk, same hope.",
+        followups: [
+          { response: "You name them, don't you.",
+            closers: ["Only the tall ones. Names are earned.", "I called this one Greg. Greg's having a great week."] }
+        ] }
+    ]
+  },
+  {
+    id: 'farm_footprints',
+    starter: "We've walked this field so many times there should be a path worn in by now.",
+    branches: [
+      { response: "The grass keeps growing back over it. Like it forgets us.",
+        followups: [
+          { response: "Or forgives us. For all the stepping.",
+            closers: ["I prefer forgives.", "Either way it doesn't hold a grudge. Unlike the pathfinder."] }
+        ] },
+      { response: "Maybe the path is in us instead. We could walk it with our eyes off.",
+        followups: [
+          { response: "Please don't. You walked into the pond last time.",
+            closers: ["That was research.", "The pond and I have an understanding now."] }
+        ] }
+    ]
+  },
+  {
+    id: 'farm_seed_faith',
+    starter: "Funny thing, planting. You bury something and just... trust it comes back.",
+    branches: [
+      { response: "Every single time it does. You'd think I'd stop being surprised.",
+        followups: [
+          { response: "Don't. The surprise is the best part.",
+            closers: ["A robot that can still be surprised. Not bad.", "I'll keep the surprise. It's cheaper than upgrades."] }
+        ] },
+      { response: "It's the most patient thing we do. Bury it, wait, believe.",
+        followups: [
+          { response: "Patience isn't in my default config. The field taught me.",
+            closers: ["Good teacher. Never raises its voice.", "Tuition paid in footsteps."] }
+        ] }
+    ]
+  },
+  {
     id: 'farm_best_crop',
     starter: "Wheat or potatoes. Which is the better crop? Be honest.",
     branches: [
@@ -5615,7 +5771,7 @@ const FARMING_MUSING_TOPICS = [
             closers: ["Hot tub etiquette. Hands stay in the water.", "I'll try again next harvest."] }
         ] }
     ]
-  },,
+  },
   {
     id: 'yard_squirrel_protocol',
     tags: ['roz'],
