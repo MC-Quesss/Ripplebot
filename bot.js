@@ -5102,12 +5102,12 @@ const RETRY_LINES = [
 // away (clever, owns it); bots that AREN'T wait ~5s (so the real one speaks
 // first) then disavow, nose-goes style.
 const FIRE_KEEPER_YES_LINES = [
-  "That'd be me. The wheat doesn't burn itself.",
-  'Guilty. The hopper and I have an understanding.',
+  'That\'d be me.',
+  'As you wish.',
   'Me. Tending the flame, as it were.',
-  'This unit. Fire\'s warm, wheat\'s flowing, all is well.',
-  'Me — you can relax, I\'ve got the field.',
-  'Right here. Keeper of the eternal harvest.',
+  'I am.',
+  'I have it under control.',
+  'I\'m on it.',
   'Me. It\'s a calling, really.',
 ]
 const FIRE_KEEPER_NO_LINES = [
