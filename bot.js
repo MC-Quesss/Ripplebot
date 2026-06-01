@@ -176,6 +176,20 @@ bot.once('spawn', () => {
   const doorIds = Object.values(mcData.blocksByName).filter(b => /door/.test(b.name) && !/iron/.test(b.name)).map(b => b.id)
   doorIds.forEach(id => mvts.openable.add(id))
   bot.pathfinder.setMovements(mvts)
+
+  // Permanently zero out collision for the modded block at (-271, 65, 572) —
+  // it sits in the door corridor and has unknown geometry that blocks both
+  // pathfinder route planning and physics-based walking.
+  const _origGetBlock = bot.world.getBlock.bind(bot.world)
+  bot.world.getBlock = (pos) => {
+    const b = _origGetBlock(pos)
+    if (b && Math.floor(pos.x) === -271 && Math.floor(pos.z) === 572 &&
+        pos.y >= 65 && pos.y <= 66) {
+      b.shapes = []
+    }
+    return b
+  }
+
   logEvent('pathfinder', 'ready')
   // Auto-eat config: trigger at food <= 14, prefer saturation-richest food
   if (bot.autoEat) {
@@ -2678,13 +2692,15 @@ async function runGoOutsideOnce (activity) {
   logEvent('go-outside', `yaw locked west at ${yawResult.yaw.toFixed(3)} rad`)
   sendEmote('cheer')
 
-  // 4. Monkey-patch door collision out, then walk through.
+  // 4. Monkey-patch collision out for the door AND the modded block at (-271,65,572)
+  //    that sits in the corridor between house_center and the door.
   const origGetBlockExit = bot.world.getBlock.bind(bot.world)
   bot.world.getBlock = (pos) => {
     const b = origGetBlockExit(pos)
-    if (b && Math.floor(pos.x) === HOUSE_DOOR.x && Math.floor(pos.z) === HOUSE_DOOR.z &&
+    if (b && Math.floor(pos.z) === HOUSE_DOOR.z &&
         pos.y >= HOUSE_DOOR.y && pos.y <= HOUSE_DOOR.y + 1) {
-      b.shapes = []
+      const bx = Math.floor(pos.x)
+      if (bx >= HOUSE_DOOR.x && bx <= -271) b.shapes = []
     }
     return b
   }
@@ -2791,14 +2807,14 @@ async function runGoInsideOnce () {
     logEvent('go-inside', `activateBlock fail: ${e.message} — pushing anyway`)
   }
 
-  // 5. Monkey-patch getBlock to zero out the door's collision shapes so
-  //    physics doesn't block forward movement through the open door.
+  // 5. Monkey-patch collision out for the door corridor (door + modded block).
   const origGetBlock = bot.world.getBlock.bind(bot.world)
   bot.world.getBlock = (pos) => {
     const b = origGetBlock(pos)
-    if (b && Math.floor(pos.x) === HOUSE_DOOR.x && Math.floor(pos.z) === HOUSE_DOOR.z &&
+    if (b && Math.floor(pos.z) === HOUSE_DOOR.z &&
         pos.y >= HOUSE_DOOR.y && pos.y <= HOUSE_DOOR.y + 1) {
-      b.shapes = []
+      const bx = Math.floor(pos.x)
+      if (bx >= HOUSE_DOOR.x && bx <= -271) b.shapes = []
     }
     return b
   }

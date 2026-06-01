@@ -19,12 +19,8 @@ Primary food item. Crafted from [[wheat]] (3 horizontal in a crafting grid). Cur
 ## Recipe
 - [[../recipes/bread]]
 
-## Anomaly
-The previous note set (`places.md`) recorded slot 44 as a hamburger (an `unknown`-named modded item) used for emergency healing. Today's inventory shows slot 44 as bread ×64. Either:
-1. The hamburger was eaten / replaced.
-2. The slot wasn't fixed and bread happened to land there.
-
-Treat slot numbers as fluid. Always re-read inventory before relying on a slot.
+## Note on slot numbers
+Slot numbers are fluid — always re-read inventory before relying on a slot.
 
 ## Related
 - [[wheat]]

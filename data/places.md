@@ -131,7 +131,7 @@ To disable auto-sleep (e.g. during practice or mining expeditions that should ru
 
 - **Never go outdoors at night.** `time.isDay` must be `true` and `timeOfDay < 11500`. Refuse even brief door practice if those aren't met.
 - **Check `nearby_entities radius=16` for hostiles before any outdoor pathfind.** Hostile names: zombie, skeleton, spider, creeper, witch, enderman, slime, husk, drowned, phantom. If any are within 5 blocks, warn the user — bot has no combat and will die.
-- **Monitor HP every ~10 actions outdoors.** Drop below 15 → abort, eat a hamburger (slot 44, an `unknown`-named item), or pathfind home.
+- **Monitor HP every ~10 actions outdoors.** Drop below 15 → abort, eat bread or baked potatoes, or pathfind home. The bot can craft bread from wheat and bake potatoes autonomously via the food-safety system.
 - **Eat when food < 12.** Below that, hunger regen stops and the bot starts taking damage.
 
 ### Movement
@@ -150,5 +150,5 @@ To disable auto-sleep (e.g. during practice or mining expeditions that should ru
 ### Interaction
 
 - **The kitchen chest ((-267, 67, 569)) is a double chest (54 container slots).** `open_container` + `deposit` commands already filter out player inventory (last 36 slots of the window).
-- **Modded items show as `unknown`.** Use `equip_slot` with a slot number instead of `equip` with a name when the user points at a specific item. Slot 44 is the hamburger stack.
+- **Modded items show as `unknown`.** Use `equip_slot` with a slot number instead of `equip` with a name when the user points at a specific item.
 - **`place_block` / `activate_block` / `dig` all require being within ~4 blocks of the target.** Re-pathfind before each batch of 10-ish operations.

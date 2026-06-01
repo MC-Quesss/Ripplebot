@@ -82,7 +82,7 @@ A `runShearWalk()` could:
 4. Wait 1-2s at each spot for drift.
 5. Optionally repeat the walk eastward to catch sheep that moved into range during the west pass.
 
-Not yet wired — current implementation is via Python driver script (`/tmp/shear_walk.py`).
+**Wired into bot.js** as `runShearSheep()` with chat trigger and pen door traversal. The bot enters the pen via the door at (-278, 64, 574), shears from inside, and exits. See [[pen-door-traversal]].
 
 ## Related
 - [[../places/south-fenced-area]] — the pen

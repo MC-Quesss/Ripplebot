@@ -7,20 +7,10 @@ confirmed: true
 
 # Wheat Seeds
 
-Replanting fuel. Drops from broken wheat crops. Place on tilled [[farmland]] with `place_block face=top`.
+Drops from wheat harvests. The right-click harvest auto-replants without consuming inventory seeds, so seeds are pure surplus — the bot keeps 16 on hand and deposits the rest into the [[../chests/house-kitchen-chest|kitchen chest]] (see [[../procedures/deposit-seeds]]).
 
-## Stock (day 41325)
-- Slot 37: 20
-- Slot 39: 12
-- **Total:** 32 — enough for the 54-square field with margin if drops are decent.
-
-## Equip rule
-
-Pathfinding sometimes drops the seed equip — re-equip every ~10 placements during a replant batch:
-
-```
-{"action":"equip","args":{"name":"wheat_seeds","destination":"hand"}}
-```
+## Keep-on-hand
+- **16** (per [[../procedures/deposit-seeds]] policy, set 2026-05-30)
 
 ## Related
 - [[wheat]]

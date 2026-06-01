@@ -69,21 +69,14 @@ This is mod behavior, not vanilla 1.12.2 — vanilla wheat doesn't respond to ri
 - **Drops DO sometimes hit the ground.** The earlier "no ground drop" observation from the single-tile SE corner test was a special case — the bot was standing right on top of it. In a moving harvest run, the bot activates a tile faster than its pickup radius covers each drop, and some land on dirt. **A post-harvest sweep is still required** to reconcile the missing drops.
 - **No rate limit observed.** 27 activations across the south half, ~1.2s per tile (mostly pathfind time, not activation). No server rejects, no transaction errors.
 
-## Next questions to answer
+## Resolved questions
 
-- Does it work on **potatoes** at the potato patch? (If yes, [[harvest-potatoes]] gets the same upgrade.)
+- **Potatoes:** confirmed working — see [[harvest-potatoes-right-click]].
+- **Range=1 stand-spot:** implemented; the harvest pathfinds range=1 before each activation, which keeps most drops in pickup radius. A full-coverage sweep still runs after.
+
+## Open questions
+
 - Does it work on **carrots**? (Field unknown — we haven't seen carrots yet.)
-- Can the bot be moved closer to each tile **before** activating to eliminate the ground-drop gap? Standing within 1 block of the target seems to put drops directly into inventory; standing 2-3 blocks away lets some drop on dirt.
-
-## Implementation path
-
-To use this in a procedure:
-
-1. Iterate target tiles (filter to mature: `metadata == 7` for wheat).
-2. For each, ensure the block is within reach (~4 blocks of the bot).
-3. `activate_block x y z` — already exposed via `bot-ctl`, no `bot.js` change needed.
-4. Read inventory delta to confirm. (No `find_blocks` re-check needed since the block stays as `wheat`.)
-5. If the bot needs to move to reach the next tile, walk; the [[nautilus-sweep-pattern]] is the proposed traversal.
 
 ## Post-harvest disposition (updated 2026-05-30)
 

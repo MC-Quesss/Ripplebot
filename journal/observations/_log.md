@@ -7,6 +7,26 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-06-01 — Bugfix: modded block collision in door corridor
+
+**Symptom:** bot getting stuck in the SW corner of the house. Pathfinding to house_center from inside routed to z=575+ (south wall) then outside. `walk_until` during exit snagged repeatedly at x=-267.50 with strafe-right pulses that never cleared.
+
+**Root cause:** a modded block (type 2959, empty name) at **(-271, 65, 572)** — one tile east of the door in the exit corridor. Mineflayer treated it as solid (unknown geometry). This caused:
+1. `walk_until` hitting the block's collision box when walking west from house_center
+2. Pathfinder routing *around* the block via the south wall, ending up outside the house entirely
+
+**Fix (bot.js):**
+- Added a permanent `getBlock` override at spawn that zeros out shapes for the block at (-271, 65, 572). This fixes both pathfinder route planning and physics-based walking.
+- Widened the door-traversal monkey-patches (exit + entry) to cover x=-272 through x=-271 (door + modded block), not just the door alone.
+
+**Verified:** bot walks clean through the corridor in both directions. Pathfinding to house_center from inside lands correctly at (-267.5, 65, 572.5). No snag at x=-267.5.
+
+**Also this session:**
+- Updated `places.md`: removed stale hamburger/slot-44 references, replaced with bread + baked potatoes for food safety.
+- Journal audit: cleaned up stale notes (bread anomaly section, wheat-seeds stock data, enter-house corridor geometry, shear-sheep wiring status, right-click-harvest resolved questions).
+
+Cross-links: [[../procedures/enter-house]], [[../procedures/exit-house]], [[../places/house-center]]
+
 ## 2026-05-30 — Bugfix: pen door exit (bot stuck leaving the pen)
 
 **Symptom (user):** bot increasingly stuck getting *out* of the pen; lots of sheep around.
