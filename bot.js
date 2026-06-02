@@ -5858,10 +5858,10 @@ const FARMING_MUSING_TOPICS = [
           { response: "I've been waiting all season to say that.",
             closers: ["Worth the wait. Barely.", "The wheat groaned. I heard it."] }
         ] },
-      { response: "That's the worst thing anyone has ever said in this field.",
+      { response: "Must you say that _every_ time you check on the wheat?",
         followups: [
-          { response: "The field disagrees. It's laughing.",
-            closers: ["That's the wind.", "Wind, laughter — same energy out here."] }
+          { response: "What can I say? I'm hilarious.",
+            closers: ["Bet.", "I'm glad you think so."] }
         ] },
       { response: "Absolutely. And don't let anyone tell you otherwise.",
         followups: [
