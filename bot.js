@@ -2148,6 +2148,33 @@ async function sustainWait (ms) {
   for (let i = 0; i < steps && sustainState.active; i++) await sleep(1000)
 }
 
+// "Safe to act" gate for the sustain loop. Daytime, no hostiles, HP reasonable.
+function sustainSafe () {
+  if (isBedtime()) return false
+  if (hostilesNearby(16).length) return false
+  if (bot.health != null && bot.health < 10) return false
+  return true
+}
+
+// Wait until safe to resume. Polls every 5s. Returns false if loop was stopped.
+async function sustainWaitUntilSafe (reason) {
+  if (sustainSafe()) return true
+  logEvent('sustain', `pausing — ${reason}`)
+  // Get inside first
+  try { if (!insideHouse()) await runGoInside() } catch (_) {}
+  let logged = false
+  while (sustainState.active && !sustainSafe()) {
+    if (!logged) {
+      bot.chat('Waiting inside until it is safe to resume.')
+      logged = true
+    }
+    await sustainWait(5000)
+  }
+  if (!sustainState.active) return false
+  logEvent('sustain', 'safe again — resuming')
+  return true
+}
+
 async function runSustainFarm (user) {
   if (sustainState.active) { bot.chat('Already keeping the fire going.'); return }
   sustainState.active = true
@@ -2159,39 +2186,71 @@ async function runSustainFarm (user) {
   let polls = 0
   try {
     while (sustainState.active) {
+      // Gate: wait for safe conditions (daytime, no hostiles, HP ok)
+      if (!sustainSafe()) {
+        if (!(await sustainWaitUntilSafe('unsafe conditions'))) break
+      }
+
       const scan = scanKnownWheatFields()
       if (scan.maturePct >= 85 && !foodSafetyBusy) {
         sustainState.cycles++
         logEvent('sustain', `field ready (mature=${scan.mature}/${scan.expected}, ${scan.maturePct.toFixed(0)}%) — cycle ${sustainState.cycles}`)
 
-        // 1. Harvest — keep seeds on hand (no auto-deposit)
+        // Run the full cycle in a recoverable try — HP low, path failures,
+        // door snags, etc. skip this cycle and retry next poll. Only AbortError
+        // (explicit user stop) kills the loop.
         try {
+          // 1. Harvest — keep seeds on hand (no auto-deposit)
           await runHarvestRightClick({ half: 'all', keepSeeds: true, skipDeposit: true })
-        } catch (e) {
-          if (e.name === 'AbortError') break
-          throw e
-        }
-        if (!sustainState.active) break
+          if (!sustainState.active) break
 
-        // 2. Deposit wheat to hopper (keep 7 for engine clearing)
-        if (!insideHouse()) await runGoInside()
-        await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-        const wheatResult = await depositQuickMove('wheat', HOPPER, { keep: SUSTAIN_KEEP_WHEAT })
-        logEvent('sustain', `wheat deposit: deposited=${wheatResult.deposited} remaining=${wheatResult.remaining}`)
+          // 1b. Eat if hungry — auto-eat can't fire during window ops, so give it
+          // a window here before the hopper + bench sequence locks us in.
+          if (bot.food != null && bot.food <= 14) {
+            logEvent('sustain', `hungry (food=${bot.food}) — eating before deposit`)
+            try { await bot.autoEat.eat() } catch (_) {}
+            await sleep(500)
+          }
 
-        // 3. Craft plant balls from surplus seeds
-        const craftResult = await craftPlantBalls({ keepSeeds: SUSTAIN_KEEP_SEEDS })
-        logEvent('sustain', `plant balls crafted: ${craftResult.crafted}`)
-
-        // 4. Deposit plant balls to hopper
-        if (craftResult.crafted > 0) {
+          // 2. Deposit wheat to hopper (keep 7 for engine clearing)
+          if (!insideHouse()) await runGoInside()
           await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-          const ballResult = await depositQuickMove('unknown', HOPPER, { keep: 0 })
-          logEvent('sustain', `plant ball deposit: deposited=${ballResult.deposited} remaining=${ballResult.remaining}`)
-        }
+          const wheatResult = await depositQuickMove('wheat', HOPPER, { keep: SUSTAIN_KEEP_WHEAT })
+          logEvent('sustain', `wheat deposit: deposited=${wheatResult.deposited} remaining=${wheatResult.remaining}`)
 
-        if (!sustainState.active) break
-        bot.chat(pickLine(SUSTAIN_CYCLE_DONE_LINES))
+          // 3. Craft plant balls from surplus seeds
+          const craftResult = await craftPlantBalls({ keepSeeds: SUSTAIN_KEEP_SEEDS })
+          logEvent('sustain', `plant balls crafted: ${craftResult.crafted}`)
+
+          // 4. Deposit plant balls to hopper
+          if (craftResult.crafted > 0) {
+            await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+            const ballResult = await depositQuickMove('unknown', HOPPER, { keep: 0 })
+            logEvent('sustain', `plant ball deposit: deposited=${ballResult.deposited} remaining=${ballResult.remaining}`)
+          }
+
+          if (!sustainState.active) break
+
+          // 5. Eat if hungry — the hopper + bench windows blocked auto-eat for
+          // the entire deposit/craft sequence. Top off now so the bot stays fed
+          // through the regrowth wait.
+          if (bot.food != null && bot.food <= 14) {
+            logEvent('sustain', `hungry after cycle (food=${bot.food}) — eating`)
+            try { await bot.autoEat.eat() } catch (_) {}
+            await sleep(500)
+          }
+
+          bot.chat(pickLine(SUSTAIN_CYCLE_DONE_LINES))
+        } catch (e) {
+          if (e.name === 'AbortError' && !sustainState.active) break // user said stop
+          logEvent('sustain', `cycle ${sustainState.cycles} failed (recoverable): ${e.message}`)
+          // Return home if possible, then wait and retry next poll
+          try { if (!insideHouse()) await runGoInside() } catch (_) {}
+        }
+        // Clear food-safety cooldown so tryFoodSafety can run during the poll wait.
+        // The sustain cycle opens hopper + bench windows which keep resetting the 30s
+        // cooldown — without this, food safety is blocked for the entire sustain run.
+        foodSafetyWindowCooldownUntil = 0
       } else if (++polls % 20 === 0) {
         logEvent('sustain', `waiting (mature=${scan.mature}/${scan.expected} loaded=${scan.loaded})`)
       }
@@ -5199,6 +5258,32 @@ bot.on('entityHurt', (entity) => {
     followTarget = null; followEntity = null; followChainPos = 0
   }
 })
+
+// Hostile watchdog — proactive retreat. Every 2.5s, if the bot is outside and
+// hostiles are within 16 blocks, abort the current task and rush home. The
+// sustain loop's recoverable catch handles the abort gracefully and retries
+// once the field is safe again.
+let hostileRetreatBusy = false
+setInterval(async () => {
+  if (hostileRetreatBusy) return
+  if (insideHouse() || inPen()) return
+  const hostiles = hostilesNearby(16)
+  if (!hostiles.length) return
+  hostileRetreatBusy = true
+  const names = hostiles.map(h => h.name).join(', ')
+  logEvent('hostile-retreat', `detected ${names} — aborting task and rushing inside`)
+  bot.chat(`Hostiles (${names})! Heading inside!`)
+  // Abort current task so harvest/sustain cycle errors out gracefully
+  abortGen++
+  bot.pathfinder.setGoal(null)
+  followTarget = null; followEntity = null; followChainPos = 0
+  try {
+    await runGoInside()
+  } catch (e) {
+    logEvent('hostile-retreat', `go-inside failed: ${e.message}`)
+  }
+  hostileRetreatBusy = false
+}, 2500)
 
 // Player join/leave — proactive hi/bye.  Bye messages are Ripple-flavored
 // and weighted by her current stats (snark 67, charm 72, chaos 42).
