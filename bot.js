@@ -449,7 +449,7 @@ function botPersonaKey () {
   const name = String(NICKNAME || bot.username || process.env.MC_USERNAME || '').toLowerCase()
   if (name.includes('muse')) return 'protocol'   // C-3PO: anxious, fussy, formal
   if (name.includes('roz')) return 'roz'          // Wild Robot: gentle, observant
-  if (name.includes('rain')) return 'unikitty'    // Lego Movie: bubbly, hyper-positive
+  if (name.includes('private') || name.includes('rain')) return 'unikitty' // Private the Penguin: sweet, eager, brave
   return 'default'
 }
 
