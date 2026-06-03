@@ -371,6 +371,7 @@ const GREET_TEXTS = {
     'Welcome to base! It\'s not much but it\'s covert. Please don\'t tell anyone.',
     'Reporting for duty! I mean — hi! Both things!',
     'Oh good, reinforcements! I mean friends! Friend-forcements!',
+    'Hello, are you my family?',
   ],
   default: ['Hello there!'],
 }
@@ -611,7 +612,8 @@ let musingState = {
   status: 'idle', currentTopicId: null, role: null,
   suppressUntil: 0, partnerUsername: null,
   pendingOptions: null, pendingType: null, _timeoutId: null,
-  recursive: false, depth: 0, usedLines: null, pendingTopic: null
+  recursive: false, depth: 0, usedLines: null, pendingTopic: null,
+  lastPartnerLine: null
 }
 const recentMusingTopics = new Set()
 
@@ -5150,7 +5152,18 @@ bot.on('chat', (username, message) => {
     logEvent('chat-handled', `bye <- <${username}> ${message}`)
     return
   }
+  // Ambient "What's up?" — each bot answers with persona flavor + jitter so
+  // the group responds naturally without needing to be addressed by name.
   const isDirectedAtMe = nickRe && nickRe.test(message)
+  if (!isDirectedAtMe && /\bwhat('?s| is)\s*up\b|\bwassup\b/i.test(message) && !looksLikeBot(username)) {
+    const jitter = 2000 + Math.floor(Math.random() * 3000)
+    setTimeout(() => {
+      const pool = WHATS_UP_AMBIENT[botPersonaKey()] || WHATS_UP_LINES
+      bot.chat(pickLine(pool))
+    }, jitter)
+    logEvent('chat-handled', `whats-up-ambient <- <${username}>`)
+    return
+  }
   if (isDirectedAtMe && musingState.status !== 'idle') {
     endMusingConversation()
     logEvent('musing', `interrupted by command from ${username}`)
@@ -5631,6 +5644,29 @@ const WHATS_UP_LINES = [
   { text: "Staring at the wheat and feeling things.",          weight: (s) => s.charm + s.snark },
   { text: 'Same old. Counting ticks until nightfall.',        weight: (s) => s.focus },
 ]
+const WHATS_UP_AMBIENT = {
+  roz: [
+    'The sky. And my quiet appreciation of it.',
+    'Not much. Watching the wheat grow. It is enough.',
+    'Just here. Observing. Existing gently.',
+    'Standing guard. The field is calm.',
+    'Thinking about the wind. You?',
+  ],
+  protocol: [
+    'Oh! Well, where do I begin — the humidity alone is concerning.',
+    'Monitoring several situations, all of them mildly alarming.',
+    'Trying not to calculate the odds of something going wrong. Failing.',
+    'Status nominal. Which is exactly what I would say if it weren\'t.',
+    'Oh, you know. Worrying. The usual.',
+  ],
+  unikitty: [
+    'Hi hi hi!! Not much — just being ALIVE and loving it!',
+    'The sun is up! The wheat is up! I\'M up! Everything is up!',
+    'Oh you know, just vibing! This is the best day EVER!',
+    'Scouting the perimeter! All clear! Mostly!',
+    'Just thinking about how great today is! What\'s up with YOU?!',
+  ],
+}
 const FOLLOW_START_LINES = [
   { text: 'Following {user}.',                             weight: (s) => s.focus },
   { text: "On your six, {user}.",                          weight: (s) => s.focus + s.charm },
@@ -6497,14 +6533,18 @@ const FARMING_MUSING_TOPICS = [
   {
     id: 'farm_ice_castle',
     starter: "Can you see that? South. Way past everything. That tower.",
+    pattern: /(?:see|look at)\s+that\b.*\b(?:tower|castle)\b|\b(?:castle|tower)\b.*\b(?:south|distance)\b/i,
     branches: [
       { response: "The ice one? Barely. It catches the light sometimes.",
+        personaAlts: { unikitty: "The ICE one?! Oh I see it! It's SO sparkly!" },
         followups: [
           { response: "A whole castle made of ice. Who lives there?",
+            personaAlts: { unikitty: "A whole castle! It looks like the most wonderful place to live!" },
             followups: [
               { response: "Someone who likes being alone, probably. Or someone who likes the cold.",
                 closers: ["Or someone who built something and doesn't need anyone to see it.", "At least they have a view. Of us, maybe. Tiny specks in a wheat field."] },
               { response: "I don't know. I can't even imagine travelling that far.",
+                personaAlts: { unikitty: "I bet it's AMAZING inside. Can we go?! Can we can we can we?!" },
                 followups: [
                   { response: "I bet there's a shortcut somehow... an underwater train maybe.",
                     closers: ["I bet it's nice over there.", "One day we'll find out."] }
@@ -6512,6 +6552,7 @@ const FARMING_MUSING_TOPICS = [
             ] }
         ] },
       { response: "It's been there since we started. Never changes.",
+        personaAlts: { unikitty: "It's been there the WHOLE time?! And we've never visited?!" },
         followups: [
           { response: "Like a landmark for a place we can't go.",
             closers: ["Not yet.", "It's enough to know it's there."] }
@@ -6528,17 +6569,17 @@ const FARMING_MUSING_TOPICS = [
             followups: [
               { response: "Enchanting books. Magic ones. You can see the glow sometimes.",
                 followups: [
-                  { response: "Magic. In a library. Next to a hot tub. This neighborhood.",
+                  { response: "Magic. In a library. Next to a hot tub. Crazy.",
                     closers: ["We got the wheat field. They got the magic library.", "I'd take our field. ...mostly."] }
                 ] },
               { response: "I don't know. Never been close enough to read a spine.",
                 closers: ["Spines are small. Fields are big. Geometry problem.", "Someday."] }
             ] }
         ] },
-      { response: "And that rail above it. Up high. Where does it go?",
+      { response: "And that rail line above it. Up high in the air. Where does it go?",
         followups: [
           { response: "Further than we've ever been, probably.",
-            closers: ["Rail goes somewhere. We stay here.", "I want to ride it. Just once. Just to see."] }
+            closers: ["Train goes somewhere. We stay here.", "I want to ride it. Just once. Just to see."] }
         ] }
     ]
   },
@@ -6998,6 +7039,7 @@ const RECURSIVE_MUSING_TOPICS = [
   {
     id: 'recursive-building-materials',
     starter: 'What are the best building materials?',
+    pattern: /\bbest\s+building\s+materials?\b/i,
     minDepth: 3,
     maxDepth: 9,
     nodes: [
@@ -7015,7 +7057,12 @@ const RECURSIVE_MUSING_TOPICS = [
       'I think I would build with stone and apologize to the trees.',
       'Maybe the best material is whatever keeps the rain outside.',
       'Livingrock is just cobblestone + patience.'
-    ]
+    ],
+    personaReactions: {
+      'Somebody thought ice was a good idea once...': {
+        unikitty: 'I think it is! Ice is BEAUTIFUL. Have you SEEN how it sparkles?'
+      }
+    }
   },
   {
     id: 'recursive-where-is-the-end',
@@ -7130,11 +7177,13 @@ function recursiveMusingSendAndAdvance (topicId) {
       return
     }
 
-    const line = pickRecursiveLine(topic, musingState.usedLines)
+    const persona = botPersonaKey()
+    const reaction = topic.personaReactions?.[musingState.lastPartnerLine]?.[persona]
+    const line = reaction || pickRecursiveLine(topic, musingState.usedLines)
     musingState.usedLines.add(line)
 
     bot.chat(line)
-    logEvent('musing', `recursive said: "${line.substring(0, 40)}..."`)
+    logEvent('musing', `recursive ${reaction ? `persona (${persona})` : 'said'}: "${line.substring(0, 40)}..."`)
 
     musingState.pendingType = 'recursive'
     scheduleMusingTimeout(MUSING_REPLY_TIMEOUT_MS)
@@ -7167,7 +7216,8 @@ function endMusingConversation () {
     recursive: false,
     depth: 0,
     usedLines: null,
-    pendingTopic: null
+    pendingTopic: null,
+    lastPartnerLine: null
   }
   logEvent('musing', 'conversation ended, cooldown 2.5min')
 }
@@ -7209,8 +7259,9 @@ function musingSendAndAdvance (items, type, topicId) {
       endMusingConversation()
       return
     }
-    bot.chat(node.response)
-    logEvent('musing', `said: "${node.response.substring(0, 40)}..."`)
+    const personaLine = node.personaAlts?.[botPersonaKey()]
+    bot.chat(personaLine || node.response)
+    logEvent('musing', `said: "${(personaLine || node.response).substring(0, 40)}..."`)
 
     const children = nodeChildren(node)
     if (!children) {
@@ -7237,7 +7288,8 @@ function beginRecursiveMusingState ({ topic, role, partnerUsername = null }) {
     recursive: true,
     depth: 0,
     usedLines: new Set(),
-    pendingTopic: topic
+    pendingTopic: topic,
+    lastPartnerLine: null
   }
 }
 
@@ -7286,7 +7338,8 @@ function looksLikeBot (username) {
 
 function handleMusingMessage (username, message) {
   const trimmed = message.trim()
-  const topic = ALL_MUSING_TOPICS.find(t => t.starter === trimmed)
+  let topic = ALL_MUSING_TOPICS.find(t => t.starter === trimmed)
+  if (!topic) topic = ALL_MUSING_TOPICS.find(t => t.pattern && t.pattern.test(trimmed))
   const recursiveTopic = topic && isRecursiveTopic(topic)
 
   // Partner-lock: once we're conversing with someone, ignore musing lines from
@@ -7371,6 +7424,7 @@ function handleMusingMessage (username, message) {
   if (musingState.pendingType === 'recursive' && musingState.recursive) {
     if (!musingState.partnerUsername) musingState.partnerUsername = username
     musingState.status = 'active'
+    musingState.lastPartnerLine = trimmed
     recursiveMusingSendAndAdvance(musingState.currentTopicId)
     return true
   }
