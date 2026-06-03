@@ -2121,7 +2121,7 @@ async function craftPlantBalls ({ keepSeeds = 16 } = {}) {
 // told to "chill" / "stand down" / "stop". The harvest is the existing
 // one-at-a-time, bedtime-aware task; this loop is a thin supervisor that holds
 // NO task between cycles, so the bot stays responsive while it waits.
-const SUSTAIN_POLL_MS = 15000
+const SUSTAIN_POLL_MS = 5000
 const SUSTAIN_KEEP_WHEAT = 7
 const SUSTAIN_KEEP_SEEDS = 16
 const sustainState = { active: false, cycles: 0, startedBy: null }
@@ -2186,6 +2186,7 @@ async function runSustainFarm (user) {
   logEvent('sustain', `started by ${user || 'someone'}`)
 
   let polls = 0
+  let retryAfterInterrupt = false
   try {
     while (sustainState.active) {
       // Gate: wait for safe conditions (daytime, no hostiles, HP ok)
@@ -2194,7 +2195,8 @@ async function runSustainFarm (user) {
       }
 
       const scan = scanKnownWheatFields()
-      if (scan.maturePct >= 85 && !foodSafetyBusy) {
+      if ((scan.maturePct >= 85 || retryAfterInterrupt) && !foodSafetyBusy) {
+        retryAfterInterrupt = false
         sustainState.cycles++
         logEvent('sustain', `field ready (mature=${scan.mature}/${scan.expected}, ${scan.maturePct.toFixed(0)}%) — cycle ${sustainState.cycles}`)
 
@@ -2246,6 +2248,7 @@ async function runSustainFarm (user) {
         } catch (e) {
           if (e.name === 'AbortError' && !sustainState.active) break // user said stop
           logEvent('sustain', `cycle ${sustainState.cycles} failed (recoverable): ${e.message}`)
+          retryAfterInterrupt = true
           // Return home if possible, then wait and retry next poll
           try { if (!insideHouse()) await runGoInside() } catch (_) {}
         }
@@ -2461,7 +2464,7 @@ async function runHarvestPotatoes ({ user } = {}) {
 // no-op. Patch lies along the east shore of an oval pond, so we clip to
 // x >= -286 to keep the bot out of the water (see journal place note
 // water-hazard-west-of-potatoes.md).
-async function runHarvestPotatoesRightClick ({ user, then = null } = {}) {
+async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Infinity } = {}) {
   const taskCheck = startTask('harvest_potatoes_rc')
   if (!taskCheck.allowed) { bot.chat(`Busy with ${taskCheck.current} — one thing at a time.`); return }
   const myGen = abortGen
@@ -2511,8 +2514,6 @@ async function runHarvestPotatoesRightClick ({ user, then = null } = {}) {
       bot.chat('No potatoes in the safe zone.')
       return
     }
-    bot.chat(`Right-clicking ${allPotatoes.length} potato tiles…`)
-
     // Boustrophedon order by z (small patch, no need for nautilus).
     allPotatoes.sort((a, b) => a.z - b.z || a.x - b.x)
     const byZ = new Map()
@@ -2520,13 +2521,18 @@ async function runHarvestPotatoesRightClick ({ user, then = null } = {}) {
       if (!byZ.has(p.z)) byZ.set(p.z, [])
       byZ.get(p.z).push(p)
     }
-    const ordered = []
+    let ordered = []
     let i = 0
     for (const z of [...byZ.keys()].sort((a,b) => a - b)) {
       const row = byZ.get(z)
       row.sort((a, b) => a.x - b.x)
       ordered.push(...(i++ % 2 === 0 ? row : row.slice().reverse()))
     }
+    if (maxTiles < ordered.length) {
+      logEvent('harvest-potato-rc', `capping ${ordered.length} tiles to maxTiles=${maxTiles}`)
+      ordered = ordered.slice(0, maxTiles)
+    }
+    bot.chat(`Right-clicking ${ordered.length} potato tiles…`)
 
     const potatoCountBefore = bot.inventory.items()
       .filter(it => it.name === 'potato').reduce((s, it) => s + it.count, 0)
@@ -2831,10 +2837,45 @@ async function tryFoodSafety () {
   foodSafetyBusy = true
   foodSafetyLowStreak = 0
   try {
+    // Emergency bread protocol: if HP is critically low, grab bread from the
+    // kitchen chest and eat before attempting the harvest (which aborts at HP<10).
+    if (bot.health != null && bot.health < 10) {
+      logEvent('food-safety', `HP=${bot.health} — emergency bread protocol`)
+      if (!insideHouse()) await runGoInside()
+      await pathTo(HARVEST_WAYPOINTS.kitchen_chest, 2, 8000)
+      const win = await openChest()
+      let pulled = 0
+      try {
+        const containerSize = win.slots.length - 36
+        const src = win.slots[CHEST_SLOTS.bread]
+        if (src && src.name === 'bread' && src.count > 0) {
+          const take = Math.min(src.count, 16)
+          const empty = findEmptyInvSlotInWindow(win, containerSize)
+          if (empty) {
+            await twoClick(CHEST_SLOTS.bread, empty.windowSlot)
+            pulled = take
+          }
+        }
+      } finally { win.close() }
+      if (pulled === 0) {
+        logEvent('food-safety', 'no bread in chest — cannot recover')
+        bot.chat('No bread in the chest and HP too low to harvest. Need help.')
+        return
+      }
+      logEvent('food-safety', `withdrew ${pulled} bread, eating`)
+      bot.chat(`Grabbed ${pulled} bread from the chest — eating to recover.`)
+      foodSafetyWindowCooldownUntil = 0
+      for (let i = 0; i < 4 && bot.food < 18; i++) {
+        try { await eatSomething(); await sleep(500) } catch (_) { break }
+      }
+      logEvent('food-safety', `after eating: HP=${bot.health} food=${bot.food}`)
+      await sleep(3000)
+    }
+
     const before = countBakedPotatoes()
     logEvent('food-safety', `baked=${before} < ${foodSafetyMin} — harvesting + baking potatoes`)
     bot.chat(pickLine(FOOD_SAFETY_LINES))
-    await runHarvestPotatoesRightClick({ user: 'food-safety', then: 'bake' })
+    await runHarvestPotatoesRightClick({ user: 'food-safety', then: 'bake', maxTiles: 42 })
     await runBakePotatoes({ user: 'food-safety' })
     const after = countBakedPotatoes()
     logEvent('food-safety', `done: baked ${before} → ${after}`)
