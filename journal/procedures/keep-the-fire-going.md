@@ -5,15 +5,18 @@ aliases: [sustain_farm, keep_fire]
 status: confirmed
 confirmed: true
 first_tested: 2026-05-30
+last_updated: 2026-06-02
 ---
 
-# Keep The Fire Going (autonomous wheat → bio-fuel loop)
+# Keep The Fire Going (autonomous wheat + plant-ball → bio-fuel loop)
 
-The hands-off sustain loop. The bot watches the wheat field; when it's **fully mature**, it
-harvests both halves, feeds the wheat into the [[../places/house-hopper|bio-fuel hopper]],
-stashes surplus seeds in the [[../chests/house-kitchen-chest|kitchen chest]], then waits for
-the crop to regrow and repeats — keeping Oceanside's bio-fuel line fed without a human prompting
-each harvest.
+The hands-off sustain loop. The bot watches the wheat field; when it's **fully mature**, it:
+
+1. Harvests both halves (keeps seeds on hand)
+2. Deposits wheat to the [[../places/house-hopper|bio-fuel hopper]] (keeps 7 for engine clearing)
+3. Crafts **plant balls** from surplus seeds at the [[project-bench-crafting|project bench]] (keeps 16 seeds)
+4. Deposits plant balls to the hopper
+5. Waits for regrowth, repeats
 
 ## Trigger / stop
 
@@ -25,36 +28,47 @@ each harvest.
 ## How it works (`bot.js`)
 
 - `runSustainFarm(user)` + module state `sustainState = {active, cycles, startedBy}`.
-- Loop: `scanKnownWheatFields()` every `SUSTAIN_POLL_MS` (15s). When `scan.ready`
-  (all 108 tiles mature), it calls `runHarvestRightClick({half:'all', autoDeposit:'hopper'})`.
-- **`autoDeposit:'hopper'`** is a new flag on the harvest: it skips the interactive
-  "hopper or chest?" question and feeds the hopper directly via
-  [[deposit-wheat|depositQuickMove]]. Seeds overflow to the chest automatically
-  ([[deposit-seeds]], keep 16).
-- The **harvest is the task** (one-at-a-time, bedtime-aware — sleeps mid-harvest and resumes at
-  dawn). The sustain loop holds **no task between cycles**, so the bot stays responsive and
-  conflict-protected only while actively harvesting.
-- Stop is cooperative: the `stop` / `stand_down` chat rules set `sustainState.active = false`
-  and `abortGen++` (which aborts an in-flight harvest via `checkAbort`). The loop checks the
-  flag each poll and between cycles.
+- Loop: `scanKnownWheatFields()` every `SUSTAIN_POLL_MS` (15s). When `maturePct >= 85`,
+  triggers the cycle.
+- Harvest uses `keepSeeds: true, skipDeposit: true` — seeds stay on hand, wheat stays on hand.
+  The sustain loop handles all deposits itself.
+- **Wheat deposit:** `depositQuickMove('wheat', HOPPER, { keep: SUSTAIN_KEEP_WHEAT })`.
+  `SUSTAIN_KEEP_WHEAT = 7` — reserved for 1-at-a-time engine clearing (deferred).
+- **Plant ball crafting:** `craftPlantBalls({ keepSeeds: SUSTAIN_KEEP_SEEDS })` where
+  `SUSTAIN_KEEP_SEEDS = 16`. Uses the close/reopen trick on the project bench
+  (see [[project-bench-crafting]]).
+- **Plant ball deposit:** `depositQuickMove('unknown', HOPPER, { keep: 0 })`.
+- The **harvest is the task** (one-at-a-time, bedtime-aware). The sustain loop holds **no task
+  between cycles**, so the bot stays responsive.
+- Stop is cooperative: `sustainState.active = false` + `abortGen++`.
 
-## Tested 2026-05-30 (day 42933)
+## Constants
 
-Said "keep the fire going" → `field ready (mature=108/108) — cycle 1` → harvested both fields →
-**`deposited 107 wheat to hopper (quick-move, 2 rounds)`** (no prompt) → **`wheat_seeds: 101
-(kept 16)`** → returned to waiting (`busy:false`, `active:true`). `sustain_stop` → `stopped after
-1 cycle(s)`. Zero deaths, HP healthy throughout.
+| Name | Value | Purpose |
+|------|-------|---------|
+| `SUSTAIN_POLL_MS` | 15000 | Field scan interval |
+| `SUSTAIN_KEEP_WHEAT` | 7 | Wheat reserved for engine partial-batch clearing |
+| `SUSTAIN_KEEP_SEEDS` | 16 | Seeds kept as replanting buffer |
 
-## Known dependency / risk
+## Deferred work
 
-The loop re-harvests only when the field reaches **100% mature** (`mature === expected`, the same
-signal the [[../places/wheat-field|wheat-ready alert]] uses). This relies on every tile
-replanting after each harvest. If some tiles fail to replant (e.g. trampled farmland leaving bare
-dirt), the field never returns to 108/108 and the loop waits indefinitely. Heartbeat log line
-`waiting (mature=x/expected loaded=…)` (every ~5 min) surfaces a stall.
+- **1-at-a-time wheat feeding** to clear the engine's partial batch remainder. Not yet coded or
+  proven. The kept 7 wheat is the raw material for this step once the technique is worked out.
+- **depositQuickMove partial-stack limitation:** with a single stack of 64 wheat, `keep:7` won't
+  split — it skips the stack entirely. Only works when multiple stacks allow keeping 7 across
+  the remainder. Needs a split-first approach for single stacks.
+
+## Tested
+
+- **2026-05-30 (day 42933):** Original loop (auto-deposit wheat to hopper, seeds to chest).
+  107 wheat deposited, 101 seeds kept 16. 1 cycle, 0 deaths.
+- **2026-06-02 (day 43242):** Manual end-to-end of new cycle: harvest → deposit wheat → craft
+  7 plant balls from 72 seeds → deposit balls to hopper. All steps confirmed individually.
+  `craftPlantBalls` function written and `runSustainFarm` rewritten.
 
 ## Related
-- [[right-click-harvest]] — the per-cycle harvest (now takes `autoDeposit`)
-- [[deposit-wheat]] / [[deposit-seeds]] — the two auto-deposit destinations
+- [[right-click-harvest]] — the per-cycle harvest (takes `keepSeeds`, `skipDeposit`)
+- [[project-bench-crafting]] — the close/reopen trick for crafting plant balls
+- [[deposit-wheat]] — `depositQuickMove` for hopper/chest
 - [[../places/house-hopper]] — the bio-fuel intake
 - [[../observations/_log]] — session log

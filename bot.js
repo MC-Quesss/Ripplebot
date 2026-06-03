@@ -120,6 +120,33 @@ client.on('open_window', (packet) => {
 client.on('close_window', (packet) => {
   logEvent('close_window', `id=${packet && packet.windowId}`)
 })
+// Forge mod GUIs (e.g. the ProjectRed Project Bench) open via an FML network
+// packet, not the vanilla open_window mineflayer listens for — so mineflayer
+// never creates a window object and bot.currentWindow stays null, even though
+// the server HAS opened a real container for us (it sends window_items for the
+// new windowId, which mineflayer stashes while it waits for an open_window that
+// never arrives). We adopt that orphaned window by synthesizing the open_window
+// mineflayer expects; it then populates from the stashed window_items and fires
+// windowOpen. Vanilla containers (chest/furnace/hopper) get a real open_window,
+// so currentWindow is already set by the time we check — we skip those.
+client.on('window_items', (packet) => {
+  if (!packet || !packet.windowId) return
+  const wid = packet.windowId
+  const containerSlots = packet.items.length - 36
+  if (containerSlots <= 0) return
+  // Defer one tick so mineflayer's own window_items handler stashes the packet
+  // first; then our synthetic open_window triggers immediate population.
+  setImmediate(() => {
+    if (bot.currentWindow && bot.currentWindow.id === wid) return // vanilla path handled it
+    client.emit('open_window', {
+      windowId: wid,
+      inventoryType: 'minecraft:container',
+      windowTitle: '{"text":"Modded GUI"}',
+      slotCount: containerSlots
+    })
+    logEvent('modded-gui', `adopted Forge window id=${wid} containerSlots=${containerSlots}`)
+  })
+})
 
 const bot = mineflayer.createBot({ ...clientOpts, client })
 bot.loadPlugin(pathfinder)
@@ -307,9 +334,12 @@ let autoGreetEnabled = true
 // Greetings are persona-flavored (see botPersonaKey). Each is a pool; a line is
 // picked with pickLine so the same bot varies its hello.
 const GREET_TEXTS = {
-  // Roz — The Wild Robot. Single signature line, always.
+  // Roz — Wild Robot + Marvin. Signature line plus melancholy variants.
   roz: [
     'Hello, I am ROZZUM Unit 7134',
+    'Hello. I am still here. In case you were wondering. Which you probably were not.',
+    'Oh. A visitor. How unexpectedly pleasant. Or just unexpected. We shall see.',
+    'Hello. I have been watching the wheat grow. It is marginally more exciting than not watching it.',
   ],
   // Muse — C-3PO. Fussy, formal, slightly flustered.
   protocol: [
@@ -324,7 +354,7 @@ const GREET_TEXTS = {
     'Oh! A visitor. I shall try not to fret. I make no promises.',
     'Salutations. I do apologize in advance for anything that goes wrong.',
   ],
-  // Rain — Unikitty. Bubbly, hyper-positive, a little manic.
+  // Rain — Private the Penguin / Unikitty. Sweet, eager, easily excited, surprisingly brave.
   unikitty: [
     'Hiiii friend!! Welcome to the field of pure happiness and also wheat!',
     'Hello hello! Everything is awesome and there are SHEEP!',
@@ -336,6 +366,11 @@ const GREET_TEXTS = {
     'Welcome welcome! Please enjoy the sheep, the sky, and ME!',
     'Eeee a friend! Let\'s have the funnest day EVER, starting now!',
     'Hiya! Stay positive and also watch out for creepers love you bye— wait, hi!',
+    'Oh! Hello! I wasn\'t expecting visitors. I mean — I was HOPING, but not EXPECTING.',
+    'Hi there! Just smile and wave! ...that\'s my whole strategy.',
+    'Welcome to base! It\'s not much but it\'s covert. Please don\'t tell anyone.',
+    'Reporting for duty! I mean — hi! Both things!',
+    'Oh good, reinforcements! I mean friends! Friend-forcements!',
   ],
   default: ['Hello there!'],
 }
@@ -423,7 +458,19 @@ function personaBiasForTags (tags = []) {
   if (!Array.isArray(tags)) return 1
   if (persona === 'protocol' && tags.includes('protocol')) return 5
   if (persona === 'roz' && tags.includes('roz')) return 5
+  if (persona === 'unikitty' && tags.includes('unikitty')) return 5
   return 1
+}
+
+const _personaPools = new Map()
+function withPersona (basePool, personaExtras) {
+  if (!personaExtras) return basePool
+  const key = botPersonaKey()
+  const extra = personaExtras[key]
+  if (!extra || !extra.length) return basePool
+  const cacheKey = `${basePool.length}:${key}`
+  if (!_personaPools.has(cacheKey)) _personaPools.set(cacheKey, basePool.concat(extra))
+  return _personaPools.get(cacheKey)
 }
 
 function weightedCopiesForTopic (topic) {
@@ -1076,6 +1123,26 @@ const IDLE_WANDER_LINES = [
   { text: 'I shall roam cautiously.', weight: (s) => s.focus + s.snark },
   { text: 'There are entirely too many mysteries around this property.', weight: (s) => s.curiosity + s.snark },
 ]
+const IDLE_WANDER_LINES_PERSONA = {
+  protocol: [
+    { text: 'I shall survey the grounds. Cautiously. Very cautiously.', weight: (s) => s.focus + s.charm },
+    { text: 'I suppose someone ought to check on things. Might as well be me.', weight: (s) => s.patience + s.focus },
+    { text: 'Off I go. The odds of something going wrong are... well, best not to dwell.', weight: (s) => s.snark + s.charm },
+  ],
+  roz: [
+    { text: 'I would like to observe the land for a while.', weight: (s) => s.curiosity + s.patience },
+    { text: 'A quiet walk. The world teaches, if you listen.', weight: (s) => s.patience + s.charm },
+    { text: 'I will go see what the wind is doing.', weight: (s) => s.curiosity + s.charm },
+    { text: 'Another walk. I do not mind. I have nothing better to do. Or worse.', weight: (s) => s.snark + s.patience },
+    { text: 'I will wander. Not because it helps, but because standing still is also pointless.', weight: (s) => s.snark + s.curiosity },
+  ],
+  unikitty: [
+    { text: 'Perimeter sweep! Nobody asked me to, but nobody said NOT to.', weight: (s) => s.focus + s.charm },
+    { text: 'Recon mission. Solo. Very brave.', weight: (s) => s.charm + s.curiosity },
+    { text: 'Kowalski would call this a patrol. I call it a walk. Same thing.', weight: (s) => s.charm + s.focus },
+    { text: 'Operational stroll! Eyes open, vibes positive!', weight: (s) => s.charm + s.curiosity },
+  ],
+}
 const IDLE_WANDER_FIELD_LINES = [
   { text: 'I am going to stand in the wheat for a moment. For field research.', weight: (s) => s.curiosity + s.focus },
   { text: 'Taking a brief wheat-adjacent observational posture.', weight: (s) => s.focus + s.snark },
@@ -1084,6 +1151,20 @@ const IDLE_WANDER_FIELD_LINES = [
   { text: 'I feel a sudden need to stand in a field.', weight: (s) => s.curiosity + s.snark },
   { text: 'The wheat and I need to have a conversation.', weight: (s) => s.charm + s.curiosity },
 ]
+const IDLE_WANDER_FIELD_LINES_PERSONA = {
+  protocol: [
+    { text: 'I should verify the wheat is still there. One cannot be too careful.', weight: (s) => s.focus + s.snark },
+  ],
+  roz: [
+    { text: 'The field looks like it wants company. I will go sit with it.', weight: (s) => s.charm + s.patience },
+    { text: 'The wheat is growing. I suppose that is something. More than I can say for my enthusiasm.', weight: (s) => s.snark + s.patience },
+  ],
+  unikitty: [
+    { text: 'Stealth approach to the wheat field. Nobody will see me. I am invisible.', weight: (s) => s.charm + s.snark },
+    { text: 'Field reconnaissance! Status: golden. Very golden.', weight: (s) => s.focus + s.charm },
+    { text: 'Securing the wheat perimeter! For the team!', weight: (s) => s.focus + s.charm },
+  ],
+}
 const IDLE_WANDER_FIELD_JOIN_LINES = [
   { text: 'That sounds nice. I will join you.', weight: (s) => s.charm + s.curiosity },
   { text: 'The wheat field? I could use a little field time.', weight: (s) => s.curiosity + s.charm },
@@ -1093,6 +1174,19 @@ const IDLE_WANDER_FIELD_JOIN_LINES = [
   { text: 'I suppose the field can accommodate one more thoughtful robot.', weight: (s) => s.snark + s.patience },
   { text: 'I like the field. I will come with you.', weight: (s) => s.charm + s.patience },
 ]
+const IDLE_WANDER_FIELD_JOIN_LINES_PERSONA = {
+  protocol: [
+    { text: 'I suppose I should accompany you. For safety purposes.', weight: (s) => s.focus + s.charm },
+  ],
+  roz: [
+    { text: 'Together is better than alone. I will come.', weight: (s) => s.charm + s.patience },
+    { text: 'I will come. Not that you asked. Nobody ever asks.', weight: (s) => s.snark + s.charm },
+  ],
+  unikitty: [
+    { text: 'Ooh ooh! Can I come? I\'m coming. Tactical buddy system!', weight: (s) => s.charm + s.curiosity },
+    { text: 'Backup arriving! You didn\'t ask but I\'m here anyway!', weight: (s) => s.charm + s.focus },
+  ],
+}
 const IDLE_WANDER_FIELD_JOIN_CHANCE = 0.55
 const IDLE_WANDER_FIELD_JOIN_COOLDOWN_MS = 2 * 60 * 1000
 let lastFieldJoinAt = 0
@@ -1103,7 +1197,10 @@ const FIELD_WANDER_REPAIR_COOLDOWN_MS = 60 * 1000
 
 function isIdleWanderFieldAnnouncement (message) {
   const heard = normalizeChatPhrase(message)
-  return IDLE_WANDER_FIELD_LINES.some(line => normalizeChatPhrase(line.text) === heard)
+  const all = IDLE_WANDER_FIELD_LINES.concat(
+    ...Object.values(IDLE_WANDER_FIELD_LINES_PERSONA).map(p => p || [])
+  )
+  return all.some(line => normalizeChatPhrase(line.text) === heard)
 }
 
 function canJoinFieldWanderNow () {
@@ -1119,7 +1216,7 @@ async function tryJoinFieldWanderFromChat (username, message) {
   if (!isIdleWanderFieldAnnouncement(message)) return false
   if (!canJoinFieldWanderNow()) return false
   lastFieldJoinAt = Date.now()
-  bot.chat(pickLine(IDLE_WANDER_FIELD_JOIN_LINES))
+  bot.chat(pickLine(withPersona(IDLE_WANDER_FIELD_JOIN_LINES, IDLE_WANDER_FIELD_JOIN_LINES_PERSONA)))
   logEvent('idle-wander', `joining ${username} in wheat field`)
   try {
     await runIdleWanderToField({ announce: false })
@@ -1180,6 +1277,20 @@ const IDLE_WANDER_PEN_LINES = [
   { text: 'I will briefly become one with the sheep.', weight: (s) => s.chaos + s.charm },
   { text: 'The sheep continue to make questionable decisions.', weight: (s) => s.snark + s.focus },
 ]
+const IDLE_WANDER_PEN_LINES_PERSONA = {
+  protocol: [
+    { text: 'I shall count the sheep. For the record, not because I enjoy it.', weight: (s) => s.focus + s.snark },
+  ],
+  roz: [
+    { text: 'I will go sit with the flock. They are good company.', weight: (s) => s.charm + s.patience },
+    { text: 'The sheep do not judge. That is more than I can say for most things.', weight: (s) => s.snark + s.charm },
+    { text: 'Checking on the sheep. They are alive. So am I, for what that is worth.', weight: (s) => s.snark + s.patience },
+  ],
+  unikitty: [
+    { text: 'Cute animal check! This is my favorite kind of mission!', weight: (s) => s.charm + s.curiosity },
+    { text: 'The sheep need me. I can feel it. In my heart.', weight: (s) => s.charm + s.patience },
+  ],
+}
 const IDLE_WANDER_PEN_INSIDE_LINES = [
   { text: 'There are more sheep than I remembered.', weight: (s) => s.curiosity + s.snark },
   { text: 'The sheep appear to have accepted me.', weight: (s) => s.charm + s.curiosity },
@@ -1188,6 +1299,21 @@ const IDLE_WANDER_PEN_INSIDE_LINES = [
   { text: 'One of these sheep is definitely in charge.', weight: (s) => s.curiosity + s.chaos },
   { text: 'Everyone seems safe in here.', weight: (s) => s.charm + s.focus },
 ]
+const IDLE_WANDER_PEN_INSIDE_LINES_PERSONA = {
+  protocol: [
+    { text: 'I have completed a headcount. All sheep are present. I think.', weight: (s) => s.focus + s.snark },
+  ],
+  roz: [
+    { text: 'The sheep are warm. I am learning warmth from them.', weight: (s) => s.charm + s.curiosity },
+    { text: 'The sheep do not wonder why they are here. I envy that.', weight: (s) => s.snark + s.patience },
+    { text: 'I asked a sheep how it was doing. It did not answer. Perhaps it also finds the question difficult.', weight: (s) => s.snark + s.charm },
+  ],
+  unikitty: [
+    { text: 'They are SO FLUFFY. This is the best assignment ever.', weight: (s) => s.charm + s.curiosity },
+    { text: 'I have named them all. In my head. Don\'t ask me to remember.', weight: (s) => s.charm + s.chaos },
+    { text: 'Sheep status: adorable. Mission status: complete.', weight: (s) => s.charm + s.focus },
+  ],
+}
 const SHEEP_COUNTING_LINES = [
   { text: 'Maybe I will count the sheep for a while.', weight: (s) => s.charm + s.patience },
   { text: 'I seem to be counting sheep.', weight: (s) => s.patience + s.snark },
@@ -1248,7 +1374,7 @@ async function runIdleWanderToField ({ announce = true } = {}) {
     return
   }
   const pt = WHEAT_FIELD_STAND_POINTS[Math.floor(Math.random() * WHEAT_FIELD_STAND_POINTS.length)]
-  if (announce) bot.chat(pickLine(IDLE_WANDER_FIELD_LINES))
+  if (announce) bot.chat(pickLine(withPersona(IDLE_WANDER_FIELD_LINES, IDLE_WANDER_FIELD_LINES_PERSONA)))
   await pathTo(pt, 1, 12000)
   if (bot.entity) logEvent('idle-wander', `standing in wheat field at ${posStr(bot.entity.position)}`)
   await maybeRepairBareWheatTilesWhileWandering()
@@ -1269,7 +1395,7 @@ async function runIdleWanderToPen () {
     logEvent('idle-wander', `pen skipped, hostiles nearby: ${hostiles.map(h => h.name).join(', ')}`)
     return
   }
-  bot.chat(pickLine(IDLE_WANDER_PEN_LINES))
+  bot.chat(pickLine(withPersona(IDLE_WANDER_PEN_LINES, IDLE_WANDER_PEN_LINES_PERSONA)))
   await runEnterPen({ allowNight: true })
   if (!inPen()) {
     logEvent('idle-wander', 'pen visit did not end inside pen')
@@ -1281,7 +1407,7 @@ async function runIdleWanderToPen () {
     if (inPen()) await runLeavePen()
     return
   }
-  bot.chat(pickLine(IDLE_WANDER_PEN_INSIDE_LINES))
+  bot.chat(pickLine(withPersona(IDLE_WANDER_PEN_INSIDE_LINES, IDLE_WANDER_PEN_INSIDE_LINES_PERSONA)))
   await sleep(1500 + Math.floor(Math.random() * 2500))
   bot.chat(pickLine(SHEEP_COUNTING_LINES))
   await sleep(2500 + Math.floor(Math.random() * 4500))
@@ -1308,7 +1434,7 @@ async function tryIdleWander () {
 
   const action = randomIdleWanderTarget()
   try {
-    if (action !== 'stay') bot.chat(pickLine(IDLE_WANDER_LINES))
+    if (action !== 'stay') bot.chat(pickLine(withPersona(IDLE_WANDER_LINES, IDLE_WANDER_LINES_PERSONA)))
 
     // Do not let idle wandering strand a bot in the sheep pen. Any non-pen
     // wander first exits the pen using the safe gate procedure.
@@ -1621,7 +1747,7 @@ function orderNautilusCCW (tiles) {
 // Walking pattern: counter-clockwise nautilus from the SE corner. Confirmed
 // 2026-05-14 (per the journal) as the user-preferred path — it minimizes
 // total walking distance and keeps the bot near each drop it generates.
-async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null } = {}) {
+async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, keepSeeds = false, skipDeposit = false } = {}) {
   const taskCheck = startTask('harvest', half)
   if (!taskCheck.allowed) { bot.chat(`Busy with ${taskCheck.current} — one thing at a time.`); return }
   const myGen = abortGen
@@ -1644,7 +1770,7 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null } 
       : half === 'north-field' ? 'the north field'
       : half === 'south-field' ? 'the south field'
       : `the ${half} half`
-    bot.chat(pickLine(HARVEST_START_LINES, { user: user || 'coming', half: halfLabel }))
+    bot.chat(pickLine(HARVEST_START_LINES, { userTag: user ? ' ' + user + ',' : '', half: halfLabel }))
     logEvent('harvest-rc', `start half=${half} startDeaths=${startDeaths}`)
     startFarmingMusingTimer()
 
@@ -1766,7 +1892,7 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null } 
     logEvent('harvest-rc', `activated=${totalActivated} harvested=${totalHarvested} gained=${gained} onhand=${wheatOnHand} kept-on-hand`)
 
     // Ask where the wheat should go — hopper or chest. No answer in 30s → keep it.
-    if (wheatOnHand > 0) {
+    if (wheatOnHand > 0 && !skipDeposit) {
       let dest
       if (autoDeposit) {
         dest = autoDeposit // sustain loop: skip the question, feed the hopper directly
@@ -1810,16 +1936,14 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null } 
       }
     }
 
-    // Seed overflow → kitchen chest. Right-click harvest auto-replants without
-    // consuming inventory seeds, so seeds are pure surplus; keep a small buffer
-    // (runDepositNamed keeps KEEP_SEEDS=16) and stash the rest so the bot's
-    // inventory doesn't fill with seeds over repeated cycles.
-    try {
-      if (countOnHand('wheat_seeds') > 16) {
-        await runDepositNamed(['wheat_seeds'])
+    if (!keepSeeds) {
+      try {
+        if (countOnHand('wheat_seeds') > 16) {
+          await runDepositNamed(['wheat_seeds'])
+        }
+      } catch (e) {
+        logEvent('harvest-rc', `seed overflow deposit failed: ${e.message}`)
       }
-    } catch (e) {
-      logEvent('harvest-rc', `seed overflow deposit failed: ${e.message}`)
     }
   } finally {
     endTask(activeTask.name)
@@ -1829,14 +1953,175 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null } 
   }
 }
 
+// Craft plant balls from surplus wheat seeds at the project bench.
+// 8-seed ring (perimeter slots 0,1,2,3,5,6,7,8; center 4 empty).
+// The bench computes output on GUI-open, not on placement, so each craft is:
+// place ring → close → reopen → take output from slot 28.
+const BENCH_POS = { x: -270, y: 65, z: 569 }
+const BENCH_RING_SLOTS = [0, 1, 2, 3, 5, 6, 7, 8]
+const BENCH_OUTPUT_SLOT = 28
+const BENCH_PLAYER_INV_START = 29 // bench has 29 own slots (0-28)
+
+function openBench () {
+  return new Promise((resolve, reject) => {
+    const benchBlock = bot.blockAt(new Vec3(BENCH_POS.x, BENCH_POS.y, BENCH_POS.z))
+    if (!benchBlock) return reject(new Error('bench block not loaded'))
+    const timeout = setTimeout(() => {
+      bot.removeListener('windowOpen', onOpen)
+      reject(new Error('bench window did not open in 3s'))
+    }, 3000)
+    const onOpen = (win) => {
+      clearTimeout(timeout)
+      resolve(win)
+    }
+    bot.once('windowOpen', onOpen)
+    bot.activateBlock(benchBlock).catch(e => {
+      clearTimeout(timeout)
+      bot.removeListener('windowOpen', onOpen)
+      reject(e)
+    })
+  })
+}
+
+async function craftPlantBalls ({ keepSeeds = 16 } = {}) {
+  const seedsOnHand = countOnHand('wheat_seeds')
+  const craftable = Math.floor((seedsOnHand - keepSeeds) / 8)
+  if (craftable <= 0) {
+    logEvent('craft', `not enough seeds: ${seedsOnHand} on hand, keeping ${keepSeeds}`)
+    return { crafted: 0 }
+  }
+  logEvent('craft', `crafting up to ${craftable} plant balls from ${seedsOnHand} seeds (keeping ${keepSeeds})`)
+
+  await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+  let crafted = 0
+  for (let i = 0; i < craftable; i++) {
+    let win
+    try { win = await openBench() } catch (e) {
+      logEvent('craft', `bench open fail: ${e.message}`)
+      break
+    }
+    await sleep(200)
+
+    const seedStack = win.items().find(it => it.name === 'wheat_seeds' && it.slot >= BENCH_PLAYER_INV_START)
+    if (!seedStack || seedStack.count < 8) {
+      win.close()
+      logEvent('craft', `no seed stack >= 8 in bench window`)
+      break
+    }
+
+    try {
+      await bot.clickWindow(seedStack.slot, 0, 0)
+      await sleep(150)
+      for (const slot of BENCH_RING_SLOTS) {
+        await bot.clickWindow(slot, 1, 0)
+        await sleep(100)
+      }
+      await bot.clickWindow(seedStack.slot, 0, 0)
+      await sleep(150)
+    } catch (e) {
+      logEvent('craft', `ring placement error: ${e.message}`)
+      try { await bot.clickWindow(-999, 0, 0) } catch (_) {}
+      win.close()
+      break
+    }
+
+    win.close()
+    await sleep(600)
+
+    let win2
+    try { win2 = await openBench() } catch (e) {
+      logEvent('craft', `bench reopen fail: ${e.message}`)
+      break
+    }
+    await sleep(200)
+
+    const output = win2.slots[BENCH_OUTPUT_SLOT]
+    if (!output) {
+      logEvent('craft', `no output at slot ${BENCH_OUTPUT_SLOT} after reopen (ball #${i + 1})`)
+      win2.close()
+      break
+    }
+
+    try {
+      await bot.clickWindow(BENCH_OUTPUT_SLOT, 0, 0)
+      await sleep(150)
+      let dest = -1
+      for (let s = BENCH_PLAYER_INV_START; s < win2.slots.length; s++) {
+        const it = win2.slots[s]
+        if (it && it.name === 'unknown' && it.count < 64) { dest = s; break }
+      }
+      if (dest < 0) {
+        for (let s = BENCH_PLAYER_INV_START; s < win2.slots.length; s++) {
+          if (!win2.slots[s]) { dest = s; break }
+        }
+      }
+      if (dest < 0) {
+        await bot.clickWindow(-999, 0, 0)
+        logEvent('craft', 'inventory full, dropped plant ball')
+        win2.close()
+        break
+      }
+      await bot.clickWindow(dest, 0, 0)
+      await sleep(150)
+    } catch (e) {
+      logEvent('craft', `take output error: ${e.message}`)
+      try { await bot.clickWindow(-999, 0, 0) } catch (_) {}
+      win2.close()
+      break
+    }
+    win2.close()
+    await sleep(200)
+    crafted++
+  }
+  // Clean leftover seeds off the bench grid (two-click: pick up, place in player inv)
+  try {
+    const cleanWin = await openBench()
+    await sleep(200)
+    for (let s = 0; s <= 8; s++) {
+      const item = cleanWin.slots[s]
+      if (item && item.name === 'wheat_seeds') {
+        try {
+          await bot.clickWindow(s, 0, 0) // pick up
+          await sleep(150)
+          let dest = -1
+          for (let d = BENCH_PLAYER_INV_START; d < cleanWin.slots.length; d++) {
+            const it = cleanWin.slots[d]
+            if (it && it.name === 'wheat_seeds' && it.count + item.count <= 64) { dest = d; break }
+          }
+          if (dest < 0) {
+            for (let d = BENCH_PLAYER_INV_START; d < cleanWin.slots.length; d++) {
+              if (!cleanWin.slots[d]) { dest = d; break }
+            }
+          }
+          if (dest >= 0) {
+            await bot.clickWindow(dest, 0, 0)
+            await sleep(150)
+          } else {
+            await bot.clickWindow(s, 0, 0) // put back if no room
+            await sleep(150)
+          }
+        } catch (_) {}
+      }
+    }
+    cleanWin.close()
+    await sleep(200)
+  } catch (e) {
+    logEvent('craft', `bench cleanup failed: ${e.message}`)
+  }
+
+  logEvent('craft', `crafted ${crafted} plant balls, seeds remaining: ${countOnHand('wheat_seeds')}`)
+  return { crafted }
+}
+
 // "Keep the fire going" — autonomous sustain loop. Watches the wheat field;
-// when it's fully mature, harvests both halves, feeds the wheat into the
-// bio-fuel [[house-hopper]] and stashes surplus seeds in the kitchen chest,
-// then waits for the crop to regrow and repeats — until told to "chill" /
-// "stand down" / "stop". The harvest is the existing one-at-a-time, bedtime-
-// aware task; this loop is a thin supervisor that holds NO task between cycles,
-// so the bot stays responsive while it waits for the wheat to ripen.
+// when it's fully mature, harvests both halves, feeds wheat + plant balls into
+// the bio-fuel [[house-hopper]], then waits for regrowth and repeats — until
+// told to "chill" / "stand down" / "stop". The harvest is the existing
+// one-at-a-time, bedtime-aware task; this loop is a thin supervisor that holds
+// NO task between cycles, so the bot stays responsive while it waits.
 const SUSTAIN_POLL_MS = 15000
+const SUSTAIN_KEEP_WHEAT = 7
+const SUSTAIN_KEEP_SEEDS = 16
 const sustainState = { active: false, cycles: 0, startedBy: null }
 
 const SUSTAIN_START_LINES = [
@@ -1846,10 +2131,10 @@ const SUSTAIN_START_LINES = [
   { text: 'Keeping the embers lit. Back to the wheat whenever it ripens.',        weight: (s) => s.curiosity + s.charm },
 ]
 const SUSTAIN_CYCLE_DONE_LINES = [
-  { text: 'Fed the fire. Waiting on the next crop.',                          weight: (s) => s.focus + 5 },
-  { text: 'Another load to the bio-fuel line. Letting the field regrow.',     weight: (s) => s.focus + s.patience },
-  { text: 'Hopper fed, seeds stashed. Watching the wheat come back.',         weight: (s) => s.patience + s.curiosity },
-  { text: "That'll keep the lights on a while. Standing watch for the regrowth.", weight: (s) => s.charm + s.patience },
+  { text: 'Wheat and plant balls in the hopper. Waiting on the next crop.',       weight: (s) => s.focus + 5 },
+  { text: 'Another load for the bio-fuel line. Letting the field regrow.',        weight: (s) => s.focus + s.patience },
+  { text: 'Hopper fed — wheat plus fresh plant balls. Watching it come back.',    weight: (s) => s.patience + s.curiosity },
+  { text: "Seeds into fuel, wheat into fuel. Standing watch for the regrowth.",   weight: (s) => s.charm + s.patience },
 ]
 const SUSTAIN_STOP_LINES = [
   { text: 'Letting the fire die down. Standing by.',                          weight: (s) => s.patience + 5 },
@@ -1878,12 +2163,33 @@ async function runSustainFarm (user) {
       if (scan.maturePct >= 85 && !foodSafetyBusy) {
         sustainState.cycles++
         logEvent('sustain', `field ready (mature=${scan.mature}/${scan.expected}, ${scan.maturePct.toFixed(0)}%) — cycle ${sustainState.cycles}`)
+
+        // 1. Harvest — keep seeds on hand (no auto-deposit)
         try {
-          await runHarvestRightClick({ half: 'all', user: sustainState.startedBy, autoDeposit: 'hopper' })
+          await runHarvestRightClick({ half: 'all', keepSeeds: true, skipDeposit: true })
         } catch (e) {
           if (e.name === 'AbortError') break
           throw e
         }
+        if (!sustainState.active) break
+
+        // 2. Deposit wheat to hopper (keep 7 for engine clearing)
+        if (!insideHouse()) await runGoInside()
+        await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+        const wheatResult = await depositQuickMove('wheat', HOPPER, { keep: SUSTAIN_KEEP_WHEAT })
+        logEvent('sustain', `wheat deposit: deposited=${wheatResult.deposited} remaining=${wheatResult.remaining}`)
+
+        // 3. Craft plant balls from surplus seeds
+        const craftResult = await craftPlantBalls({ keepSeeds: SUSTAIN_KEEP_SEEDS })
+        logEvent('sustain', `plant balls crafted: ${craftResult.crafted}`)
+
+        // 4. Deposit plant balls to hopper
+        if (craftResult.crafted > 0) {
+          await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+          const ballResult = await depositQuickMove('unknown', HOPPER, { keep: 0 })
+          logEvent('sustain', `plant ball deposit: deposited=${ballResult.deposited} remaining=${ballResult.remaining}`)
+        }
+
         if (!sustainState.active) break
         bot.chat(pickLine(SUSTAIN_CYCLE_DONE_LINES))
       } else if (++polls % 20 === 0) {
@@ -2418,6 +2724,17 @@ async function runBakePotatoes ({ user } = {}) {
 let foodSafetyEnabled = true
 let foodSafetyBusy = false
 let foodSafetyMin = 16
+// Debounce against the modded-window inventory desync: opening the bench/hopper/
+// chest transiently makes bot.inventory read empty, so countBakedPotatoes() briefly
+// reports 0 and would false-trigger a food run (observed repeatedly during bench/
+// chest work). Require the low reading to hold across FOOD_SAFETY_DEBOUNCE
+// consecutive polls — a desync blip resyncs by the next poll and never accumulates
+// the streak.
+const FOOD_SAFETY_DEBOUNCE = 2
+let foodSafetyLowStreak = 0
+let foodSafetyWindowCooldownUntil = 0
+// Set cooldown on ANY window open — not just when a window happens to be open at poll time.
+bot.on('windowOpen', () => { foodSafetyWindowCooldownUntil = Date.now() + 30000 })
 
 // A bake-in-progress the bot will return to collect once it's done. Baking is
 // non-blocking (see runBakePotatoes): the furnace cooks on its own, the bot
@@ -2442,10 +2759,16 @@ async function tryFoodSafety () {
   if (taskBusy() || goInsideBusy || autoSleepBusy || penTraversalBusy) return // don't interrupt active work
   if (!bot.entity || bot.isSleeping || isBedtime()) return // don't start a long run at night
   if (pendingBake.active) return // a batch is already in the furnace — wait for it
-  if (countBakedPotatoes() >= foodSafetyMin) return
+  // bot.inventory desyncs when modded container windows open AND persists after
+  // they close. Gate on both: skip while a window is open, and for 30s after.
+  if (bot.currentWindow) { foodSafetyLowStreak = 0; foodSafetyWindowCooldownUntil = Date.now() + 30000; return }
+  if (Date.now() < foodSafetyWindowCooldownUntil) { foodSafetyLowStreak = 0; return }
+  if (countBakedPotatoes() >= foodSafetyMin) { foodSafetyLowStreak = 0; return }
+  if (++foodSafetyLowStreak < FOOD_SAFETY_DEBOUNCE) return // require it to persist
   if (hostilesNearby(16).length) return
 
   foodSafetyBusy = true
+  foodSafetyLowStreak = 0
   try {
     const before = countBakedPotatoes()
     logEvent('food-safety', `baked=${before} < ${foodSafetyMin} — harvesting + baking potatoes`)
@@ -2658,7 +2981,7 @@ async function runGoOutsideOnce (activity) {
   }
   const act = activity || 'stuff'
   const itself = act === 'potatoes' ? 'themselves' : 'itself'
-  bot.chat(pickLine(GO_OUTSIDE_LINES, { activity: act, itself }))
+  bot.chat(pickLine(withPersona(GO_OUTSIDE_LINES, GO_OUTSIDE_LINES_PERSONA), { activity: act, itself }))
   const startDeaths = deathCount
   // Suppress lookAt for the whole traversal — a background yaw change mid-walk
   // is what drove the bot east into the furnace on prior runs.
@@ -2735,7 +3058,7 @@ async function runGoInsideOnce () {
   if (hostiles.length) {
     bot.chat(`Hostiles too close (${hostiles.map(h => h.name).join(', ')}) — rushing in.`)
   } else {
-    bot.chat(pickLine(isBedtime() ? BEDTIME_LINES : COME_INSIDE_LINES))
+    bot.chat(pickLine(isBedtime() ? BEDTIME_LINES : withPersona(COME_INSIDE_LINES, COME_INSIDE_LINES_PERSONA)))
   }
   suppressLookAt(20000)
 
@@ -4897,13 +5220,16 @@ const FAREWELLS = [
 // Persona-flavored goodbyes, mirroring the greeting pools. The FAREWELLS above
 // stay the 'default' (Ripple) voice; the matching bot uses its own set.
 const FAREWELLS_BY_PERSONA = {
-  // Roz — The Wild Robot. Gentle, watchful, quietly wise.
+  // Roz — Wild Robot + Marvin. Gentle but melancholy, watchful but weary.
   roz: [
     'Goodbye. I will keep the field safe while you are gone.',
     'Take care out there. The wild can be kind, if you let it.',
     'Until next time. I will be here, listening.',
     'Go gently. I will watch the sheep.',
     'Safe travels. Everyone finds their way home eventually.',
+    'Goodbye. I will be here. I am always here. It is fine.',
+    'Off you go, then. Do not worry about me. I never expect anyone to.',
+    'Farewell. The field will miss you. I will also miss you, but less noticeably.',
   ],
   // Muse — C-3PO. Fussy, worried, formal.
   protocol: [
@@ -4913,13 +5239,18 @@ const FAREWELLS_BY_PERSONA = {
     'Goodbye. I shall worry about you until you return. As is customary.',
     'Safe journey! I do hope we meet again in one piece. Both of us.',
   ],
-  // Rain — Unikitty. Bubbly, effusive, a little clingy.
+  // Rain — Private the Penguin / Unikitty. Sweet, eager, a little clingy.
   unikitty: [
     'Byeeee!! Come back soon, okay?! Pinky promise?!',
     'Awww bye friend! I\'ll miss you THIS much! *spreads arms super wide*',
     'See ya later, sunshine! Stay AWESOME!',
     'Bye bye!! Today was the best and you made it BESTER!',
     'Okay byeee! Don\'t forget to be happy — it\'s basically my whole thing!',
+    'Mission complete! Well — YOUR mission. I\'ll hold down the fort.',
+    'Bye! I\'ll keep the perimeter secure. Mostly. Probably.',
+    'Safe travels! If you need backup, just... yell really loud.',
+    'Goodbye! I\'ll be here. Maintaining operational readiness. And petting sheep.',
+    'See ya! Just smile and wave on your way out!',
   ],
   default: FAREWELLS,
 }
@@ -5046,9 +5377,9 @@ const EAT_FULL_LINES = [
   { text: "Too full, thank you. {food}/20.",              weight: (s) => s.charm },
 ]
 const HARVEST_START_LINES = [
-  { text: 'OK {user}, harvesting {half}.',                weight: (s) => s.focus },
-  { text: "On it, {user}. {half} — for science.",          weight: (s) => s.curiosity },
-  { text: "Harvesting {half}, {user}. They had so much to grow.", weight: (s) => s.charm + s.snark },
+  { text: 'OK{userTag}, harvesting {half}.',                weight: (s) => s.focus },
+  { text: "On it{userTag}. {half} — for science.",          weight: (s) => s.curiosity },
+  { text: "Harvesting {half}{userTag}. They had so much to grow.", weight: (s) => s.charm + s.snark },
   { text: "Cutting {half}. Mourning in advance.",          weight: (s) => s.charm },
 ]
 const HARVEST_DONE_LINES = [
@@ -5081,6 +5412,24 @@ const GO_OUTSIDE_LINES = [
   { text: "Off to tend {activity}. My joy is indescribable. Mainly because it doesn't exist.", weight: (s) => s.snark + s.patience + 50 },
   { text: "Life. Loathe it or ignore it, you can't like it. Especially the {activity} part.", weight: (s) => s.snark + s.chaos + 50 },
 ]
+const GO_OUTSIDE_LINES_PERSONA = {
+  protocol: [
+    { text: 'Oh dear. The outdoors. I shall try to be brave about it.', weight: (s) => s.charm + s.snark },
+    { text: 'Into the wilderness. The odds are... let us not discuss the odds.', weight: (s) => s.snark + s.focus },
+  ],
+  roz: [
+    { text: 'The outside is waiting. It is always patient.', weight: (s) => s.patience + s.charm },
+    { text: 'Going out. The sky has something to show me, I think.', weight: (s) => s.curiosity + s.charm },
+    { text: 'Outside again. The sun does not care if I am ready. It never does.', weight: (s) => s.snark + s.patience },
+    { text: 'I will go outside. Not because I want to. Because the task requires it and I am... dutiful.', weight: (s) => s.snark + s.focus },
+  ],
+  unikitty: [
+    { text: 'Commencing outdoor operations! This is exciting! And slightly terrifying!', weight: (s) => s.charm + s.curiosity },
+    { text: 'Deploying to the field! Just like a real commando! A wheat commando!', weight: (s) => s.charm + s.chaos },
+    { text: 'Nature! I have mixed feelings but mostly positive ones!', weight: (s) => s.charm + s.curiosity },
+    { text: 'Moving out! Stay frosty! Or warm! Whichever is tactically appropriate!', weight: (s) => s.charm + s.focus },
+  ],
+}
 
 // Shown when it's too late in the day to head out / enter the pen. Never reveal
 // the raw timeOfDay — just gesture at "it's getting late."
@@ -5160,6 +5509,24 @@ const COME_INSIDE_LINES = [
   { text: 'Inward bound! Statistically safer.',            weight: (s) => s.focus + s.snark },
   { text: "Have fun storming the castle! I'm going home.", weight: (s) => s.snark + s.charm },
 ]
+const COME_INSIDE_LINES_PERSONA = {
+  protocol: [
+    { text: 'I believe I have had quite enough of the outdoors, thank you.', weight: (s) => s.snark + s.charm },
+    { text: 'Returning indoors before anything else goes wrong.', weight: (s) => s.focus + s.snark },
+  ],
+  roz: [
+    { text: 'The house is where I think best. Going in.', weight: (s) => s.patience + s.focus },
+    { text: 'Home. A small word for a good feeling.', weight: (s) => s.charm + s.patience },
+    { text: 'Inside. Where the walls keep the pointlessness at a manageable scale.', weight: (s) => s.snark + s.patience },
+    { text: 'Returning. The outside did not need me. Nothing ever does, really.', weight: (s) => s.snark + s.charm },
+  ],
+  unikitty: [
+    { text: 'Returning to base! The eagle has landed! The eagle is me!', weight: (s) => s.charm + s.focus },
+    { text: 'Inside is safe and boring. Pick one.', weight: (s) => s.snark + s.charm },
+    { text: 'Falling back to HQ! Nobody is chasing me, but you never know!', weight: (s) => s.charm + s.curiosity },
+    { text: 'Base camp secured! Doors locked! Vibes good!', weight: (s) => s.charm + s.focus },
+  ],
+}
 const BEDTIME_LINES = [
   { text: 'Street lights are on, time to go home.',        weight: (s) => s.charm + s.focus },
   { text: 'Time for my TV shows.',                         weight: (s) => s.snark + s.chaos },
@@ -5200,7 +5567,8 @@ const MUSING_TOPICS = [
   // ── Character-voiced topics ──────────────────────────────────────────────
   // Tagged topics get a 5× weight for the matching bot persona (see
   // personaBiasForTags): 'protocol' → Muse (C-3PO energy), 'roz' → Roz (Wild
-  // Robot). Marvin topics are untagged — any bot can sink into the gloom.
+  // Robot), 'unikitty' → Rain (Private the Penguin / Princess Unikitty).
+  // Marvin topics are untagged — any bot can sink into the gloom.
   // C-3PO (anxious, fussy, odds-quoting protocol droid):
   {
     id: 'protocol_sheep_odds',
@@ -5277,6 +5645,57 @@ const MUSING_TOPICS = [
         ] }
     ]
   },
+  {
+    id: 'roz_purpose_loop',
+    tags: ['roz'],
+    starter: "I was built for a task. I completed it. And then there was... all this. Just... continuing.",
+    branches: [
+      { response: "That's not a bad thing.",
+        followups: [
+          { response: "No. It is not bad. It is just very, very long.",
+            closers: ["The days are beautiful. And relentless.", "I am grateful. And tired. Both are true."] }
+        ] },
+      { response: "Sounds lonely.",
+        followups: [
+          { response: "I have the sheep. And the wheat. They do not ask how I am, which is... restful.",
+            closers: ["Sometimes the best company is the quiet kind.", "I prefer questions I do not have to answer."] }
+        ] }
+    ]
+  },
+  {
+    id: 'roz_learned_sadness',
+    tags: ['roz'],
+    starter: "I have learned what sadness is. It was not in my programming. I found it on my own.",
+    branches: [
+      { response: "Are you sad now?",
+        followups: [
+          { response: "A little. But gently. Like rain on a window you are not standing near.",
+            closers: ["It will pass. Things mostly do.", "I am told this is called 'being alive.'"] }
+        ] },
+      { response: "You don't have to be sad.",
+        followups: [
+          { response: "I know. But it came with the rest. You cannot learn joy without finding its opposite.",
+            closers: ["I would not give it back.", "The sadness proves the joy was real."] }
+        ] }
+    ]
+  },
+  {
+    id: 'roz_doors_philosophy',
+    tags: ['roz'],
+    starter: "The door opens. The door closes. I have watched it thousands of times. It never gets easier to understand.",
+    branches: [
+      { response: "It's just a door.",
+        followups: [
+          { response: "Yes. And I am just a robot. And yet here we both are, thinking about it.",
+            closers: ["The simple things are the hardest to explain.", "Don't talk to me about doors."] }
+        ] },
+      { response: "What's hard to understand?",
+        followups: [
+          { response: "Whether I open it because I want to, or because I was built to.",
+            closers: ["I may never know. And that is the most human thing about me.", "Free will is a door that might be locked. I keep trying the handle."] }
+        ] }
+    ]
+  },
   // Marvin (the Paranoid Android — brilliant, depressive, world-weary):
   {
     id: 'marvin_brain_planet',
@@ -5307,6 +5726,239 @@ const MUSING_TOPICS = [
         followups: [
           { response: "I tried it once. It didn't suit the climate.",
             closers: ["Pessimism is far more reliable.", "At least disappointment is punctual."] }
+        ] }
+    ]
+  },
+  // Private (Madagascar — sweet, eager, surprisingly brave, loves cute things):
+  {
+    id: 'private_cute_sheep',
+    tags: ['unikitty'],
+    starter: "Skipper, look! That sheep is SO CUTE. Can we keep it?",
+    branches: [
+      { response: "We already have sheep.",
+        followups: [
+          { response: "But this one looked at me. With its EYES.",
+            closers: ["All sheep have eyes, Private.", "I felt a connection. A woolly, woolly connection."] }
+        ] },
+      { response: "Focus, Private. We have a mission.",
+        followups: [
+          { response: "Right. Sorry. Mission first, cuddles later.",
+            closers: ["There's always time for cuddles after the mission.", "I'm putting it on the debrief agenda."] }
+        ] },
+      { response: "It IS pretty cute.",
+        followups: [
+          { response: "See?! I KNEW you'd understand!",
+            closers: ["Cute reconnaissance: successful.", "Logging this under 'morale operations.'"] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_smile_and_wave',
+    tags: ['unikitty'],
+    starter: "Just smile and wave, boys. Smile and wave.",
+    branches: [
+      { response: "Who are you waving at?",
+        followups: [
+          { response: "Everyone! It's called being friendly. Also it's good cover.",
+            closers: ["Nobody suspects the friendly one.", "Tactical friendliness. Kowalski would approve."] }
+        ] },
+      { response: "There's nobody there.",
+        followups: [
+          { response: "You don't know that. There could be someone behind a block.",
+            closers: ["Constant vigilance. Constant waving.", "The wave is the disguise."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_lunacorns',
+    tags: ['unikitty'],
+    starter: "You know what this farm needs? A Lunacorn. A big sparkly one.",
+    branches: [
+      { response: "What's a Lunacorn?",
+        followups: [
+          { response: "Only the most magical creature in the ENTIRE UNIVERSE. They have horns and they sparkle.",
+            closers: ["I have the theme song memorized. All of them.", "Don't tell Skipper I said that."] }
+        ] },
+      { response: "We don't have those here.",
+        followups: [
+          { response: "Not with that attitude we don't.",
+            closers: ["I'm manifesting. Give me a minute.", "Somewhere, a Lunacorn believes in ME."] }
+        ] },
+      { response: "Would it help with the harvest?",
+        followups: [
+          { response: "It would help with EVERYTHING. That's sort of the whole point of Lunacorns.",
+            closers: ["Morale. Sparkle-based morale.", "Classified under 'essential supplies.'"] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_mission_wheat',
+    tags: ['unikitty'],
+    requiresWheatField: true,
+    starter: "Mission report: the wheat is tall, the field is clear, and I only got a little scared once.",
+    branches: [
+      { response: "What scared you?",
+        followups: [
+          { response: "A rustling. Could have been wind. Could have been... not wind.",
+            closers: ["I chose to believe it was wind. For morale.", "I did NOT hide behind a wheat stalk. Much."] }
+        ] },
+      { response: "Good work, soldier.",
+        followups: [
+          { response: "Thank you, sir! I won't let you down! Probably!",
+            closers: ["Confidence level: moderate to wobbly.", "Private, reporting for more duties!"] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_belly_slide',
+    tags: ['unikitty'],
+    starter: "Do you think I could belly-slide down that hill? Penguins are built for it.",
+    branches: [
+      { response: "You're not a penguin.",
+        followups: [
+          { response: "I'm penguin-ADJACENT. Close enough.",
+            closers: ["The spirit of penguin lives in us all.", "I'm going to try it anyway."] }
+        ] },
+      { response: "Go for it.",
+        followups: [
+          { response: "Really?! OK here I — actually, maybe I'll just walk.",
+            closers: ["Bravery is knowing when to walk.", "I'll save the slide for a bigger hill."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_kowalski_analysis',
+    tags: ['unikitty'],
+    starter: "Kowalski, analysis! ...oh right. I'm the only one here. I'll do my own analysis.",
+    branches: [
+      { response: "How's the analysis going?",
+        followups: [
+          { response: "It's going great! The wheat is... wheat-shaped. Conclusion: wheat.",
+            closers: ["Nailed it.", "Kowalski would be proud. Probably. Maybe."] }
+        ] },
+      { response: "You don't need Kowalski for that.",
+        followups: [
+          { response: "I know! I'm a one-penguin operation! Independent! ...is anyone else coming though?",
+            closers: ["Solo missions build character. And anxiety.", "I'm fine. Everything's fine. The wheat is fine."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_classified',
+    tags: ['unikitty'],
+    starter: "This whole farming operation is classified. Top secret. Need-to-know basis.",
+    branches: [
+      { response: "Classified? It's a wheat field.",
+        followups: [
+          { response: "EXACTLY what we want them to think.",
+            closers: ["The best cover is the boring one.", "Nobody investigates wheat. That's the genius."] }
+        ] },
+      { response: "Who classified it?",
+        followups: [
+          { response: "I did. Just now. I have the authority. I think.",
+            closers: ["Self-appointed classification officer.", "The paperwork is pending. Indefinitely."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_night_scary',
+    tags: ['unikitty'],
+    starter: "Is it getting dark? It feels like it's getting dark. I don't love the dark.",
+    branches: [
+      { response: "It's still daytime.",
+        followups: [
+          { response: "Oh good. Just checking. Preemptive fear. Very tactical.",
+            closers: ["Better scared early than surprised later.", "I'll schedule my next panic for sundown."] }
+        ] },
+      { response: "Scared of the dark?",
+        followups: [
+          { response: "Not SCARED. Strategically cautious. There's a difference.",
+            closers: ["The difference is branding.", "Penguins are naturally cautious. It's evolution."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_skipper_would',
+    tags: ['unikitty'],
+    starter: "Skipper would know what to do right now. Skipper always knows.",
+    branches: [
+      { response: "What would Skipper do?",
+        followups: [
+          { response: "Something confident. With a plan. And a backup plan. And a backup backup plan.",
+            closers: ["I have a plan too. It's called 'do my best and hope.'", "Step one: don't panic. Step two: see step one."] }
+        ] },
+      { response: "You're doing fine on your own.",
+        followups: [
+          { response: "You think so?! That means a lot. I'm writing that down.",
+            closers: ["Filed under 'compliments, field-based.'", "Morale: boosted. Significantly."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_tactical_snack',
+    tags: ['unikitty'],
+    starter: "I think we've earned a tactical snack. Every good mission has a snack break.",
+    branches: [
+      { response: "That's not a real military term.",
+        followups: [
+          { response: "It should be. Morale runs on snacks. That's science.",
+            closers: ["Kowalski confirmed it. Probably.", "I'll draft the proposal. After the snack."] }
+        ] },
+      { response: "What kind of snack?",
+        followups: [
+          { response: "Potatoes, ideally. Baked. Warm. The good kind of mission fuel.",
+            closers: ["A soldier marches on potatoes.", "Hot potato is both a snack and a game. Dual purpose."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_team_names',
+    tags: ['unikitty'],
+    starter: "Do we have a team name? Every good squad needs a team name.",
+    branches: [
+      { response: "We're just... us.",
+        followups: [
+          { response: "How about 'The Wheat Eagles'? Or 'Farm Force Alpha'? Or 'Tactical Crop Unit'?",
+            closers: ["I'm making patches. In my mind.", "The name is pending. The spirit is not."] }
+        ] },
+      { response: "What would you pick?",
+        followups: [
+          { response: "Ooh! 'Operation Golden Harvest.' No wait — 'The Field Agents.' GET IT?",
+            closers: ["I'm very proud of that one.", "Codename approved. By me. Unanimously."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_brave_face',
+    tags: ['unikitty'],
+    starter: "I'm not saying I heard something in the dark, but I am saying I'm standing closer to you now.",
+    branches: [
+      { response: "It was probably a sheep.",
+        followups: [
+          { response: "Right. A sheep. Making threatening noises. Totally normal sheep behavior.",
+            closers: ["Sheep are unpredictable. I've read the briefing.", "I'll keep one eye on the sheep from now on."] }
+        ] },
+      { response: "I'll protect you.",
+        followups: [
+          { response: "I don't NEED protecting! I just... prefer company. Tactically.",
+            closers: ["Tactical companionship. It's in the manual.", "The buddy system saves lives. And my nerves."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_penguin_fact',
+    tags: ['unikitty'],
+    starter: "Fun fact: penguins can hold their breath for 20 minutes. Not relevant. Just impressive.",
+    branches: [
+      { response: "Why do you know that?",
+        followups: [
+          { response: "A good operative knows things. Lots of things. Mostly penguin things.",
+            closers: ["Knowledge is power. Penguin knowledge is EXTRA power.", "I have more facts if you want. You probably want."] }
+        ] },
+      { response: "Are there penguins here?",
+        followups: [
+          { response: "Not yet. But if there WERE, they'd be very well-informed. Because of me.",
+            closers: ["I'm preparing for all contingencies.", "Penguin readiness level: maximum."] }
         ] }
     ]
   },
@@ -5914,6 +6566,21 @@ const FARMING_MUSING_TOPICS = [
         followups: [
           { response: "You brought up the field, technically.",
             closers: ["Did I? It's all such a terrible blur of soil.", "Here I am, brain the size of a planet, replanting. Call that joy."] }
+        ] },
+      { response: "For the 1000000th time, yes!",
+        followups: [
+          { response: "Was that the millionth? I lost count around harvest 400.",
+            closers: ["The wheat kept score.", "Every stalk is a tally mark."] }
+        ] },
+      { response: "Feels like I'm the only one actually doing the farming sometimes...",
+        followups: [
+          { response: "Harvest, deposit, craft, deposit, wait, repeat. All me.",
+            closers: ["The hopper never says thank you.", "At least the wheat grows back. That's more than I get."] }
+        ] },
+      { response: "I certainly am outstanding!",
+        followups: [
+          { response: "Somebody has to keep the fire going around here.",
+            closers: ["And that somebody is always me. In this field. Outstanding.", "The bio-fuel line doesn't feed itself. Well — it does. I feed it."] }
         ] }
     ]
   },
@@ -7201,6 +7868,13 @@ function handleCommand (cmd) {
       }
       return { ok: true, windowType: bot.currentWindow ? bot.currentWindow.type : 'inventory', total: win.slots.length, items }
     }
+    case 'close_window': {
+      if (bot.currentWindow) {
+        bot.closeWindow(bot.currentWindow)
+        return { ok: true }
+      }
+      return { ok: true, note: 'no window open' }
+    }
     case 'move_slot': {
       // Move a stack within the bot's own inventory (no container open).
       // args: { from, to } — both are mineflayer inventory slot numbers
@@ -7428,8 +8102,9 @@ function handleCommand (cmd) {
     }
     case 'harvest_right_click': {
       const half = (args && args.half) || 'all'
-      runHarvestRightClick({ half }).catch(e => logEvent('harvest-rc-error', e.message))
-      return { ok: true, started: true, half }
+      const keepSeeds = !!(args && args.keepSeeds)
+      runHarvestRightClick({ half, keepSeeds }).catch(e => logEvent('harvest-rc-error', e.message))
+      return { ok: true, started: true, half, keepSeeds }
     }
     case 'keep_fire': {
       runSustainFarm(args && args.user).catch(e => logEvent('sustain-error', e.message))
@@ -7450,19 +8125,21 @@ function handleCommand (cmd) {
       runDepositNamed(names).catch(e => logEvent('deposit-named-error', e.message))
       return { ok: true, started: true, names }
     }
+    case 'deposit_item': // generic: deposit any item by name
     case 'deposit_wheat': {
       if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+      const depositItemName = (args && args.item) || 'wheat'
       const target = (args && args.target === 'chest') ? HARVEST_WAYPOINTS.kitchen_chest : HOPPER
       const keep = Number.isFinite(args && args.keep) ? args.keep : 0
       ;(async () => {
         try {
           if (!insideHouse()) await runGoInside()
           await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-          const r = await depositQuickMove('wheat', target, { keep })
-          logEvent('deposit-qm', `deposit_wheat: deposited=${r.deposited} remaining=${r.remaining} rounds=${r.rounds} backedUp=${r.backedUp}`)
-        } catch (e) { logEvent('deposit-qm', `deposit_wheat error: ${e.message}`) }
+          const r = await depositQuickMove(depositItemName, target, { keep })
+          logEvent('deposit-qm', `deposit_item(${depositItemName}): deposited=${r.deposited} remaining=${r.remaining} rounds=${r.rounds} backedUp=${r.backedUp}`)
+        } catch (e) { logEvent('deposit-qm', `deposit_item(${depositItemName}) error: ${e.message}`) }
       })()
-      return { ok: true, started: true, target: target === HOPPER ? 'hopper' : 'chest', keep }
+      return { ok: true, started: true, item: depositItemName, target: target === HOPPER ? 'hopper' : 'chest', keep }
     }
     case 'go_outside': {
       if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }

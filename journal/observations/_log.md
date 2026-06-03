@@ -7,6 +7,147 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## ⏸️ PICK UP HERE NEXT TIME (paused 2026-06-02)
+
+**Goal: finish + test the NEW "keep the fire going," then wire it into `bot.js`.** The plant-ball
+crafting mechanic and the bio-diesel feed are now understood (session entry below). Left to do:
+
+1. **Test the shift-click seed cascade** (untested — paused mid-setup). Load surplus seeds into the
+   bench's internal storage (slots 9–27), place one 8-seed ring (0,1,2,3,5,6,7,8; 4 empty),
+   **close → reopen** to compute slot 28, then **shift-click slot 28** (`click_slot {slot:28,
+   button:0,mode:1}`). If it cascades (crafts many, auto-restocking the ring from storage, like
+   planks→buttons), that's how the routine converts all surplus seeds in one action. If not, fall
+   back to the proven one-at-a-time loop (place ring → close → reopen → take, **8 seeds : 1 ball**).
+2. **Test the food-safety debounce** — implemented in `bot.js` (session entry), NOT yet
+   restarted/tested. Restart Muse, open a modded container, confirm no false potato run over the
+   next few polls. See `tryFoodSafety` / `FOOD_SAFETY_DEBOUNCE`.
+3. **Code the new keep-fire** once crafting is proven:
+   - Wheat → hopper, **keep 7** (line ~1818, the `autoDeposit` path: `{keep: 0}` → `{keep: 7}`).
+   - Replace seed-overflow→chest (lines ~1844–1850) with: keep 16 seeds, take the rest to the bench,
+     craft plant balls.
+   - After plant balls → hopper, **feed reserved wheat 1 at a time, wait ~20s, watch the hopper's
+     plant-ball count drop** (the batch-cleared signal). ≤7 wheat. Empirical only — the modded
+     engine's internal count is invisible.
+
+Physical state at pause: Muse near the chest approach, HP 20. ~39 `wheat_seeds` in inventory
+(server-side — a desync was masking the read), 53 `wheat`, ~2 stacks baked potatoes, 1 plant ball
+already in the kitchen chest, bench grid empty. **auto_food is still ON in the running process**
+(the debounce is on disk but needs a restart to load) — a false-triggered potato run may be finishing.
+
+### Open questions (NOT nailed down)
+- **Shift-click cascade for seeds** — does it cascade like planks→buttons? (untested)
+- **Debounce** — does it actually stop the false-fire? (untested; needs restart)
+- **Engine timing** — Step 2 cleared 8 wheat + 3 balls in ~20s. Is ~20s the right wait per top-up
+  wheat in general? (the "tuning detail" — interval may need tuning)
+- **Remainder = 0 edge** — if the engine is already clear, balls drain with no wheat; a reflexive
+  "add 1 wheat" then starts a fresh partial batch. Guard for it.
+- **Shared engine** — Roz (Ripplebot) + Rainbot feed the SAME in-game engine (their code is isolated
+  per-machine — our `bot.js` edits only affect Muse until pushed — but the engine *state* is shared).
+  Park them for clean routine runs.
+- **No auto-reconnect** — keepAlive drops killed Muse ~3× this session; `bot.js` doesn't reconnect.
+  Worth adding for unattended loops.
+
+---
+
+## 2026-06-02 — Plant-ball crafting cracked, bio-diesel feed mapped, food-safety debounced
+
+Long session. Resumed the paused stash task, then built toward the new "keep the fire going" where
+**wheat AND plant balls both feed the bio-diesel engine**.
+
+**Stash task done.** Crafted a plant ball (8-seed ring → `unknown`) and stashed it in the kitchen
+chest via `runStashUnknown` (deposited=1, remaining=0). Confirmed `runStashUnknown` scans for the
+first **empty** chest slot (skips occupied), so the salt-pot's slot (0 vs 6) is irrelevant to it —
+the earlier slot-0 rejection was the *other* path (`runDepositNamed` / `win.deposit`).
+
+**Bio-diesel engine intake — the 8-batch rule (NEW).** The hopper (-266,65,573) feeds a bio-diesel
+engine that consumes input in **batches of 8** (same shape as the seed→ball recipe). A partial batch
+(1–7) stalls the engine and backs up the hopper; queued plant balls can't drain until the batch
+completes. **Validated (staged test):** engine held 7 wheat with 3 plant balls stuck in the hopper →
+fed **1** wheat → batch hit 8 → engine cleared → all 3 plant balls drained to 0, in ~20s. The
+plant-ball count dropping is the **observable proxy** for the (unreadable, modded) engine clearing.
+
+**The 7-wheat reserve.** Keep 7 wheat back at deposit time; feed them 1-at-a-time to top up whatever
+partial batch is stuck (max top-up = 7, when the engine holds just 1). 7×20s is well under regrow
+time. **Can't use harvest math for the remainder** — the engine's prior state is unknown (other bots
+feed it), so the routine watches the hopper, never computes.
+
+**Plant-ball crafting mechanic — cracked (was the blocker).**
+- Bot-placing the 8-seed ring does **not** trigger the bench to compute (reproduced the journal's
+  limitation: correct ring in grid 0–8, slot 28 stayed empty — confirmed not a lag via re-read).
+- **The bench computes on GUI-open**, not on placement: place ring → **close → reopen** → slot 28
+  computes the plant ball. That's the workaround for autonomous crafting.
+- Taking the output **consumes the 8 grid seeds** — clean **8:1**. (The "grid still full after
+  taking" display is desync; a fresh reopen shows the grid empty.)
+- **Shift-click cascade** (untested for seeds; set up but paused): seeds in storage (9–27) +
+  shift-click the computed output *should* craft repeatedly, auto-restocking the ring from storage
+  (the planks→buttons behavior). The efficient batch path — see open questions.
+
+**Food-safety false-trigger — root-caused + fixed.** Opening any modded container (bench/hopper/chest)
+transiently desyncs `bot.inventory` to read empty → `countBakedPotatoes()` reads 0 → food-safety
+false-fires a potato run. Hit **twice** this session. Fix: **debounce** in `tryFoodSafety` — require
+the low count across `FOOD_SAFETY_DEBOUNCE` (2) consecutive polls, and skip sampling while
+`bot.currentWindow` is open. A desync blip resyncs by the next poll and never accumulates the streak.
+Implemented + syntax-checked, **not yet restarted/tested**.
+
+**Harvest seed divergence (gotcha for the new routine).** `runHarvestRightClick`'s tail auto-deposits
+surplus seeds to the **kitchen chest** (keep 16) — the *old* behavior the new routine replaces. Also:
+the standalone harvest **prompts** "hopper or chest?" for the wheat (30s timeout → keeps on hand);
+only the sustain loop's `autoDeposit:'hopper'` skips the prompt.
+
+**Also discussed — eclipse/brightness experiment (staged, not built).** The server has an in-game
+eclipse (sun darkens mid-day, mobs spawn); bots should stay inside during it. The bot has **no
+light-reading capability** (no `skyLight`/`blockLight` in `bot.js`). Plan: add a `light` ctl action,
+baseline day vs night, find the signal that flags an eclipse (brightness may not move in the readable
+values — mob-spawn could be the real signal), then a stay-inside reflex. Caution from the food-safety
+bug: any such reflex must validate its sensor, not just a threshold.
+
+---
+
+## 2026-06-01 — Breakthrough: driving the modded 3×3 Project Bench
+
+**Goal:** craft on a 3×3 table (vanilla recipe test). The vanilla crafting table never worked for
+the bot.
+
+**Diagnosis (rigorous):** mineflayer crafting is entirely window-based — no open window, no craft.
+The vanilla table (managed by the `fastbench` mod) produces **zero** server response to a
+right-click: no `open_window`, no `window_items`, nothing on any mod channel (sniffed all packets;
+only background mod noise). Chests/furnaces/hoppers open fine — they're TileEntity containers using
+the vanilla `open_window`. The table's GUI is transient and never surfaces to a headless client.
+
+**The fix — swap to a Project Bench + window adoption.** User replaced the table with a ProjectRed
+**Project Bench** (`projectred-expansion`), a TileEntity block with a persistent server-side
+container. Right-clicking it DOES open a real container (server sends `window_items` for window id
+1) — but mineflayer still didn't fire `windowOpen`, because Forge announces modded GUI opens via an
+**FML packet**, not the vanilla `open_window`. So mineflayer stashed the orphaned `window_items`
+and waited forever.
+
+Added a `window_items` listener in `bot.js` that **synthesizes the missing `open_window`** for any
+unrecognized window id (deferred one tick; skips windows already adopted via the vanilla path).
+mineflayer then creates + populates the window and fires `windowOpen`. The bench became fully
+drivable. **Confirmed:** placed planks in the grid → bench auto-computed + auto-restocked from its
+storage → shift-click output → 4 wooden buttons in inventory.
+
+**Bench layout (window id 1, 65 slots):** grid = slots 0–8 (**row-indexed**: 0,1,2 top, 3,4,5
+middle, 6,7,8 bottom); output = slot 28; internal storage ≈9–27; player inv 29–64.
+
+**Slabs confirmed:** 3 planks in a horizontal row (slots 3,4,5) → 6 wooden slabs, taken into
+inventory. Slabs are NOT removed by CraftTweaker — earlier "no slab" results were botched placement
+during messy testing. 1 plank → button also confirmed.
+
+**Two limitations found:** (1) **bot-placed** grid ingredients don't reliably trigger the output
+calc — the user hand-placing 3 planks computed slabs, but the bot placing the same 3 via
+`clickWindow` left the output empty (root cause unknown; likely the generic-container window type).
+Reliable workflow for now: ingredients pre-placed, bot takes output. (2) `bot.inventory` desyncs
+after modded-window ops (6 slabs read as 12; 4 planks as 2) — resync via restart; real item loss is
+possible during heavy juggling. The 2×2 inventory crafting (bread/shears routines) is unaffected —
+verified clean log→planks after restart.
+
+**`bot.js` changes:** added the window-adoption `window_items` handler + a `close_window` ctl
+action. Removed the dead `craft_recipe`/`open_crafting_table` actions (both relied on `windowOpen`,
+which never fires for these GUIs) and the temporary packet sniffer used during the investigation.
+
+Full procedure + slot map: [[../procedures/project-bench-crafting]].
+
 ## 2026-06-01 — Bugfix: modded block collision in door corridor
 
 **Symptom:** bot getting stuck in the SW corner of the house. Pathfinding to house_center from inside routed to z=575+ (south wall) then outside. `walk_until` during exit snagged repeatedly at x=-267.50 with strafe-right pulses that never cleared.

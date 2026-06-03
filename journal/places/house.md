@@ -21,7 +21,7 @@ The safe space. Auto-sleep is enabled inside this bounding box at `timeOfDay >= 
 - [[house-bed]] — sleep
 - [[house-kitchen-chest]] — wheat deposit
 - [[house-crafting-chest]] — non-wheat storage
-- [[house-crafting-table]] — bread crafting
+- **Project Bench** at (-270, 65, 569) — replaced the vanilla crafting table 2026-06-01. The only bot-drivable 3×3 craft block here; see [[../procedures/project-bench-crafting]]. (Bread is still mixed in the 2×2 inventory grid, not on a table.)
 - [[house-furnace]] — east wall, hazard during west-facing missteps
 - [[house-door]] — spruce door, west wall
 
