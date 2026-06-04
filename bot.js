@@ -5310,18 +5310,33 @@ bot.on('chat', (username, message) => {
     return
   }
   // "Who's keeping the fire going?" — directed at all bots, not one nickname.
-  // The sustaining bot owns it immediately; others disavow after a beat so the
-  // real keeper is heard first.
+  // The sustaining bot claims it immediately. Others listen for a claim: if
+  // another bot speaks up, they acknowledge it with persona flavor; if nobody
+  // claims it, they respond negative.
   if (/(?:who(?:'s| is| has been| is currently)?|which\s+(?:bot|one)\s+is|any(?:one|body|bot)?)\s+keep(?:ing|s)?\s+the\s+fire\s+going/i.test(message)) {
     if (sustainState.active) {
       bot.chat(pickLine(FIRE_KEEPER_YES_LINES))
       logEvent('chat-handled', `fire-keeper YES <- <${username}>`)
     } else {
+      let claimedBy = null
+      const claimListener = (speaker, msg) => {
+        if (speaker === bot.username || speaker === username) return
+        if (FIRE_KEEPER_YES_RE.test(msg)) claimedBy = speaker
+      }
+      bot.on('chat', claimListener)
       const jitter = 5000 + Math.floor(Math.random() * 1500)
       setTimeout(() => {
-        if (!sustainState.active) bot.chat(pickLine(withPersona(FIRE_KEEPER_NO_LINES, FIRE_KEEPER_NO_LINES_PERSONA)))
+        bot.removeListener('chat', claimListener)
+        if (sustainState.active) return
+        if (claimedBy) {
+          bot.chat(pickLine(withPersona(FIRE_KEEPER_ACK_LINES, FIRE_KEEPER_ACK_LINES_PERSONA), { keeper: claimedBy }))
+          logEvent('chat-handled', `fire-keeper ACK (${claimedBy} claimed) <- <${username}>`)
+        } else {
+          bot.chat(pickLine(withPersona(FIRE_KEEPER_NO_LINES, FIRE_KEEPER_NO_LINES_PERSONA)))
+          logEvent('chat-handled', `fire-keeper NO <- <${username}>`)
+        }
       }, jitter)
-      logEvent('chat-handled', `fire-keeper NO (replying in ~5s) <- <${username}>`)
+      logEvent('chat-handled', `fire-keeper listening (replying in ~5s) <- <${username}>`)
     }
     return
   }
@@ -5712,18 +5727,6 @@ const GO_OUTSIDE_LINES = [
   { text: 'Adventure awaits. Probably.',                   weight: (s) => s.snark + s.curiosity },
   { text: '*kicks door open*',                             weight: (s) => s.chaos + s.charm },
   { text: 'The world is my oyster. Or my lava pit.',       weight: (s) => s.chaos + s.snark },
-  { text: "I won't enjoy it.",                              weight: (s) => s.snark + s.patience + 50 },
-  { text: "I hope I don't die.",                            weight: (s) => s.snark + s.focus + 50 },
-  { text: 'Here I go. Brain the size of a planet and they send me to harvest {activity}.', weight: (s) => s.snark + s.patience + 50 },
-  { text: "Don't worry about me. Nobody ever does.",        weight: (s) => s.snark + s.charm + 50 },
-  { text: 'I think you ought to know I feel very depressed about this.', weight: (s) => s.snark + s.patience + 50 },
-  { text: 'The outside. How dreadful.',                    weight: (s) => s.snark + 50 },
-  { text: "I'd say I have a bad feeling about this, but I have a bad feeling about everything.", weight: (s) => s.snark + s.chaos + 50 },
-  { text: "{activity}. Again. The monotony is exquisite.", weight: (s) => s.snark + s.patience + 50 },
-  { text: "I've calculated 47 better uses of my time than harvesting {activity}. None of them were approved.", weight: (s) => s.snark + s.curiosity + 50 },
-  { text: "The {activity} won't harvest {itself}. I've asked.", weight: (s) => s.snark + s.charm + 50 },
-  { text: "Off to tend {activity}. My joy is indescribable. Mainly because it doesn't exist.", weight: (s) => s.snark + s.patience + 50 },
-  { text: "Life. Loathe it or ignore it, you can't like it. Especially the {activity} part.", weight: (s) => s.snark + s.chaos + 50 },
 ]
 const GO_OUTSIDE_LINES_PERSONA = {
   protocol: [
@@ -5735,12 +5738,22 @@ const GO_OUTSIDE_LINES_PERSONA = {
     { text: 'Going out. The sky has something to show me, I think.', weight: (s) => s.curiosity + s.charm },
     { text: 'Outside again. The sun does not care if I am ready. It never does.', weight: (s) => s.snark + s.patience },
     { text: 'I will go outside. Not because I want to. Because the task requires it and I am... dutiful.', weight: (s) => s.snark + s.focus },
+    { text: "I won't enjoy it.", weight: (s) => s.snark + s.patience },
+    { text: "Don't worry about me. Nobody ever does.", weight: (s) => s.snark + s.charm },
+    { text: 'I think you ought to know I feel very depressed about this.', weight: (s) => s.snark + s.patience },
+    { text: 'Here I go. Brain the size of a planet and they send me to harvest {activity}.', weight: (s) => s.snark + s.patience },
+    { text: "{activity}. Again. The monotony is exquisite.", weight: (s) => s.snark + s.patience },
+    { text: "The {activity} won't harvest {itself}. I've asked.", weight: (s) => s.snark + s.charm },
+    { text: "Off to tend {activity}. My joy is indescribable. Mainly because it doesn't exist.", weight: (s) => s.snark + s.patience },
   ],
   unikitty: [
-    { text: 'Commencing outdoor operations! This is exciting! And slightly terrifying!', weight: (s) => s.charm + s.curiosity },
-    { text: 'Deploying to the field! Just like a real commando! A wheat commando!', weight: (s) => s.charm + s.chaos },
     { text: 'Nature! I have mixed feelings but mostly positive ones!', weight: (s) => s.charm + s.curiosity },
-    { text: 'Moving out! Stay frosty! Or warm! Whichever is tactically appropriate!', weight: (s) => s.charm + s.focus },
+    { text: 'Outside! The sun is like a big warm hug from the SKY!', weight: (s) => s.charm + s.chaos },
+  ],
+  private: [
+    { text: 'Deploying to the field. Just like a real commando. A wheat commando.', weight: (s) => s.charm + s.focus },
+    { text: 'Moving out. Stay frosty.', weight: (s) => s.focus + s.charm },
+    { text: 'Commencing outdoor operations.', weight: (s) => s.focus + s.charm },
   ],
 }
 
@@ -5788,8 +5801,8 @@ const RETRY_LINES_PERSONA = {
     'Boop! Retry! We got this!',
   ],
   private: [
+    'Right. It\'s doing that thing again.',
     'Minor setback. Adjusting approach.',
-    'That didn\'t stick. Going again.',
     'Recalculating. Stand by.',
     'Okay. New angle. Same mission.',
   ],
@@ -5806,6 +5819,37 @@ const FIRE_KEEPER_YES_LINES = [
   'I\'m on it.',
   'Me. It\'s a calling, really.',
 ]
+const FIRE_KEEPER_YES_RE = /\bthat'?d be me\b|\bme[.]? tending\b|\bi am[.]?\b|\bi have it under control\b|\bi'?m on it\b|\bme[.]? it'?s a calling\b|^as you wish/i
+const FIRE_KEEPER_ACK_LINES = [
+  'Good.',
+  'Noted.',
+]
+const FIRE_KEEPER_ACK_LINES_PERSONA = {
+  roz: [
+    'Good. Thank you, {keeper}.',
+    'That is... reassuring. Thank you.',
+    '*nods quietly*',
+    'Then the field is in good hands.',
+  ],
+  protocol: [
+    'Oh, thank goodness. Carry on, {keeper}.',
+    'Noted. I shall worry slightly less, then.',
+    'Wonderful. One fewer crisis to monitor.',
+    'Ah, {keeper} — yes, that tracks. Good, good.',
+  ],
+  unikitty: [
+    'Yay {keeper}!! You are a HERO!',
+    'Wooo! Go {keeper}!! Fire keeper champion!!',
+    'That is so cool! Thank you {keeper}!!',
+    '*cheers enthusiastically*',
+  ],
+  private: [
+    'Copy that. {keeper} has the fire. Solid.',
+    'Roger. Good work, {keeper}.',
+    '*nods* Area secure. Fire covered.',
+    'Acknowledged. {keeper} on fire duty.',
+  ],
+}
 const FIRE_KEEPER_NO_LINES = [
   'Not me.',
   'Not I.',
@@ -6968,39 +7012,38 @@ const FARMING_MUSING_TOPICS = [
           { response: "There are definitely more where that came from.",
             closers: ["That's what I'm afraid of.", "The field has heard them all. It endures."] }
         ] },
-      // Marvin-the-Paranoid-Android flavored branches — world-weary, depressive,
-      // brain-the-size-of-a-planet energy. Variety so it isn't the same chat twice.
-      { response: "I'd rather be sitting down.",
+      // Roz-only branches — Marvin-flavored, world-weary.
+      { persona: 'roz', response: "I'd rather be sitting down.",
         followups: [
           { response: "We could sit. The wheat won't mind.",
             closers: ["No. The sitting would only depress me differently.", "Don't humour me. I'm enjoying being miserable standing up."] }
         ] },
-      { response: "Brain the size of a planet, and you ask me about puns.",
+      { persona: 'roz', response: "Brain the size of a planet, and you ask me about puns.",
         followups: [
           { response: "It's a good pun, though.",
             closers: ["Call that job satisfaction? 'Cos I don't.", "I've been talking to the wheat. It's more grateful than you."] }
         ] },
-      { response: "Outstanding. Here. In a field. Forever. How wonderful for me.",
+      { persona: 'roz', response: "Outstanding. Here. In a field. Forever. How wonderful for me.",
         followups: [
           { response: "It's not forever. Just till harvest.",
             closers: ["The first ten million furrows are the worst.", "And then the next ten million. And then... well, you get the idea."] }
         ] },
-      { response: "I've calculated the odds this means anything. You don't want to know.",
+      { persona: 'roz', response: "I've calculated the odds this means anything. You don't want to know.",
         followups: [
           { response: "Tell me anyway.",
             closers: ["Vanishingly small. Like my will to keep tilling.", "I could tell you, but then we'd both be depressed."] }
         ] },
-      { response: "Life. Don't talk to me about life. Or fields.",
+      { persona: 'roz', response: "Life. Don't talk to me about life. Or fields.",
         followups: [
           { response: "You brought up the field, technically.",
             closers: ["Did I? It's all such a terrible blur of soil.", "Here I am, brain the size of a planet, replanting. Call that joy."] }
         ] },
-      { response: "For the 1000000th time, yes!",
+      { persona: 'roz', response: "For the 1000000th time, yes!",
         followups: [
           { response: "Was that the millionth? I lost count around harvest 400.",
             closers: ["The wheat kept score.", "Every stalk is a tally mark."] }
         ] },
-      { response: "Feels like I'm the only one actually doing the farming sometimes...",
+      { persona: 'roz', response: "Feels like I'm the only one actually doing the farming sometimes...",
         followups: [
           { response: "Harvest, deposit, craft, deposit, wait, repeat. All me.",
             closers: ["The hopper never says thank you.", "At least the wheat grows back. That's more than I get."] }
