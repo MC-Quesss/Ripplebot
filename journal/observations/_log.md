@@ -7,36 +7,68 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
-## ⏸️ PICK UP HERE NEXT TIME (paused 2026-06-02)
+## 2026-06-03 — Food-safety hardening, sustain-loop retry fix, persona reactions
 
-**Goal: finish + test the NEW "keep the fire going," then wire it into `bot.js`.** The plant-ball
-crafting mechanic and the bio-diesel feed are now understood (session entry below). Left to do:
+Bot state at start: HP 7, food 0, baked potatoes 0. Spawned outside near the potato patch after
+an earlier ECONNRESET crash. Three bots online: Musebot, Ripplebot, Rainbot6032.
 
-1. **Test the shift-click seed cascade** (untested — paused mid-setup). Load surplus seeds into the
-   bench's internal storage (slots 9–27), place one 8-seed ring (0,1,2,3,5,6,7,8; 4 empty),
-   **close → reopen** to compute slot 28, then **shift-click slot 28** (`click_slot {slot:28,
-   button:0,mode:1}`). If it cascades (crafts many, auto-restocking the ring from storage, like
-   planks→buttons), that's how the routine converts all surplus seeds in one action. If not, fall
-   back to the proven one-at-a-time loop (place ring → close → reopen → take, **8 seeds : 1 ball**).
-2. **Test the food-safety debounce** — implemented in `bot.js` (session entry), NOT yet
-   restarted/tested. Restart Muse, open a modded container, confirm no false potato run over the
-   next few polls. See `tryFoodSafety` / `FOOD_SAFETY_DEBOUNCE`.
-3. **Code the new keep-fire** once crafting is proven:
-   - Wheat → hopper, **keep 7** (line ~1818, the `autoDeposit` path: `{keep: 0}` → `{keep: 7}`).
-   - Replace seed-overflow→chest (lines ~1844–1850) with: keep 16 seeds, take the rest to the bench,
-     craft plant balls.
-   - After plant balls → hopper, **feed reserved wheat 1 at a time, wait ~20s, watch the hopper's
-     plant-ball count drop** (the batch-cleared signal). ≤7 wheat. Empirical only — the modded
-     engine's internal count is invisible.
+### Emergency bread protocol
 
-Physical state at pause: Muse near the chest approach, HP 20. ~39 `wheat_seeds` in inventory
-(server-side — a desync was masking the read), 53 `wheat`, ~2 stacks baked potatoes, 1 plant ball
-already in the kitchen chest, bench grid empty. **auto_food is still ON in the running process**
-(the debounce is on disk but needs a restart to load) — a false-triggered potato run may be finishing.
+The food-safety loop was deadlocked: HP < 10 aborted the potato harvest, but with 0 baked potatoes
+and 0 food there was no way to recover HP. Added an emergency pre-step to `tryFoodSafety`: if
+HP < 10, come inside → withdraw up to 16 bread from [[../chests/house-kitchen-chest]] (slot 24) →
+eat → then proceed with the harvest + bake. If no bread in the chest, the bot announces it needs
+help and aborts. Tested: bot recovered from HP 7 / food 0 to HP 20 / food 19 on restart.
 
-### Open questions (NOT nailed down)
-- **Shift-click cascade for seeds** — does it cascade like planks→buttons? (untested)
-- **Debounce** — does it actually stop the false-fire? (untested; needs restart)
+### Food-safety potato harvest capped at 42 tiles
+
+Added `maxTiles` parameter to `runHarvestPotatoesRightClick`. The food-safety caller passes
+`maxTiles: 42` — enough to restock baked potatoes without harvesting the entire 60-tile patch.
+Manual harvests (chat, ctl) still harvest all tiles. The cap is applied after the boustrophedon
+ordering, before the harvest loop.
+
+### Sustain loop: interrupted cycle no longer blocks on 85% maturity
+
+Bug found live: cycles 2 and 3 of "keep the fire going" were interrupted by hostile mobs mid-harvest.
+The partial harvest replanted immature wheat, dropping maturity well below the 85% gate. The loop
+then polled indefinitely, waiting for 85% on wheat that wouldn't mature for minutes — even though
+the right action was to retry immediately. Fix: `retryAfterInterrupt` flag, set true in the catch
+block, bypasses the 85% check on the next poll.
+
+### Sustain poll interval: 15s → 5s
+
+`SUSTAIN_POLL_MS` reduced from 15000 to 5000 for faster cycle recovery.
+
+### Persona reactions: recursive-building-materials
+
+The `recursive-building-materials` musing topic had only 1 unikitty (Private) `personaReaction`
+out of 9 nodes — the ice line. Private rarely got to be enthusiastic because the trigger line was
+1-in-9 odds and had to be said by the *other* bot. Added 5 more unikitty reactions (sugar cubes,
+wood, dirt, bricks, tower), covering 6 of 9 nodes (~67% hit rate).
+
+### Observations
+
+- **`farm_outstanding` timeout pattern:** Musebot initiated `farm_outstanding` twice in the wheat
+  field and timed out both times — no partner responded. When Rainbot said the same line, Musebot
+  logged `gated topic ignored here: farm_outstanding` because Musebot wasn't in the wheat field
+  at that moment. The gating is correct (the topic requires `requiresWheatField`), but the
+  frequency of timeouts suggests bots rarely overlap in the field at the right moment.
+- **Yaw convergence failure on go-inside:** During hostile retreat in cycle 3, `runGoInside` failed
+  all 4 attempts with `yaw didn't converge to east (got 0.00 rad)`. The bot was at the correct
+  x/z orientation block but the yaw lock never settled to east. This left the bot stranded outside
+  during a hostile encounter. Not fixed this session — needs investigation.
+- **Cycle 1 instant abort:** Sustain triggered at bedtime (timeOfDay ≥ 11500). `runGoOutside`
+  refused (`"too late"` line), harvest saw `insideHouse() = true` and aborted. The loop then fell
+  through to deposit/craft (deposited 0, crafted 0) — harmless but wasteful. The bedtime yield
+  system in the harvest itself would have handled this correctly if the bot had gotten outside first.
+
+### Open questions
+- **Yaw convergence on go-inside:** Why does `bot.look()` fail to converge to east (-1.57 rad)
+  when starting from yaw ≈ 0? Happened 3 consecutive times at the same orientation block. May be
+  a modded-server physics issue or a race with `suppressLookAt`.
+- **Sustain cycle 1 at bedtime:** Should the sustain loop check `isBedtime()` before starting a
+  cycle, not just in `sustainSafe()`? Currently `sustainSafe()` is checked, but the harvest's
+  `runGoOutside` has its own bedtime gate that fires first and causes the instant abort.
 - **Engine timing** — Step 2 cleared 8 wheat + 3 balls in ~20s. Is ~20s the right wait per top-up
   wheat in general? (the "tuning detail" — interval may need tuning)
 - **Remainder = 0 edge** — if the engine is already clear, balls drain with no wheat; a reflexive

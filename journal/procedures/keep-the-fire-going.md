@@ -28,8 +28,10 @@ The hands-off sustain loop. The bot watches the wheat field; when it's **fully m
 ## How it works (`bot.js`)
 
 - `runSustainFarm(user)` + module state `sustainState = {active, cycles, startedBy}`.
-- Loop: `scanKnownWheatFields()` every `SUSTAIN_POLL_MS` (15s). When `maturePct >= 85`,
-  triggers the cycle.
+- Loop: `scanKnownWheatFields()` every `SUSTAIN_POLL_MS` (5s). When `maturePct >= 85`,
+  triggers the cycle. If a cycle was **interrupted** (hostile retreat, path failure, etc.),
+  the 85% gate is bypassed on the next poll via `retryAfterInterrupt` — prevents the loop
+  from stalling on partially-harvested (replanted immature) wheat.
 - Harvest uses `keepSeeds: true, skipDeposit: true` — seeds stay on hand, wheat stays on hand.
   The sustain loop handles all deposits itself.
 - **Wheat deposit:** `depositQuickMove('wheat', HOPPER, { keep: SUSTAIN_KEEP_WHEAT })`.
@@ -46,7 +48,7 @@ The hands-off sustain loop. The bot watches the wheat field; when it's **fully m
 
 | Name | Value | Purpose |
 |------|-------|---------|
-| `SUSTAIN_POLL_MS` | 15000 | Field scan interval |
+| `SUSTAIN_POLL_MS` | 5000 | Field scan interval |
 | `SUSTAIN_KEEP_WHEAT` | 7 | Wheat reserved for engine partial-batch clearing |
 | `SUSTAIN_KEEP_SEEDS` | 16 | Seeds kept as replanting buffer |
 

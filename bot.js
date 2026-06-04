@@ -7102,6 +7102,21 @@ const RECURSIVE_MUSING_TOPICS = [
     personaReactions: {
       'Somebody thought ice was a good idea once...': {
         unikitty: 'I think it is! Ice is BEAUTIFUL. Have you SEEN how it sparkles?'
+      },
+      'Sugar cubes would be nice.': {
+        unikitty: 'YES! A sugar cube house! With frosting trim and candy windows!'
+      },
+      'Wood is friendly, but it does burn if you ask it the wrong question.': {
+        unikitty: 'Wood smells SO good though. Like a hug from a tree!'
+      },
+      'Dirt is underrated. It holds everything up and asks for no applause.': {
+        unikitty: 'Dirt is the MOST humble building material. I respect dirt.'
+      },
+      'Bricks are just organized clay with ambition.': {
+        unikitty: 'Ambitious clay! That is the most inspiring thing I have heard all day!'
+      },
+      'The best material depends on whether you are building a house, a tower, or a regret.': {
+        unikitty: 'I would build a tower! A sparkly one! With a flag on top!'
       }
     }
   },

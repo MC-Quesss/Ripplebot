@@ -28,8 +28,13 @@ the potato patch and bakes the crop — keeping the baked output on hand (food, 
 - Gate (all must hold to fire): enabled, not already busy, **no active task**, not
   `goInsideBusy`/`autoSleepBusy`, **not sleeping and not bedtime** (won't start a long run at
   night), `baked_potato < foodSafetyMin`, no hostiles within 16.
-- Action: `runHarvestPotatoesRightClick({ then: 'bake' })` then `runBakePotatoes()` — both the
-  usual one-at-a-time, bedtime-aware tasks (they sleep mid-run and resume at dawn if needed).
+- **Emergency bread protocol (2026-06-03):** if HP < 10 when food-safety fires, the bot goes
+  inside, withdraws up to 16 bread from [[../chests/house-kitchen-chest]] slot 24, eats to
+  recover, then proceeds with the harvest. Breaks the HP-too-low-to-harvest / no-food-to-heal
+  deadlock. If no bread is available, the bot announces it needs help and aborts.
+- Action: `runHarvestPotatoesRightClick({ then: 'bake', maxTiles: 42 })` then
+  `runBakePotatoes()` — both the usual one-at-a-time, bedtime-aware tasks. The harvest is
+  **capped at 42 tiles** (of ~60 total) to keep the food run short.
 - The `then: 'bake'` flag makes the harvest **skip its "bake or stash?" prompt** (no 60s wait)
   and keep the raw potatoes on hand; the loop's separate `runBakePotatoes()` call does the bake.
   (Baking can't run inside the harvest — the harvest still holds the `harvest_potatoes_rc` task,
