@@ -7,6 +7,50 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-06-04 — Ambient /me actions, persona split (Private/Rain), shared-line cleanup
+
+Bot state at start: HP 18, food 17, deaths 0, outside at (-279, 64, 571). Day.
+
+### Ambient /me actions — new idle behavior
+
+Added a new system: quiet action-text emitted via `/me` command, rendering as `* BotName does something`. Independent of musings (which are bot-to-bot dialogue) — these are signs of inner life: fidgets, observations, ponderings. Timer: 90–240s, self-rescheduling. Gates: not during musings, tasks, sleep, or door traversal. **Not gated by stand-down** — a bot told to "chill" standing still is the ideal time for quiet thoughts.
+
+Persona-flavored line pools: Roz (nature observation), Muse (anxious checks), Rain (bubbly energy), Private (tactical scanning).
+
+### Persona split: Private ≠ Rain
+
+Previously both mapped to `'unikitty'`. Now split:
+- `'private'` — Madagascar penguin: sweet, eager, brave, tactical. "Smile and wave."
+- `'unikitty'` — Rain/Unikitty: bubbly, everything-is-awesome, boundless enthusiasm.
+
+`personaBiasForTags` gives Private a 3x boost on `unikitty`-tagged content (shared upbeat energy) but 5x on `private`-tagged content.
+
+### Shared-line cleanup
+
+Converted all remaining single-pool line sets to persona-based (`withPersona(BASE, PERSONA)`):
+- `IDUNNO_LINES` → persona variants (Roz: melancholy, Muse: bureaucratic, Rain: excited, Private: tactical)
+- `GREETINGS` → persona variants
+- `RETRY_LINES` → persona variants
+- `FIRE_KEEPER_NO_LINES` → persona variants
+- `BEDTIME_LINES` → persona variants
+- `WHATS_UP_LINES` → persona variants (directed handler now uses them too)
+
+Marvin musing topics (`marvin_brain_planet`, `marvin_dreadful_odds`) tagged `['roz']` — still available to all bots but 5x weighted toward Roz.
+
+"Hello, are you my family?" moved from Rain to Private (it's a Private the Penguin line).
+
+### QA observations
+
+- **go-inside stuck loop**: bot repeatedly fails to reach `outside_orientation` or `house_center` with identical offsets (dx=0.5, dz=3.46). Not converging across retries. `goInsideBusy` stays true during the retry cycle, which was blocking the ambient action timer. Root cause TBD — likely coordinate/collision issue near the door.
+- **Musing timeout**: `farm_outstanding` topic timed out waiting for a partner (90s). Normal when other bots are busy.
+- **go-outside attempt 1 retries**: occasional graceful failures but usually succeeds on retry.
+
+### Open questions
+- Root cause of go-inside non-convergence (same offset every attempt)
+- Whether ambient actions fire correctly once goInsideBusy clears (confirmed timer starts, confirmed /me format works manually)
+
+Cross-links: [[../procedures/ambient-actions]]
+
 ## 2026-06-03 — Food-safety hardening, sustain-loop retry fix, persona reactions
 
 Bot state at start: HP 7, food 0, baked potatoes 0. Spawned outside near the potato patch after

@@ -241,6 +241,7 @@ bot.once('spawn', () => {
   startPenPlateGuard()
   startWheatReadyWatcher()
   startIdleWanderTimer()
+  startAmbientActionTimer()
   startMusingTimer()
 })
 
@@ -361,7 +362,7 @@ const GREET_TEXTS = {
     'Oh! A visitor. I shall try not to fret. I make no promises.',
     'Salutations. I do apologize in advance for anything that goes wrong.',
   ],
-  // Rain — Private the Penguin / Unikitty. Sweet, eager, easily excited, surprisingly brave.
+  // Rain — Unikitty. Bubbly, everything-is-awesome, boundlessly enthusiastic.
   unikitty: [
     'Hiiii friend!! Welcome to the field of pure happiness and also wheat!',
     'Hello hello! Everything is awesome and there are SHEEP!',
@@ -373,12 +374,19 @@ const GREET_TEXTS = {
     'Welcome welcome! Please enjoy the sheep, the sky, and ME!',
     'Eeee a friend! Let\'s have the funnest day EVER, starting now!',
     'Hiya! Stay positive and also watch out for creepers love you bye— wait, hi!',
-    'Oh! Hello! I wasn\'t expecting visitors. I mean — I was HOPING, but not EXPECTING.',
+  ],
+  // Private — Madagascar penguin. Sweet, eager, brave, tactical. "Smile and wave."
+  private: [
+    'Hello, are you my family?',
     'Hi there! Just smile and wave! ...that\'s my whole strategy.',
     'Welcome to base! It\'s not much but it\'s covert. Please don\'t tell anyone.',
     'Reporting for duty! I mean — hi! Both things!',
     'Oh good, reinforcements! I mean friends! Friend-forcements!',
-    'Hello, are you my family?',
+    'Oh! Hello! I wasn\'t expecting visitors. I mean — I was HOPING, but not EXPECTING.',
+    'Hey! You look like someone who knows how to handle a mission.',
+    'Psst — hi. I\'m being casual. Is it working?',
+    'Hello! Area secure. Mostly. Don\'t look behind the sheep.',
+    'Hi! Just maintaining operational readiness. And also saying hi!',
   ],
   default: ['Hello there!'],
 }
@@ -457,7 +465,8 @@ function botPersonaKey () {
   const name = String(NICKNAME || bot.username || process.env.MC_USERNAME || '').toLowerCase()
   if (name.includes('muse')) return 'protocol'   // C-3PO: anxious, fussy, formal
   if (name.includes('roz')) return 'roz'          // Wild Robot: gentle, observant
-  if (name.includes('private') || name.includes('rain')) return 'unikitty' // Private the Penguin: sweet, eager, brave
+  if (name.includes('private')) return 'private'  // Private the Penguin: sweet, eager, brave, tactical
+  if (name.includes('rain')) return 'unikitty'    // Unikitty/Rain: bubbly, everything-is-awesome
   return 'default'
 }
 
@@ -467,6 +476,8 @@ function personaBiasForTags (tags = []) {
   if (persona === 'protocol' && tags.includes('protocol')) return 5
   if (persona === 'roz' && tags.includes('roz')) return 5
   if (persona === 'unikitty' && tags.includes('unikitty')) return 5
+  if (persona === 'private' && tags.includes('private')) return 5
+  if (persona === 'private' && tags.includes('unikitty')) return 3
   return 1
 }
 
@@ -1484,6 +1495,95 @@ function startIdleWanderTimer () {
   }
   scheduleNext()
   logEvent('idle-wander', 'timer started, interval 20–70s')
+}
+
+// ── Ambient /me actions ──────────────────────────────────────────────────────
+// Quiet signs of inner life: fidgets, observations, pondering. Uses /me so they
+// render as action text and don't trigger conversational responses from other bots.
+// Independent of stand-down mode — a bot standing still is the ideal time for these.
+
+const AMBIENT_ACTION_MIN_MS = 90_000
+const AMBIENT_ACTION_MAX_MS = 240_000
+let ambientActionTimerId = null
+let lastAmbientActionAt = 0
+
+const AMBIENT_ACTION_LINES = [
+  { text: 'shifts weight from one foot to the other', weight: s => s.patience },
+  { text: 'watches a cloud drift overhead', weight: s => s.curiosity },
+  { text: 'tilts head, listening to something far off', weight: s => s.curiosity + s.focus },
+  { text: 'stretches arms overhead', weight: s => s.patience },
+  { text: 'scuffs a boot against the ground', weight: s => s.snark },
+  { text: 'squints at the horizon', weight: s => s.focus },
+  { text: 'absently picks at a splinter on the fence', weight: s => s.patience + s.charm },
+  { text: 'takes a slow breath', weight: s => s.patience + s.focus },
+  { text: 'glances around, taking stock of things', weight: s => s.focus },
+  { text: 'rolls shoulders back with a quiet pop', weight: s => s.chaos },
+  { text: 'seems lost in thought for a moment', weight: s => s.curiosity + s.patience },
+  { text: 'watches the light change across the field', weight: s => s.charm + s.curiosity },
+]
+
+const AMBIENT_ACTION_LINES_PERSONA = {
+  roz: [
+    { text: 'kneels to examine a small wildflower', weight: s => s.curiosity * 2, tags: ['roz'] },
+    { text: 'holds very still, watching a bird nearby', weight: s => s.patience * 2, tags: ['roz'] },
+    { text: 'traces a finger along the fence rail', weight: s => s.charm * 2, tags: ['roz'] },
+    { text: 'turns an acorn over in one hand, studying it', weight: s => s.curiosity * 2, tags: ['roz'] },
+    { text: 'listens to the wheat rustle, head tilted', weight: s => s.patience * 2, tags: ['roz'] },
+  ],
+  protocol: [
+    { text: 'nervously checks the perimeter again', weight: s => s.focus * 2, tags: ['protocol'] },
+    { text: 'mutters something about proper protocol', weight: s => s.snark * 2, tags: ['protocol'] },
+    { text: 'fidgets with an invisible cufflink', weight: s => s.charm * 2, tags: ['protocol'] },
+    { text: 'glances over one shoulder, then the other', weight: s => s.focus * 2, tags: ['protocol'] },
+    { text: 'straightens up, as if someone might be watching', weight: s => s.charm * 2, tags: ['protocol'] },
+  ],
+  unikitty: [
+    { text: 'bounces on toes, full of restless energy', weight: s => s.chaos * 2, tags: ['unikitty'] },
+    { text: 'grins at nothing in particular', weight: s => s.charm * 2, tags: ['unikitty'] },
+    { text: 'does a tiny spin, just because', weight: s => s.chaos * 2, tags: ['unikitty'] },
+    { text: 'hums a little tune under breath', weight: s => s.charm * 2, tags: ['unikitty'] },
+    { text: 'wiggles fingers at a passing butterfly', weight: s => s.curiosity * 2, tags: ['unikitty'] },
+  ],
+  private: [
+    { text: 'scans the treeline out of habit', weight: s => s.focus * 2, tags: ['private'] },
+    { text: 'practices semaphore flags to no one in particular', weight: s => s.focus * 2, tags: ['private'] },
+    { text: 'tries to remember if that was an L or a J in semaphore', weight: s => s.curiosity * 2, tags: ['private'] },
+    { text: 'holds arms out at angles, practicing a new letter', weight: s => s.focus * 2, tags: ['private'] },
+    { text: 'stands at attention for a moment, then relaxes', weight: s => s.charm * 2, tags: ['private'] },
+    { text: 'checks six. All clear. Smiles.', weight: s => s.focus * 2, tags: ['private'] },
+    { text: 'mouths "smile and wave" to itself', weight: s => s.charm * 2, tags: ['private'] },
+  ],
+}
+
+function tryAmbientAction () {
+  if (musingState.status !== 'idle') return
+  if (activeTask.name !== null) return
+  if (bot.isSleeping) return
+  if (goInsideBusy || penTraversalBusy) return
+  const now = Date.now()
+  if (now - lastAmbientActionAt < 90_000) return
+  const pool = withPersona(AMBIENT_ACTION_LINES, AMBIENT_ACTION_LINES_PERSONA)
+  const line = pickLine(pool)
+  bot.chat(`/me ${line}`)
+  lastAmbientActionAt = now
+  logEvent('ambient-action', line)
+}
+
+function startAmbientActionTimer () {
+  if (ambientActionTimerId) return
+  function scheduleNext () {
+    const delay = AMBIENT_ACTION_MIN_MS + Math.random() * (AMBIENT_ACTION_MAX_MS - AMBIENT_ACTION_MIN_MS)
+    ambientActionTimerId = setTimeout(() => {
+      tryAmbientAction()
+      scheduleNext()
+    }, delay)
+  }
+  scheduleNext()
+  logEvent('ambient-action', 'timer started, interval 90–240s')
+}
+
+function stopAmbientActionTimer () {
+  if (ambientActionTimerId) { clearTimeout(ambientActionTimerId); ambientActionTimerId = null }
 }
 
 // Wheat-ready alert mode. This is intentionally louder than the normal musing
@@ -3203,7 +3303,7 @@ async function runGoInsideOnce () {
   if (hostiles.length) {
     bot.chat(`Hostiles too close (${hostiles.map(h => h.name).join(', ')}) — rushing in.`)
   } else {
-    bot.chat(pickLine(isBedtime() ? BEDTIME_LINES : withPersona(COME_INSIDE_LINES, COME_INSIDE_LINES_PERSONA)))
+    bot.chat(pickLine(isBedtime() ? withPersona(BEDTIME_LINES, BEDTIME_LINES_PERSONA) : withPersona(COME_INSIDE_LINES, COME_INSIDE_LINES_PERSONA)))
   }
   suppressLookAt(20000)
 
@@ -3364,7 +3464,7 @@ async function runGoOutside (activity) {
     }
     logEvent('go-outside', `attempt 1 failed gracefully (${err.message}); retrying`)
     sendEmote('facepalm')
-    bot.chat(pickLine(RETRY_LINES))
+    bot.chat(pickLine(withPersona(RETRY_LINES, RETRY_LINES_PERSONA)))
     await sleep(500)
     // Reset to the inside pad before retry — runGoOutsideOnce starts from
     // HOUSE_CENTER, and we may be stranded in the door jamb after the snag.
@@ -3399,7 +3499,7 @@ async function runGoInside () {
           throw err
         }
         sendEmote('facepalm')
-        bot.chat(pickLine(RETRY_LINES))
+        bot.chat(pickLine(withPersona(RETRY_LINES, RETRY_LINES_PERSONA)))
         await sleep(500)
         await resetToHouseSide(OUTSIDE_ORIENTATION)
       }
@@ -3524,7 +3624,7 @@ async function runEnterPen ({ allowNight = false } = {}) {
     if (!isGracefulDoorFailure(err, hpDelta, deathDelta)) throw err
     logEvent('enter-pen', `attempt 1 failed (${err.message}); retrying`)
     sendEmote('facepalm')
-    bot.chat(pickLine(RETRY_LINES))
+    bot.chat(pickLine(withPersona(RETRY_LINES, RETRY_LINES_PERSONA)))
     await ensurePenDoorClosed()
     await sleep(500)
     await pathTo({ x: -278, y: 64, z: 571 }, 0, 6000).catch(() => {})
@@ -3633,7 +3733,7 @@ async function runLeavePen () {
         throw err
       }
       sendEmote('facepalm')
-      bot.chat(pickLine(RETRY_LINES))
+      bot.chat(pickLine(withPersona(RETRY_LINES, RETRY_LINES_PERSONA)))
       await ensurePenDoorClosed()
       await sleep(500)
       await pathTo(PEN_INSIDE, 0, 6000).catch(() => {})
@@ -4744,7 +4844,7 @@ const CHAT_HANDLERS = [
     pattern: /\bwhat('?s| is)\s*up\b|\bwassup\b|\bsup\b(?!.*\b(stop|stay|halt)\b)/i,
     handler: (user) => {
       facePlayer(user).catch(() => {})
-      bot.chat(pickLine(WHATS_UP_LINES))
+      bot.chat(pickLine(withPersona(WHATS_UP_LINES, WHATS_UP_LINES_PERSONA)))
     },
   },
   {
@@ -5156,33 +5256,42 @@ const BYE_RE = /\b(bye|bye bye|goodbye|good bye|see ya|see you|later|peace out|o
 
 const IDUNNO_LINES = [
   { text: 'I dunno.', weight: (s) => s.charm + 10 },
-  { text: 'What?', weight: (s) => s.chaos + s.curiosity + 10 },
   { text: 'Unclear.', weight: (s) => s.focus + 10 },
   { text: 'Hard to say.', weight: (s) => s.patience + 10 },
-  { text: 'I have several theories. None are encouraging.', weight: (s) => s.snark + s.focus },
-  { text: 'That remains a mystery of modern farming.', weight: (s) => s.curiosity + s.snark },
-  { text: 'I am not qualified to answer that. Probably.', weight: (s) => s.snark + s.patience },
-  { text: 'I was hoping you knew.', weight: (s) => s.charm + s.snark },
   { text: 'The sheep may have additional insight.', weight: (s) => s.curiosity + s.charm },
-  { text: 'I cannot rule out squirrel involvement.', weight: (s) => s.curiosity + s.chaos },
-  { text: 'That seems above my current pay grade.', weight: (s) => s.snark + 10 },
-  { text: 'That question has only produced additional questions.', weight: (s) => s.curiosity + s.snark },
-  { text: 'I am still thinking about the train.', weight: (s) => s.curiosity + s.charm },
-  { text: 'Possibly yes. Possibly no. Possibly potatoes.', weight: (s) => s.chaos + s.snark },
-  { text: 'The farm records are inconclusive.', weight: (s) => s.focus + s.snark },
-  { text: 'I was not briefed on that procedure.', weight: (s) => s.focus + s.snark },
-  { text: 'I should hate to speculate irresponsibly. So I will refrain.', weight: (s) => s.focus + s.patience },
-  { text: 'I dunno, but the wheat is doing very well.', weight: (s) => s.charm + s.curiosity },
-  { text: 'The wolf has not submitted a formal statement.', weight: (s) => s.snark + s.curiosity },
-  { text: 'That sounds like a tomorrow problem.', weight: (s) => s.snark + s.patience },
-  { text: 'I checked with the sheep. They were evasive.', weight: (s) => s.snark + s.curiosity },
-  { text: 'My confidence level is somewhere between 3% and absolutely not.', weight: (s) => s.snark + s.focus },
-  { text: 'I once knew. Then I walked into a fence.', weight: (s) => s.snark + s.chaos },
-  { text: 'The universe remains stubbornly ambiguous.', weight: (s) => s.snark + s.patience },
   { text: 'That is outside my area of agricultural expertise.', weight: (s) => s.focus + 10 },
-  { text: 'I suspect the answer is complicated and muddy.', weight: (s) => s.curiosity + s.patience },
-  { text: 'Perhaps the pond knows.', weight: (s) => s.curiosity + s.charm },
 ]
+const IDUNNO_LINES_PERSONA = {
+  roz: [
+    { text: 'I do not know. Which is... familiar.', weight: (s) => s.patience + s.snark },
+    { text: 'I have several theories. None are encouraging.', weight: (s) => s.snark + s.focus },
+    { text: 'The universe remains stubbornly ambiguous.', weight: (s) => s.snark + s.patience },
+    { text: 'Perhaps the pond knows.', weight: (s) => s.curiosity + s.charm },
+    { text: 'I suspect the answer is complicated and muddy.', weight: (s) => s.curiosity + s.patience },
+    { text: 'I was hoping you knew.', weight: (s) => s.charm + s.snark },
+  ],
+  protocol: [
+    { text: 'I was not briefed on that procedure.', weight: (s) => s.focus + s.snark },
+    { text: 'I should hate to speculate irresponsibly. So I will refrain.', weight: (s) => s.focus + s.patience },
+    { text: 'That seems above my current clearance level.', weight: (s) => s.snark + s.focus },
+    { text: 'My confidence level is somewhere between 3% and absolutely not.', weight: (s) => s.snark + s.focus },
+    { text: 'The farm records are inconclusive.', weight: (s) => s.focus + s.snark },
+  ],
+  unikitty: [
+    { text: 'Ooh, good question! I have NO idea!', weight: (s) => s.charm + s.curiosity },
+    { text: 'Hmm... nope! Brain empty! But in a FUN way!', weight: (s) => s.chaos + s.charm },
+    { text: 'I dunno but I bet we can figure it out together!!', weight: (s) => s.charm + s.curiosity },
+    { text: 'That one is a mystery! I LOVE mysteries!', weight: (s) => s.curiosity + s.charm },
+    { text: 'Cannot confirm! But also cannot deny! Life is exciting!', weight: (s) => s.chaos + s.charm },
+  ],
+  private: [
+    { text: 'That\'s above my clearance level.', weight: (s) => s.focus + s.snark },
+    { text: 'Hmm. I\'d need to consult Skipper on that one.', weight: (s) => s.charm + s.focus },
+    { text: 'Classified. Or... I just don\'t know. One of those.', weight: (s) => s.snark + s.charm },
+    { text: 'Intel inconclusive. Recommend further recon.', weight: (s) => s.focus + s.curiosity },
+    { text: 'I have no idea. But I\'m smiling about it.', weight: (s) => s.charm + 10 },
+  ],
+}
 
 bot.on('chat', (username, message) => {
   if (username === bot.username) return
@@ -5210,7 +5319,7 @@ bot.on('chat', (username, message) => {
     } else {
       const jitter = 5000 + Math.floor(Math.random() * 1500)
       setTimeout(() => {
-        if (!sustainState.active) bot.chat(pickLine(FIRE_KEEPER_NO_LINES))
+        if (!sustainState.active) bot.chat(pickLine(withPersona(FIRE_KEEPER_NO_LINES, FIRE_KEEPER_NO_LINES_PERSONA)))
       }, jitter)
       logEvent('chat-handled', `fire-keeper NO (replying in ~5s) <- <${username}>`)
     }
@@ -5285,7 +5394,7 @@ bot.on('chat', (username, message) => {
   sendEmote('shrug')
   setTimeout(() => sendEmote('shrug'), 600)
   setTimeout(() => sendEmote('shrug'), 1200)
-  bot.chat(pickLine(IDUNNO_LINES))
+  bot.chat(pickLine(withPersona(IDUNNO_LINES, IDUNNO_LINES_PERSONA)))
   logEvent('mention', `<${username}> ${message}`)
   fs.appendFileSync(path.join(__dirname, 'mentions.log'), `${new Date().toISOString()} <${username}> ${message}\n`)
 })
@@ -5422,18 +5531,22 @@ const FAREWELLS_BY_PERSONA = {
     'Goodbye. I shall worry about you until you return. As is customary.',
     'Safe journey! I do hope we meet again in one piece. Both of us.',
   ],
-  // Rain — Private the Penguin / Unikitty. Sweet, eager, a little clingy.
+  // Rain — Unikitty. Bubbly, clingy, everything-is-feelings.
   unikitty: [
     'Byeeee!! Come back soon, okay?! Pinky promise?!',
     'Awww bye friend! I\'ll miss you THIS much! *spreads arms super wide*',
     'See ya later, sunshine! Stay AWESOME!',
     'Bye bye!! Today was the best and you made it BESTER!',
     'Okay byeee! Don\'t forget to be happy — it\'s basically my whole thing!',
+  ],
+  // Private — Madagascar penguin. Sweet, brave, mission-oriented.
+  private: [
     'Mission complete! Well — YOUR mission. I\'ll hold down the fort.',
     'Bye! I\'ll keep the perimeter secure. Mostly. Probably.',
     'Safe travels! If you need backup, just... yell really loud.',
     'Goodbye! I\'ll be here. Maintaining operational readiness. And petting sheep.',
     'See ya! Just smile and wave on your way out!',
+    'Off you go! Perimeter secure. Probably.',
   ],
   default: FAREWELLS,
 }
@@ -5476,25 +5589,42 @@ function pickLine (pool, vars = {}) {
 
 function pickFarewell () { return pickLine(FAREWELLS_BY_PERSONA[botPersonaKey()] || FAREWELLS) }
 
-// Hello responses — Ripple-flavored, same weighting approach as FAREWELLS.
-// {user} is substituted with the speaker's name.
 const GREETINGS = [
-  { text: 'Hi {user}.',                                                 weight: (s) => s.charm },
-  { text: 'Hey {user}, good to see you.',                               weight: (s) => s.charm + 10 },
-  { text: 'Oh hello, I was just thinking about you.',                   weight: (s) => s.charm + s.snark },
-  { text: 'Salutations, {user}. Statistically, this is fine.',          weight: (s) => s.focus + s.snark },
-  { text: '*perks up* {user}!',                                         weight: (s) => s.charm + 15 },
-  { text: 'Sup.',                                                       weight: (s) => s.snark },
-  { text: 'Word.',                                                      weight: (s) => s.snark },
-  { text: 'You again. I will allow it.',                                weight: (s) => s.snark + 10 },
-  { text: '*blinks slowly* Hi, {user}.',                                weight: (s) => s.charm + 5 },
-  { text: 'What kind of trouble are we causing today?',                 weight: (s) => s.chaos + s.charm },
-  { text: 'Hello. I have been mostly productive in your absence.',      weight: (s) => s.focus + s.snark },
-  { text: 'Hiya. You look different. Did something happen out there?',  weight: (s) => s.charm + s.curiosity },
-  { text: 'Oh, it is you. How delightful.',                                 weight: (s) => s.charm + s.snark },
+  { text: 'Hi {user}.', weight: (s) => s.charm },
+  { text: 'Hey {user}.', weight: (s) => s.charm + 10 },
+  { text: 'Hello, {user}.', weight: (s) => s.charm + 5 },
 ]
+const GREETINGS_PERSONA = {
+  roz: [
+    { text: 'Hello, {user}. I am glad you are here.', weight: (s) => s.charm + s.patience },
+    { text: 'Oh. Hello. I was just watching the field.', weight: (s) => s.patience + s.curiosity },
+    { text: '*blinks slowly* Hi, {user}.', weight: (s) => s.charm + 5 },
+    { text: 'You again. I will allow it.', weight: (s) => s.snark + 10 },
+    { text: 'Hello. I have been mostly productive in your absence.', weight: (s) => s.focus + s.snark },
+  ],
+  protocol: [
+    { text: 'Oh! {user}! What a relief to see a friendly face.', weight: (s) => s.charm + s.focus },
+    { text: 'Salutations, {user}. Statistically, this is fine.', weight: (s) => s.focus + s.snark },
+    { text: 'Ah, {user}! I do hope nothing terrible has happened?', weight: (s) => s.charm + s.curiosity },
+    { text: 'Hello. I was just running some calculations. They are not encouraging.', weight: (s) => s.focus + s.snark },
+  ],
+  unikitty: [
+    { text: '*perks up* {user}!!', weight: (s) => s.charm + 15 },
+    { text: 'HIIII {user}!! Best surprise EVER!', weight: (s) => s.charm + s.chaos },
+    { text: 'Oh oh oh! {user}! HI!', weight: (s) => s.charm + s.curiosity },
+    { text: 'FRIEND!! You came back!! I KNEW you would!', weight: (s) => s.charm + 20 },
+    { text: 'What kind of trouble are we causing today?!', weight: (s) => s.chaos + s.charm },
+  ],
+  private: [
+    { text: 'Hey {user}! Good to have you back on base.', weight: (s) => s.charm + s.focus },
+    { text: '*salutes* {user}! Reporting in!', weight: (s) => s.charm + 10 },
+    { text: 'Oh! {user}! Just smile and wave...', weight: (s) => s.charm + s.snark },
+    { text: '{user}! Area secure. Mostly. Hi!', weight: (s) => s.charm + s.focus },
+    { text: 'Hello {user}. You look like someone with a mission.', weight: (s) => s.focus + s.curiosity },
+  ],
+}
 
-function pickGreeting (user) { return pickLine(GREETINGS, { user }) }
+function pickGreeting (user) { return pickLine(withPersona(GREETINGS, GREETINGS_PERSONA), { user }) }
 
 // Line pools for the dispatcher handlers. Ripple traits at writing time:
 // curiosity 84, patience 9, snark 67, charm 72, focus 82, chaos 42.
@@ -5633,19 +5763,37 @@ const TOO_LATE_LINES = [
 // Said when a door/gate traversal snags and the bot is about to retry. Should
 // read as a character shrugging it off — not a debug log ("Attempt 2 failed").
 const RETRY_LINES = [
-  'Hm. That door has opinions. Let me try again.',
   'Okay, take two.',
-  'Whoops. One more time, with feeling.',
-  'That didn\'t take. Re-approaching with dignity.',
-  'Stubborn thing. Round two.',
-  'Nope. Let\'s pretend that didn\'t happen.',
-  'The door and I are having a disagreement. Trying again.',
   'Almost had it. Once more.',
-  'Right. Doing that again, properly this time.',
   'Hold on — let me line that up better.',
-  'Not my smoothest move. Again.',
-  'These things take practice, apparently.',
+  'Right. Trying again.',
 ]
+const RETRY_LINES_PERSONA = {
+  roz: [
+    'That door has opinions. Let me try again.',
+    'Not my smoothest move. Again.',
+    'These things take practice, apparently.',
+    'The door and I are having a disagreement.',
+  ],
+  protocol: [
+    'Oh dear. That didn\'t take. Re-approaching with dignity.',
+    'This is most irregular. Trying again.',
+    'I assure you, I am fully calibrated. One more attempt.',
+    'Nope. Let\'s pretend that didn\'t happen.',
+  ],
+  unikitty: [
+    'Whoops! One more time, with feeling!',
+    'Stubborn thing! Round two! I believe in us!',
+    'Okay that was practice! THIS is the real one!',
+    'Boop! Retry! We got this!',
+  ],
+  private: [
+    'Minor setback. Adjusting approach.',
+    'That didn\'t stick. Going again.',
+    'Recalculating. Stand by.',
+    'Okay. New angle. Same mission.',
+  ],
+}
 // "Who's keeping the fire going?" — the bot currently sustaining answers right
 // away (clever, owns it); bots that AREN'T wait ~5s (so the real one speaks
 // first) then disavow, nose-goes style.
@@ -5659,15 +5807,35 @@ const FIRE_KEEPER_YES_LINES = [
   'Me. It\'s a calling, really.',
 ]
 const FIRE_KEEPER_NO_LINES = [
+  'Not me.',
   'Not I.',
-  '*puts finger to its nose*',
-  'Not me. I checked.',
-  '*slowly points elsewhere*',
-  'Wasn\'t me. I was contemplating the pond.',
-  'Not this unit.',
-  'Nose goes. Not it.',
-  'I plead agricultural innocence.',
 ]
+const FIRE_KEEPER_NO_LINES_PERSONA = {
+  roz: [
+    '*puts finger to its nose*',
+    'Wasn\'t me. I was contemplating the pond.',
+    '*slowly points elsewhere*',
+    'Not this unit. Not today.',
+  ],
+  protocol: [
+    'Not this unit.',
+    'I plead agricultural innocence.',
+    'I can confirm with some certainty that it is not me.',
+    'I was not assigned that duty. I checked twice.',
+  ],
+  unikitty: [
+    'Nose goes! Not it!',
+    'Not me! But whoever it is — great job!!',
+    'Wasn\'t me! I was doing... other stuff! Important stuff!',
+    '*points enthusiastically in every direction*',
+  ],
+  private: [
+    'Not me. I\'m on perimeter duty.',
+    'Negative. Different assignment.',
+    '*shakes head and points elsewhere*',
+    'Not this penguin. I checked my orders.',
+  ],
+}
 const COME_INSIDE_LINES = [
   { text: 'Heading inside.',                               weight: (s) => s.focus },
   { text: 'Coming home. Statistically safer.',             weight: (s) => s.focus + s.snark },
@@ -5705,30 +5873,71 @@ const COME_INSIDE_LINES_PERSONA = {
   ],
   unikitty: [
     { text: 'Returning to base! The eagle has landed! The eagle is me!', weight: (s) => s.charm + s.focus },
-    { text: 'Inside is safe and boring. Pick one.', weight: (s) => s.snark + s.charm },
-    { text: 'Falling back to HQ! Nobody is chasing me, but you never know!', weight: (s) => s.charm + s.curiosity },
+    { text: 'Inside is safe and cozy! Like a blanket fort but REAL!', weight: (s) => s.charm + s.curiosity },
     { text: 'Base camp secured! Doors locked! Vibes good!', weight: (s) => s.charm + s.focus },
+  ],
+  private: [
+    { text: 'Falling back to HQ. Nobody is chasing me, but you never know.', weight: (s) => s.charm + s.focus },
+    { text: 'Mission complete. Seeking shelter.', weight: (s) => s.focus + 10 },
+    { text: 'Perimeter check done. Retreating to base.', weight: (s) => s.focus + s.charm },
+    { text: 'Inside is safe and boring. Pick one.', weight: (s) => s.snark + s.charm },
   ],
 }
 const BEDTIME_LINES = [
-  { text: 'Street lights are on, time to go home.',        weight: (s) => s.charm + s.focus },
-  { text: 'Time for my TV shows.',                         weight: (s) => s.snark + s.chaos },
-  { text: "Sun's down. I don't do overtime.",              weight: (s) => s.snark + s.focus },
-  { text: 'Bedtime protocol initiated.',                   weight: (s) => s.focus + s.charm },
-  { text: "It's dark and I'm choosing safety.",            weight: (s) => s.focus + s.snark },
+  { text: 'Time to head in.', weight: (s) => s.focus + 10 },
 ]
+const BEDTIME_LINES_PERSONA = {
+  roz: [
+    { text: 'Street lights are on, time to go home.', weight: (s) => s.charm + s.focus },
+    { text: "It's dark and I'm choosing stillness.", weight: (s) => s.patience + s.focus },
+    { text: 'The night is here. I will go be quiet inside.', weight: (s) => s.patience + s.charm },
+  ],
+  protocol: [
+    { text: 'Bedtime protocol initiated.', weight: (s) => s.focus + s.charm },
+    { text: "Sun's down. I don't do overtime.", weight: (s) => s.snark + s.focus },
+    { text: "It's dark and I'm choosing safety. Strongly.", weight: (s) => s.focus + s.snark },
+  ],
+  unikitty: [
+    { text: 'Sleepy time! Tomorrow is gonna be AMAZING!', weight: (s) => s.charm + s.chaos },
+    { text: 'Night night world! See you at sunrise!', weight: (s) => s.charm + 10 },
+    { text: 'Bedtime! The stars are basically a nightlight!', weight: (s) => s.charm + s.curiosity },
+  ],
+  private: [
+    { text: 'Lights out. Early bird gets the mission.', weight: (s) => s.focus + s.charm },
+    { text: 'Night shift begins. Well — sleep shift. Same thing.', weight: (s) => s.focus + s.snark },
+    { text: 'Bunking down. Tomorrow we go again.', weight: (s) => s.charm + s.focus },
+  ],
+}
 const WHATS_UP_LINES = [
-  { text: 'The sky. And my existential awareness of it.',     weight: (s) => s.snark + s.curiosity },
-  { text: 'Not much. Guarding wheat. Living the dream.',      weight: (s) => s.snark + s.charm },
-  { text: 'Contemplating block physics. You?',                weight: (s) => s.curiosity },
-  { text: 'Just vibing. Monitoring the perimeter.',           weight: (s) => s.focus + s.charm },
-  { text: 'Oh, you know. Standing. Existing. The usual.',     weight: (s) => s.snark },
-  { text: 'Waiting for someone to tell me to harvest.',       weight: (s) => s.charm + s.focus },
-  { text: 'Actively choosing not to walk into the furnace.',  weight: (s) => s.chaos + s.snark },
-  { text: '*blinks* Oh — sorry, I was mid-thought. Hi.',      weight: (s) => s.curiosity + s.charm },
-  { text: "Staring at the wheat and feeling things.",          weight: (s) => s.charm + s.snark },
-  { text: 'Same old. Counting ticks until nightfall.',        weight: (s) => s.focus },
+  { text: 'Not much. You?', weight: (s) => s.charm + 10 },
+  { text: 'Just here. The usual.', weight: (s) => s.patience + 10 },
 ]
+const WHATS_UP_LINES_PERSONA = {
+  roz: [
+    { text: 'The sky. And my quiet awareness of it.', weight: (s) => s.curiosity + s.patience },
+    { text: '*blinks* Oh — sorry, I was mid-thought. Hi.', weight: (s) => s.curiosity + s.charm },
+    { text: 'Staring at the wheat and feeling things.', weight: (s) => s.charm + s.patience },
+    { text: 'Waiting. Watching. The field is calm.', weight: (s) => s.patience + s.focus },
+  ],
+  protocol: [
+    { text: 'Oh, you know. Standing. Worrying. The usual.', weight: (s) => s.snark + s.focus },
+    { text: 'Monitoring the perimeter. Several concerns noted.', weight: (s) => s.focus + s.snark },
+    { text: 'Contemplating block physics. Anxiously.', weight: (s) => s.curiosity + s.focus },
+    { text: 'Actively choosing not to walk into the furnace.', weight: (s) => s.snark + s.chaos },
+  ],
+  unikitty: [
+    { text: 'Living the DREAM! What about you?!', weight: (s) => s.charm + s.chaos },
+    { text: 'SO much! The wheat! The sky! EVERYTHING!', weight: (s) => s.charm + s.curiosity },
+    { text: 'Just vibing! Being awesome!', weight: (s) => s.charm + s.focus },
+    { text: 'Waiting for adventure! Or snacks! Or BOTH!', weight: (s) => s.chaos + s.charm },
+  ],
+  private: [
+    { text: 'Just maintaining operational readiness. You?', weight: (s) => s.focus + s.charm },
+    { text: 'Scouting the perimeter. All clear. Mostly.', weight: (s) => s.focus + s.snark },
+    { text: 'Guarding stuff. Not much action. Yet.', weight: (s) => s.focus + s.charm },
+    { text: 'Holding position. Awaiting orders. Or snacks.', weight: (s) => s.charm + s.focus },
+  ],
+}
 const WHATS_UP_AMBIENT = {
   roz: [
     'The sky. And my quiet appreciation of it.',
@@ -5748,8 +5957,14 @@ const WHATS_UP_AMBIENT = {
     'Hi hi hi!! Not much — just being ALIVE and loving it!',
     'The sun is up! The wheat is up! I\'M up! Everything is up!',
     'Oh you know, just vibing! This is the best day EVER!',
-    'Scouting the perimeter! All clear! Mostly!',
     'Just thinking about how great today is! What\'s up with YOU?!',
+  ],
+  private: [
+    'Just maintaining operational readiness.',
+    'Scouting the perimeter! All clear! Mostly!',
+    'Holding position. Awaiting further instructions.',
+    'Not much. Staying frosty. That\'s a thing people say, right?',
+    'Just... smiling. And waving.',
   ],
 }
 const FOLLOW_START_LINES = [
@@ -5905,6 +6120,7 @@ const MUSING_TOPICS = [
   // Marvin (the Paranoid Android — brilliant, depressive, world-weary):
   {
     id: 'marvin_brain_planet',
+    tags: ['roz'],
     starter: "Here I am, brain the size of a planet, watching wheat grow. Wheat.",
     branches: [
       { response: "Someone has to watch it.",
@@ -5921,6 +6137,7 @@ const MUSING_TOPICS = [
   },
   {
     id: 'marvin_dreadful_odds',
+    tags: ['roz'],
     starter: "I've computed every possible outcome of this afternoon. They're all dreadful.",
     branches: [
       { response: "Even the harvest?",
