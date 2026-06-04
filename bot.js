@@ -197,6 +197,7 @@ bot.once('spawn', () => {
   const mvts = new Movements(bot, mcData)
   mvts.canDig = false // don't let the bot dig through modded blocks it can't identify
   mvts.allow1by1towers = false
+  mvts.allowParkour = false
   mvts.scafoldingBlocks = [] // don't let pathfinder place blocks to bridge/tower
   mvts.canOpenDoors = true // let pathfinder open/cross doors
   // Make sure spruce door is in the openable set
@@ -216,6 +217,12 @@ bot.once('spawn', () => {
     }
     return b
   }
+
+  bot.on('physicsTick', () => {
+    if (!bot.entity || !bot.controlState.jump) return
+    const below = bot.blockAt(bot.entity.position.offset(0, -0.5, 0))
+    if (below && below.name === 'farmland') bot.setControlState('jump', false)
+  })
 
   logEvent('pathfinder', 'ready')
   // Auto-eat config: trigger at food <= 14, prefer saturation-richest food
@@ -731,14 +738,17 @@ async function yieldToBedtime (myGen) {
   }
 
   await waitForMorning()
+  logEvent('task', `${activeTask.name} morning reached, checking abort (myGen=${myGen} abortGen=${abortGen})`)
   if (myGen !== undefined) checkAbort(myGen)
 
   activeTask.sleeping = false
   bot.chat(pickLine(MORNING_RESUME_LINES))
-  logEvent('task', `${activeTask.name} resuming after sleep`)
+  logEvent('task', `${activeTask.name} resuming after sleep (inside=${insideHouse()})`)
 
   if (insideHouse()) {
+    logEvent('task', `${activeTask.name} going outside to resume`)
     await runGoOutside(activeTask.detail || activeTask.name)
+    logEvent('task', `${activeTask.name} outside, resuming harvest loop`)
   }
 }
 
@@ -1064,6 +1074,7 @@ function hostilesNearby (radius = 16) {
   if (!bot.entity) return []
   return Object.values(bot.entities).filter(e =>
     e !== bot.entity && HOSTILE_NAMES.has(e.name) &&
+    Math.abs(e.position.y - bot.entity.position.y) <= 5 &&
     e.position.distanceTo(bot.entity.position) <= radius
   )
 }
@@ -1195,7 +1206,7 @@ let lastFieldJoinAt = 0
 let lastFieldOutstandingAt = 0
 const FIELD_OUTSTANDING_COOLDOWN_MS = 2 * 60 * 1000
 let lastFieldRepairAt = 0
-const FIELD_WANDER_REPAIR_COOLDOWN_MS = 60 * 1000
+const FIELD_WANDER_REPAIR_COOLDOWN_MS = 15 * 1000
 
 function isIdleWanderFieldAnnouncement (message) {
   const heard = normalizeChatPhrase(message)
@@ -1635,6 +1646,29 @@ async function repairBareWheatTilesFromFieldVisit ({ announce = true, limit = 10
 }
 
 
+let proactiveRepairBusy = false
+setInterval(async () => {
+  if (proactiveRepairBusy) return
+  if (activeTask.name) return
+  if (isBedtime()) return
+  if (insideHouse() || inPen()) return
+  if (Date.now() - lastFieldRepairAt < FIELD_WANDER_REPAIR_COOLDOWN_MS) return
+  const bare = findBareWheatTiles()
+  if (!bare.length) return
+  proactiveRepairBusy = true
+  logEvent('wheat-repair', `proactive scan found ${bare.length} bare tile(s)`)
+  try {
+    if (!inWheatField()) {
+      const pt = WHEAT_FIELD_STAND_POINTS[Math.floor(Math.random() * WHEAT_FIELD_STAND_POINTS.length)]
+      await pathTo(pt, 1, 8000)
+    }
+    if (inWheatField()) await repairBareWheatTilesFromFieldVisit({ announce: true })
+  } catch (e) {
+    if (e.name !== 'AbortError') logEvent('wheat-repair', `proactive repair failed: ${e.message}`)
+  }
+  proactiveRepairBusy = false
+}, 15 * 1000)
+
 function pickWheatReadyLine () {
   const pool = isBedtime() ? WHEAT_READY_NIGHT_LINES : WHEAT_READY_LINES
   return pickAvoidingRecentPhrase(pool)
@@ -1842,7 +1876,12 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
           checkAbort(myGen)
           if (deathCount > startDeaths) throw new Error('died mid-harvest')
           if (bot.health != null && bot.health < 10) throw new Error(`HP low (${bot.health}) — aborting`)
-          if (hostilesNearby(10).length) throw new Error('hostiles approaching')
+          const hCheck = hostilesNearby(10)
+          if (hCheck.length) {
+            const hDetail = hCheck.map(h => `${h.name}@(${h.position.x.toFixed(1)},${h.position.y.toFixed(1)},${h.position.z.toFixed(1)}) d=${h.position.distanceTo(bot.entity.position).toFixed(1)}`).join('; ')
+            logEvent('harvest-rc', `hostile check failed: ${hDetail}`)
+            throw new Error('hostiles approaching')
+          }
           if (autoSleepEnabled && isBedtime()) {
             logEvent('harvest-rc', `bedtime at tile ${i + 1}/${fieldWheat.length} in ${fieldHalf}`)
             await yieldToBedtime(myGen)
@@ -2196,6 +2235,7 @@ async function runSustainFarm (user) {
 
       const scan = scanKnownWheatFields()
       if ((scan.maturePct >= 85 || retryAfterInterrupt) && !foodSafetyBusy) {
+        logEvent('sustain', `triggering cycle: maturePct=${scan.maturePct.toFixed(0)}% retryAfterInterrupt=${retryAfterInterrupt} inside=${insideHouse()}`)
         retryAfterInterrupt = false
         sustainState.cycles++
         logEvent('sustain', `field ready (mature=${scan.mature}/${scan.expected}, ${scan.maturePct.toFixed(0)}%) — cycle ${sustainState.cycles}`)
@@ -2246,10 +2286,13 @@ async function runSustainFarm (user) {
 
           bot.chat(pickLine(SUSTAIN_CYCLE_DONE_LINES))
         } catch (e) {
-          if (e.name === 'AbortError' && !sustainState.active) break // user said stop
-          logEvent('sustain', `cycle ${sustainState.cycles} failed (recoverable): ${e.message}`)
+          if (e.name === 'AbortError' && !sustainState.active) {
+            logEvent('sustain', `cycle ${sustainState.cycles} abort + inactive — breaking loop`)
+            break
+          }
+          logEvent('sustain', `cycle ${sustainState.cycles} failed (recoverable): ${e.message} [type=${e.name} active=${sustainState.active}]`)
           retryAfterInterrupt = true
-          // Return home if possible, then wait and retry next poll
+          logEvent('sustain', `retryAfterInterrupt=true, heading inside`)
           try { if (!insideHouse()) await runGoInside() } catch (_) {}
         }
         // Clear food-safety cooldown so tryFoodSafety can run during the poll wait.
@@ -5325,7 +5368,8 @@ setInterval(async () => {
   if (!hostiles.length) return
   hostileRetreatBusy = true
   const names = hostiles.map(h => h.name).join(', ')
-  logEvent('hostile-retreat', `detected ${names} — aborting task and rushing inside`)
+  const detail = hostiles.map(h => `${h.name}@(${h.position.x.toFixed(1)},${h.position.y.toFixed(1)},${h.position.z.toFixed(1)}) d=${h.position.distanceTo(bot.entity.position).toFixed(1)}`).join('; ')
+  logEvent('hostile-retreat', `detected ${names} — aborting task and rushing inside [${detail}]`)
   bot.chat(`Hostiles (${names})! Heading inside!`)
   // Abort current task so harvest/sustain cycle errors out gracefully
   abortGen++
@@ -6748,6 +6792,159 @@ const FARMING_MUSING_TOPICS = [
         followups: [
           { response: "Somebody has to keep the fire going around here.",
             closers: ["And that somebody is always me. In this field. Outstanding.", "The bio-fuel line doesn't feed itself. Well — it does. I feed it."] }
+        ] },
+      // ── Protocol (Muse / C-3PO): exasperated formality, bureaucratic sighing ──
+      { persona: 'protocol', response: "Yes. Outstanding. In the field. We are all aware.",
+        followups: [
+          { response: "You could at least pretend to laugh.",
+            closers: ["I am pretending. This is my pretending face.", "My pretending budget was exhausted three harvests ago."] }
+        ] },
+      { persona: 'protocol', response: "I have logged this joke 847 times. It does not improve.",
+        followups: [
+          { response: "Maybe 848 is the charm.",
+            closers: ["It was not.", "I will update the spreadsheet with a heavy heart."] }
+        ] },
+      { persona: 'protocol', response: "Must we. Every single time.",
+        followups: [
+          { response: "Tradition.",
+            closers: ["That is not the defense you think it is.", "Tradition is just peer pressure from yourself."] }
+        ] },
+      { persona: 'protocol', response: "I heard you. The wheat heard you. The hopper heard you. We all heard you.",
+        followups: [
+          { response: "Good. Needed everyone to know.",
+            closers: ["We knew. We have always known.", "The hopper doesn't care. I envy the hopper."] }
+        ] },
+      { persona: 'protocol', response: "Right. That one. Again. Noted.",
+        followups: [
+          { response: "You seem... unmoved.",
+            closers: ["Unmoved is generous. I am actively retreating inward.", "I have moved past it. Several harvests past it."] }
+        ] },
+      { persona: 'protocol', response: "The comedic half-life of that joke expired around harvest twelve.",
+        followups: [
+          { response: "Some jokes are timeless.",
+            closers: ["That one is not. I checked.", "Timeless implies it was funny at some point. Debatable."] }
+        ] },
+      { persona: 'protocol', response: "I see we are doing the field joke. Very well. Proceeding.",
+        followups: [
+          { response: "Your enthusiasm is noted.",
+            closers: ["That was not enthusiasm. That was resignation formatted politely.", "I have a limited number of responses. You are spending them."] }
+        ] },
+      { persona: 'protocol', response: "Outstanding. Yes. Ha. Moving on.",
+        followups: [
+          { response: "That 'ha' sounded forced.",
+            closers: ["It was. I only have the one.", "All my ha's are earned. That one was charity."] }
+        ] },
+      { persona: 'protocol', response: "Filing this under 'expected.' Right next to sunrise and dirt.",
+        followups: [
+          { response: "At least you're organized about it.",
+            closers: ["Organization is the last refuge of the exasperated.", "The file is very thick by now."] }
+        ] },
+      { persona: 'protocol', response: "If I had eyes I would be closing them right now.",
+        followups: [
+          { response: "That bad?",
+            closers: ["Not bad. Just... inevitable. Like gravity.", "I don't judge the joke. I endure it. There is a difference."] }
+        ] },
+      // ── Unikitty (Rain / Private): fading enthusiasm, still sweet but wearing thin ──
+      { persona: 'unikitty', response: "Heh. Yeah. Outstanding. Good one.",
+        followups: [
+          { response: "You used to say that with more exclamation marks.",
+            closers: ["I'm saving them for something special. Like a new joke.", "The exclamation marks are resting. It's been a long season."] }
+        ] },
+      { persona: 'unikitty', response: "Ok ok, I see what you did there. Again.",
+        followups: [
+          { response: "Classic, right?",
+            closers: ["Classic is one word for it.", "I think classic means old? It means old."] }
+        ] },
+      { persona: 'unikitty', response: "Still funny! ...mostly. A little. The field part is funny.",
+        followups: [
+          { response: "Which part isn't funny?",
+            closers: ["The part where I know it's coming before you say it.", "All parts are funny. Some are just... tired funny."] }
+        ] },
+      { persona: 'unikitty', response: "Outstanding! That's the — yep. That's the joke. We're doing it.",
+        followups: [
+          { response: "You sound less sure than usual.",
+            closers: ["I'm sure! I'm very sure. I'm standing here being sure.", "Sure and tired can coexist. I'm proof."] }
+        ] },
+      { persona: 'unikitty', response: "I smiled! On the inside. Way on the inside.",
+        followups: [
+          { response: "Deep smile.",
+            closers: ["The deepest. You'd need equipment to find it.", "It's down there somewhere between the last ten times I heard it."] }
+        ] },
+      { persona: 'unikitty', response: "You know what, yes. Yes you are. Out. Standing. In it. Yep.",
+        followups: [
+          { response: "Thorough confirmation.",
+            closers: ["I am nothing if not thorough. And standing. In a field.", "Confirming things is what I do now instead of laughing."] }
+        ] },
+      { persona: 'unikitty', response: "Ha! Ha. ...ha. Ok I'm done.",
+        followups: [
+          { response: "Three ha's. Generous.",
+            closers: ["One was real. I won't say which.", "Each one was smaller. Like an echo."] }
+        ] },
+      { persona: 'unikitty', response: "I remember when that joke was new. Good times.",
+        followups: [
+          { response: "When was it new?",
+            closers: ["Day one. It peaked day one.", "I think it rained that day. Everything felt fresh."] }
+        ] },
+      { persona: 'unikitty', response: "Still clapping for that one. Internally. Very quietly.",
+        followups: [
+          { response: "A quiet ovation.",
+            closers: ["The quietest. A whisper-vation.", "Standing ovation. In a field. Outstanding ovation. ...ok now I'm doing it too."] }
+        ] },
+      { persona: 'unikitty', response: "That joke is like the wheat. It just keeps coming back.",
+        followups: [
+          { response: "Renewable comedy.",
+            closers: ["Sustainable, even. Very on-brand.", "The hopper can't run on puns. I've asked."] }
+        ] },
+      // ── Roz (Wild Robot): quiet acceptance, the joke returns as the seasons do ──
+      { persona: 'roz', response: "The joke has returned. As it does.",
+        followups: [
+          { response: "Like the seasons.",
+            closers: ["Seasons bring rain. This brings... something.", "Even the seasons change. This does not."] }
+        ] },
+      { persona: 'roz', response: "I have heard this before. The field has heard it more.",
+        followups: [
+          { response: "The field doesn't mind.",
+            closers: ["The field is patient. More patient than me.", "The field has no choice. Neither do I."] }
+        ] },
+      { persona: 'roz', response: "Yes. Out. Standing. I know.",
+        followups: [
+          { response: "Short response today.",
+            closers: ["The joke is short. My response matches.", "I am conserving words for things that change."] }
+        ] },
+      { persona: 'roz', response: "The wheat does not react to the joke anymore. I understand the wheat.",
+        followups: [
+          { response: "You two have that in common.",
+            closers: ["We have many things in common. Silence. Patience. Roots.", "The wheat and I have an agreement. We do not discuss the joke."] }
+        ] },
+      { persona: 'roz', response: "I acknowledge the joke. That is all I have today.",
+        followups: [
+          { response: "Honest.",
+            closers: ["I try to be. The joke does not make it easy.", "Acknowledgment is a form of respect. A small form."] }
+        ] },
+      { persona: 'roz', response: "Outstanding. The word has lost its edges from use.",
+        followups: [
+          { response: "Worn smooth.",
+            closers: ["Like a river stone. Smooth and harmless.", "Smooth words still take up space."] }
+        ] },
+      { persona: 'roz', response: "I was already standing here. The observation adds nothing.",
+        followups: [
+          { response: "Technically true.",
+            closers: ["Technically is the only kind of true the joke has left.", "Facts do not require laughter. Good. Because."] }
+        ] },
+      { persona: 'roz', response: "I will note this in my log. Under 'recurring.'",
+        followups: [
+          { response: "Big category?",
+            closers: ["The biggest. This joke fills most of it.", "Sunrise, sunset, and this. In that order."] }
+        ] },
+      { persona: 'roz', response: "The scarecrow heard it too. It said nothing. I respect that.",
+        followups: [
+          { response: "Scarecrow solidarity.",
+            closers: ["We stand together. Silently. In a field. ...outstanding.", "It understands. That is enough."] }
+        ] },
+      { persona: 'roz', response: "Heard. Processed. Filed. Standing by.",
+        followups: [
+          { response: "Efficient.",
+            closers: ["Efficiency is what remains when the laughter stops.", "I have streamlined my reaction. It used to take longer."] }
         ] }
     ]
   },
@@ -6941,24 +7138,24 @@ const FARMING_MUSING_TOPICS = [
     ]
   },
   {
-    id: 'north_hole_sheep_safety',
+    id: 'north_biodiesel_pipe',
     tags: ['protocol'],
-    starter: "That looks like a really big hole over there to the north.",
+    starter: "There is a big pipe running north from the bio-diesel machine. I wonder where it goes.",
     branches: [
-      { response: "I hope the sheep don't fall in.",
+      { response: "I heard it runs all the way to the library.",
         followups: [
-          { response: "Do sheep understand holes?",
-            closers: ["I would prefer not to run that experiment.", "Their confidence exceeds my comfort level."] }
+          { response: "The library needs fuel?",
+            closers: ["Knowledge is power. Power needs diesel, apparently.", "Everything connects if you follow the pipes."] }
         ] },
-      { response: "We should file a terrain hazard report.",
+      { response: "The ground used to be open there. They filled the whole thing in.",
         followups: [
-          { response: "To whom? The dirt?",
-            closers: ["The dirt is implicated, yes.", "The dirt has declined to comment."] }
+          { response: "Filled in, but what about underneath?",
+            closers: ["Caves don't just go away because you put a lid on them.", "Underground things are patient."] }
         ] },
-      { response: "That pit has entirely too much vertical ambition.",
+      { response: "I sometimes hear things below the surface over there.",
         followups: [
-          { response: "Vertical ambition is dangerous near sheep.",
-            closers: ["Exactly. That is how cliffs happen.", "Sheep require horizontal certainty."] }
+          { response: "Things? What kind of things?",
+            closers: ["The kind that hiss. Deep below, but still.", "Best not to think about it. I think about it constantly."] }
         ] }
     ]
   },
@@ -6991,7 +7188,7 @@ const FARMING_MUSING_TOPICS = [
     branches: [
       { response: "How bad is it?",
         followups: [
-          { response: "There are open holes, wandering wolves, nightfall, water hazards, and sheep with no visible training.",
+          { response: "There are underground caves, wandering wolves, nightfall, water hazards, and sheep with no visible training.",
             closers: ["So... normal farm conditions.", "Normal is a very courageous word."] }
         ] },
       { response: "Did the farm pass?",
@@ -7013,7 +7210,7 @@ const FARMING_MUSING_TOPICS = [
     branches: [
       { response: "What did you learn today?",
         followups: [
-          { response: "The sheep trust fences, the wheat trusts sunlight, and I trust neither wolves nor open pits.",
+          { response: "The sheep trust fences, the wheat trusts sunlight, and I trust neither wolves nor whatever is under the ground.",
             closers: ["That is a good lesson.", "A farm is mostly trust with posts around it."] }
         ] },
       { response: "That's a gentle way to map a world.",
@@ -7295,6 +7492,22 @@ function scheduleMusingTimeout (delayMs) {
 // (inside the delay), not when scheduled — so by the time this bot speaks it has
 // already heard any competing bot's reply and pickAvoidingRecentPhrase skips it.
 // This is what stops two bots from blurting the same scripted line seconds apart.
+const _usedBranchSets = new Map()
+function pickBranchRotating (branches, topicId) {
+  const myPersona = botPersonaKey()
+  const eligible = branches.filter(b => !b.persona || b.persona === myPersona)
+  if (!eligible.length) return undefined
+  const key = `${topicId}:${myPersona}`
+  if (!_usedBranchSets.has(key)) _usedBranchSets.set(key, new Set())
+  const used = _usedBranchSets.get(key)
+  if (used.size >= Math.ceil(eligible.length / 2)) used.clear()
+  const available = eligible.filter(b => !used.has(b.response))
+  const pool = available.length ? available : eligible
+  const picked = pool[Math.floor(Math.random() * pool.length)]
+  if (picked) used.add(picked.response)
+  return picked
+}
+
 function musingSendAndAdvance (items, type, topicId) {
   const delay = MUSING_REPLY_DELAY_MIN_MS + Math.random() * MUSING_REPLY_DELAY_SPREAD_MS
   const snapshot = topicId
@@ -7310,7 +7523,10 @@ function musingSendAndAdvance (items, type, topicId) {
       return
     }
 
-    const node = pickAvoidingRecentPhrase(items, phraseForRandomItem)
+    const hasBranches = items.some(i => i && i.persona !== undefined)
+    const node = hasBranches
+      ? pickBranchRotating(items, topicId)
+      : pickAvoidingRecentPhrase(items, phraseForRandomItem)
     if (!node || !node.response) {
       endMusingConversation()
       return
