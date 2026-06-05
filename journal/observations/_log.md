@@ -7,6 +7,28 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-06-05 — Lily pad pathfinder fix, sustain loop test (day 43493)
+
+Bot state at start: HP 20, food 15, deaths 0, inside house at (-266, 65, 571). Day.
+
+### Bug: pathfinder stuck on lily-pad-covered water
+
+The wheat field has a full row of water at z=562 (x=-287 to x=-279) covered with lily pads (`waterlily`) at y=64. The pathfinder classified lily pads as carpet (thin shape < 0.1) and saw exposed water beneath — refusing to route through. The bot got stuck mid-harvest at (-282.5, 63.94, 563.5).
+
+**Fix:** Extended the existing `world.getBlock` override in the spawn handler. When a block is `water` and the block directly above is `waterlily`, we override `boundingBox = 'block'` and `shapes = [[0,0,0,1,1,1]]` so the pathfinder treats it as solid ground.
+
+**Verified:** Two full "keep the fire going" cycles completed after the fix, harvesting across the lily pad row both times without stalling.
+
+### Notes
+- "Server rejected transaction" log lines during hopper/chest deposits remain benign — inventory delta verification confirms the items move.
+- Roz (Ripplebot) active on the server, chatting and patrolling independently.
+
+### Links
+- [[south-fenced-area]] (wheat field bounds)
+- [[harvest-potatoes-right-click]] (related water-safety pattern)
+
+---
+
 ## 2026-06-04 — Ambient /me actions, persona split (Private/Rain), shared-line cleanup
 
 Bot state at start: HP 18, food 17, deaths 0, outside at (-279, 64, 571). Day.

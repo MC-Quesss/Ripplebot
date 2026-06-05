@@ -42,11 +42,10 @@ The mod's right-click harvest behavior generalizes from wheat to potatoes — bl
 
 **Post-harvest sweep yielded +0.** Range=1 stand-spot discipline kept every drop in pickup radius. For a compact patch (10 tiles), the sweep was redundant — confirming the hypothesis from [[nautilus-sweep-pattern#Future improvement]].
 
-## Outstanding for next session
+## Open (low priority)
 
 - **Map the western strip** (x ≤ -288, z ≥ 580): 33 potato blocks are unmapped, same area as the water hazard. Need to find safe stand-spots tile by tile, not bulk pathfind.
 - **Carrots** — we have not seen carrots yet. Same mechanic likely.
-- **Wire `runHarvestPotatoesRightClick` into bot.js + chat handler** — currently the technique only works via Python driver or hand-issued `bot-ctl` calls.
 
 ## Implementation status (2026-05-14)
 

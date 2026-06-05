@@ -49,38 +49,23 @@ From [[../places/outside-orientation]] (-275, 64, 572):
 - **Bot picked up 2 wool itself** — drops that bounced within ~1.5 blocks of z=573.
 - HP unchanged, deaths 0, no damage.
 
-## Why drops escape the bot
+## Why drops escaped the bot (historical — outside-fence approach)
 
-The pen is 5 wide (z=574..578) but the bot stays at z=573. Wool dropped near the south edge of the pen (z=576+) is well beyond the bot's auto-pickup radius. **The user has been collecting drops from inside the pen.**
+When shearing from outside the fence (z=573), wool dropped near the south edge of the pen (z=576+) was out of pickup radius. The user collected those manually.
 
-## Open questions
+## Update (2026-06-05)
 
-- Could the bot **pause longer at each x** (e.g. 2s) to let auto-pickup catch drifting drops?
-- Does shearing yield different wool colors? Need to inspect the inventory after a few passes — vanilla sheep are mostly white but ~5% are colored.
+The bot now **enters the pen via the door** and shears from inside, eliminating the drop-pickup gap. See [[pen-door-traversal]] for entry/exit.
 
-## Fence-hop attempts (2026-05-14, deferred)
+## Fence-hop attempts (2026-05-14, abandoned)
 
-Tried multiple sprint/jump/forward combinations to clear the spruce fence at (-278, 64, 574). The bot would **always land at exactly z=574.08** — meaning it lands *on top* of the fence, not over it. Variants tried:
+Tried multiple sprint/jump/forward combinations to clear the spruce fence at (-278, 64, 574). The bot always landed at z=574.08 (on top of the fence, not over it). Abandoned in favor of a door entrance — see update above.
 
-- jump+forward simultaneously (no sprint)
-- forward first, then jump after 250ms while walking
-- sprint+forward+jump all held simultaneously, 1-tile and 2-tile runways
-- holding jump longer (1.5s) while walking forward
+## Update (2026-06-05)
 
-Outcome in every case: bot reaches z=574.08, stops. Fence collision blocks horizontal travel even when bot is on top. Without a step-down on the south side, sprint-jumping over a single fence isn't enough.
+The pen entrance is now a **real wooden door** at (-278, 64, 574), not a fence gate. Traversal uses the same pressure-plate pad + door-state-verify pattern as the house front door. See [[pen-door-traversal]] for the procedure.
 
-**User decided to put a `spruce_fence_gate` back at (-278, 64, 574)** as the canonical bot entrance. Gate-traversal is the next thing to implement: `activate_block` to open, walk through, `activate_block` again to close so sheep stay penned.
-
-See [[../places/south-fenced-area]] for the gate location.
-
-## Implementation hint for a chat handler
-
-A `runShearWalk()` could:
-1. Verify shears in inventory; equip; face south.
-2. Walk z=573 from x=-274 west to x=-282, stopping at each x.
-3. At each stop: nearby_entities radius=4, filter to sheep, activate each.
-4. Wait 1-2s at each spot for drift.
-5. Optionally repeat the walk eastward to catch sheep that moved into range during the west pass.
+## Current implementation
 
 **Wired into bot.js** as `runShearSheep()` with chat trigger and pen door traversal. The bot enters the pen via the door at (-278, 64, 574), shears from inside, and exits. See [[pen-door-traversal]].
 

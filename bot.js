@@ -215,6 +215,16 @@ bot.once('spawn', () => {
         pos.y >= 65 && pos.y <= 66) {
       b.shapes = []
     }
+    // Lily-pad-covered water: make the water block appear solid so the
+    // pathfinder treats it as walkable ground (lily pads are thin enough
+    // to be classified as carpet/empty, leaving water exposed).
+    if (b && b.name === 'water') {
+      const above = _origGetBlock(pos.offset(0, 1, 0))
+      if (above && above.name === 'waterlily') {
+        b.boundingBox = 'block'
+        b.shapes = [[0, 0, 0, 1, 1, 1]]
+      }
+    }
     return b
   }
 
@@ -1533,8 +1543,15 @@ const AMBIENT_ACTION_LINES_PERSONA = {
   protocol: [
     { text: 'nervously checks the perimeter again', weight: s => s.focus * 2, tags: ['protocol'] },
     { text: 'mutters something about proper protocol', weight: s => s.snark * 2, tags: ['protocol'] },
-    { text: 'fidgets with an invisible cufflink', weight: s => s.charm * 2, tags: ['protocol'] },
-    { text: 'glances over one shoulder, then the other', weight: s => s.focus * 2, tags: ['protocol'] },
+    { text: 'fidgets with an invisible cufflink', weight: s => s.charm * 2, tags: ['protocol'], emote: 'point' },
+    { text: 'glances over one shoulder, then the other', weight: s => s.focus * 2, tags: ['protocol'], action: async () => {
+      const yaw = bot.entity?.yaw ?? 0
+      await bot.look(yaw + Math.PI / 3, 0, false)
+      await sleep(600)
+      await bot.look(yaw - Math.PI / 3, 0, false)
+      await sleep(600)
+      await bot.look(yaw, 0, false)
+    }},
     { text: 'straightens up, as if someone might be watching', weight: s => s.charm * 2, tags: ['protocol'] },
   ],
   unikitty: [
@@ -1563,10 +1580,12 @@ function tryAmbientAction () {
   const now = Date.now()
   if (now - lastAmbientActionAt < 90_000) return
   const pool = withPersona(AMBIENT_ACTION_LINES, AMBIENT_ACTION_LINES_PERSONA)
-  const line = pickLine(pool)
-  bot.chat(`/me ${line}`)
+  const entry = pickLineEntry(pool)
+  bot.chat(`/me ${entry.text}`)
+  if (entry.emote) sendEmote(entry.emote)
+  if (entry.action) entry.action().catch(e => logEvent('ambient-action', `action error: ${e.message}`))
   lastAmbientActionAt = now
-  logEvent('ambient-action', line)
+  logEvent('ambient-action', entry.text)
 }
 
 function startAmbientActionTimer () {
@@ -5581,25 +5600,26 @@ function rippleStats () {
 // `vars` is an object of {placeholder: value} substituted into the chosen line
 // as {placeholder}. Weights are clamped >=1 so no line is unreachable even if
 // its trait is zero.
-function pickLine (pool, vars = {}) {
+function pickLineEntry (pool, vars = {}) {
   const stats = rippleStats()
   const render = (text) => String(text).replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '')
-  // Tolerate both weighted entries ({text, weight(stats)}) and bare strings — a
-  // plain-string pool degrades to equal weighting instead of throwing. (This
-  // bug class — passing a string[] to pickLine — has bitten repeatedly.)
   let weighted = pool.map(p => {
     const entry = (typeof p === 'string') ? { text: p, weight: null } : p
     const w = (typeof entry.weight === 'function') ? entry.weight(stats) : 1
-    return { text: render(entry.text), w: Math.max(1, w) }
+    return { text: render(entry.text), w: Math.max(1, w), emote: entry.emote || null, action: entry.action || null }
   })
   const fresh = weighted.filter(p => !wasPhraseRecentlyHeard(p.text))
   if (fresh.length) weighted = fresh
   const total = weighted.reduce((s, x) => s + x.w, 0)
   let r = Math.random() * total
-  let chosen = weighted[0].text
-  for (const w of weighted) { r -= w.w; if (r <= 0) { chosen = w.text; break } }
-  rememberChatPhrase(chosen)
+  let chosen = weighted[0]
+  for (const w of weighted) { r -= w.w; if (r <= 0) { chosen = w; break } }
+  rememberChatPhrase(chosen.text)
   return chosen
+}
+
+function pickLine (pool, vars = {}) {
+  return pickLineEntry(pool, vars).text
 }
 
 function pickFarewell () { return pickLine(FAREWELLS_BY_PERSONA[botPersonaKey()] || FAREWELLS) }
