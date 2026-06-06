@@ -1594,6 +1594,7 @@ function tryAmbientAction () {
   if (goInsideBusy || penTraversalBusy) return
   const now = Date.now()
   if (now - lastAmbientActionAt < 90_000) return
+  if (Math.random() < 0.4 && tryWildlifeComment()) { lastAmbientActionAt = now; return }
   const pool = withPersona(AMBIENT_ACTION_LINES, AMBIENT_ACTION_LINES_PERSONA)
   const entry = pickLineEntry(pool)
   bot.chat(`/me ${entry.text}`)
@@ -1601,6 +1602,136 @@ function tryAmbientAction () {
   if (entry.action) entry.action().catch(e => logEvent('ambient-action', `action error: ${e.message}`))
   lastAmbientActionAt = now
   logEvent('ambient-action', entry.text)
+}
+
+const WILDLIFE_LINES = {
+  wolf: {
+    default: [
+      'watches the wolf for a moment',
+      'glances at the wolf, then looks away',
+    ],
+    protocol: [
+      'eyes the wolf nervously. That is a predator. An ACTUAL predator. Right there.',
+      'maintains a respectful distance from the wolf. As per regulation.',
+      'counts the wolves. Recounts the wolves. Notes the count in an imaginary ledger.',
+      'wonders if wolves are supposed to sit in boats. Checks the manual. There is no manual.',
+      'observes the wolf and calculates the nearest exit. Just in case.',
+    ],
+    roz: [
+      'watches the wolf quietly. A fellow creature, finding its way.',
+      'sits near the wolf, sharing a silence that asks nothing.',
+      'wonders what the wolf dreams about when it sleeps in the boat.',
+      'notices how the wolf watches the tree line — always watching.',
+    ],
+    unikitty: [
+      'waves at the wolf. Hi puppy! Big puppy! The BIGGEST puppy!',
+      'wants to pet the wolf SO BAD but is trying to be cool about it.',
+      'wonders if the wolf wants to be friends. Probably yes. Definitely yes.',
+      'considers offering the wolf a baked potato. Wolves like potatoes, right?',
+    ],
+    private: [
+      'studies the wolf\'s patrol pattern. Very professional. Respects the hustle.',
+      'nods at the wolf like a fellow operative. You do your thing, I\'ll do mine.',
+      'wonders if the wolf has a commanding officer. Maybe it IS the commanding officer.',
+      'considers recruiting the wolf. Every team needs recon.',
+      'salutes the wolf discreetly. One field agent to another.',
+    ],
+  },
+  squirrel: {
+    default: [
+      'watches a small creature darting between the trees',
+      'notices something small and quick in the underbrush',
+    ],
+    protocol: [
+      'spots the squirrel and freezes. Unidentified fauna. Threat level: unclear.',
+      'tracks the squirrel\'s movements. It is entirely too fast. Suspiciously fast.',
+      'notes the squirrel\'s position for the record. It has been NOTED.',
+      'watches the squirrel bury something. What is it hiding? What does it KNOW?',
+      'is fairly certain the squirrel just looked at it. Direct eye contact. Unsettling.',
+    ],
+    roz: [
+      'watches the squirrel gather something in its tiny paws. Such purpose.',
+      'holds very still as the squirrel passes. A small life, busy with small things.',
+      'follows the squirrel\'s path with quiet eyes. It knows every branch.',
+      'wonders how the squirrel decides which tree is home. Do they all look the same?',
+    ],
+    unikitty: [
+      'gasps. SQUIRREL! Look at its tiny FACE! And its TAIL!',
+      'tries to follow the squirrel with eyes. So fast! So fluffy! So ALIVE!',
+      'whispers at the squirrel. Hi friend. I see you. You are PERFECT.',
+      'imagines the squirrel wearing a tiny hat. Best thought of the day.',
+    ],
+    private: [
+      'observes the squirrel\'s escape routes. Impressive tactical awareness for a rodent.',
+      'watches the squirrel cache supplies. Now THAT is proper logistics.',
+      'respects the squirrel\'s opsec. Multiple hidden stashes. Very professional.',
+      'notes that the squirrel has better recon of this area than anyone.',
+      'wonders if the squirrel would make a good informant. Loyal? Discreet? Probably not.',
+    ],
+  },
+  sheep: {
+    default: [
+      'watches a sheep wander past',
+      'glances at the sheep grazing nearby',
+    ],
+    protocol: [
+      'counts the sheep again. Has to be sure. Counts a third time. Different number.',
+      'watches the sheep with deep suspicion. They are too calm. What do they know?',
+      'straightens up as a sheep approaches. Maintaining composure. In front of the sheep.',
+    ],
+    roz: [
+      'reaches toward the sheep, then pulls back. Not every connection needs touch.',
+      'watches the sheep chewing contentedly. To want nothing more than grass and sun.',
+      'stands near the sheep, matching its calm. Learning by proximity.',
+    ],
+    unikitty: [
+      'wiggles fingers at the sheep. Hi woolly friend! You are SO round!',
+      'considers hugging the sheep. Decides to just beam at it instead.',
+      'wonders what the sheep is thinking. Probably something WONDERFUL.',
+    ],
+    private: [
+      'checks on the sheep. All present. All woolly. Good.',
+      'monitors the sheep perimeter. Asset security is everyone\'s job.',
+      'nods at the sheep. Carry on, civilians. Everything is under control.',
+    ],
+  },
+}
+
+function getWildlifeNearby () {
+  if (!bot.entity) return null
+  const found = []
+  for (const e of Object.values(bot.entities)) {
+    if (e === bot.entity) continue
+    const d = e.position.distanceTo(bot.entity.position)
+    if (d > 16) continue
+    if (e.name === 'wolf') found.push({ type: 'wolf', dist: d })
+    else if (e.name === 'sheep') found.push({ type: 'sheep', dist: d })
+    else if (!e.name && e.type !== 'player' && e.type !== 'object' && d < 12 &&
+             e.position.y >= bot.entity.position.y - 2 && e.position.y <= bot.entity.position.y + 3) {
+      found.push({ type: 'squirrel', dist: d })
+    }
+  }
+  if (!found.length) return null
+  found.sort((a, b) => a.dist - b.dist)
+  return found[0]
+}
+
+let lastWildlifeCommentAt = 0
+
+function tryWildlifeComment () {
+  const now = Date.now()
+  if (now - lastWildlifeCommentAt < 300_000) return false
+  const wildlife = getWildlifeNearby()
+  if (!wildlife) return false
+  const lines = WILDLIFE_LINES[wildlife.type]
+  if (!lines) return false
+  const persona = botPersonaKey()
+  const pool = lines[persona] || lines.default
+  const line = pool[Math.floor(Math.random() * pool.length)]
+  bot.chat(`/me ${line}`)
+  lastWildlifeCommentAt = now
+  logEvent('wildlife', `${wildlife.type} (d=${wildlife.dist.toFixed(1)}): ${line}`)
+  return true
 }
 
 function startAmbientActionTimer () {
