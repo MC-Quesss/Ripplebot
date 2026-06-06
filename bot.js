@@ -6049,7 +6049,7 @@ const GO_OUTSIDE_LINES_PERSONA = {
   ],
   private: [
     { text: 'Deploying to the field. Just like a real commando. A wheat commando.', weight: (s) => s.charm + s.focus },
-    { text: 'Moving out. Stay frosty.', weight: (s) => s.focus + s.charm },
+    { text: 'Moving out. Stay cool.', weight: (s) => s.focus + s.charm },
     { text: 'Commencing outdoor operations.', weight: (s) => s.focus + s.charm },
   ],
 }
@@ -6304,7 +6304,7 @@ const WHATS_UP_AMBIENT = {
     'Just maintaining operational readiness.',
     'Scouting the perimeter! All clear! Mostly!',
     'Holding position. Awaiting further instructions.',
-    'Not much. Staying frosty. That\'s a thing people say, right?',
+    'Not much. Staying cool. That\'s a thing people say, right?',
     'Just... smiling. And waving.',
   ],
 }
