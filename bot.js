@@ -280,6 +280,11 @@ function inPen () {
   if (!p) return false
   return p.x >= -282 && p.x <= -274 && p.z >= 575 && p.z <= 578 && p.y >= 63 && p.y <= 65
 }
+async function ensureInsideHouse () {
+  if (inPen()) await runGoOutOfPen()
+  if (!insideHouse()) await runGoInside()
+  if (!insideHouse()) throw new Error('failed to get inside house')
+}
 function isBedtime () {
   const t = bot.time?.timeOfDay
   return typeof t === 'number' && t >= 12500 && t <= 23500
@@ -337,10 +342,12 @@ async function tryAutoSleep () {
 }
 function startAutoSleep () {
   setInterval(() => {
+    if (!bot.world) return
     tryAutoGreet()
     tryAutoSleep()
     tryFoodSafety()
     tryCollectBake()
+    tryRestockSupplies()
   }, 5000)
 }
 
@@ -480,15 +487,14 @@ function botPersonaKey () {
   return 'default'
 }
 
+const PERSONA_TAGS = new Set(['protocol', 'roz', 'unikitty', 'private'])
 function personaBiasForTags (tags = []) {
   const persona = botPersonaKey()
-  if (!Array.isArray(tags)) return 1
-  if (persona === 'protocol' && tags.includes('protocol')) return 5
-  if (persona === 'roz' && tags.includes('roz')) return 5
-  if (persona === 'unikitty' && tags.includes('unikitty')) return 5
-  if (persona === 'private' && tags.includes('private')) return 5
-  if (persona === 'private' && tags.includes('unikitty')) return 3
-  return 1
+  if (!Array.isArray(tags) || !tags.length) return 1
+  const hasPersonaTag = tags.some(t => PERSONA_TAGS.has(t))
+  if (!hasPersonaTag) return 1
+  if (tags.includes(persona)) return 1
+  return 0
 }
 
 const _personaPools = new Map()
@@ -503,8 +509,9 @@ function withPersona (basePool, personaExtras) {
 }
 
 function weightedCopiesForTopic (topic) {
-  const base = topic?.weightWhenEligible || 1
-  return Math.max(1, Math.floor(base * personaBiasForTags(topic?.tags)))
+  const bias = personaBiasForTags(topic?.tags)
+  if (bias === 0) return 0
+  return Math.max(1, Math.floor((topic?.weightWhenEligible || 1) * bias))
 }
 
 function posStr (p) { return `${p.x.toFixed(0)}, ${p.y.toFixed(0)}, ${p.z.toFixed(0)}` }
@@ -741,6 +748,16 @@ async function yieldToBedtime (myGen) {
   logEvent('task', `${activeTask.name} yielding to bedtime`)
 
   if (!insideHouse()) {
+    // If far from the house (e.g. potato patch), pathfind closer first so
+    // runGoInside's manual walk fallback can reach the door.
+    const me = bot.entity.position
+    const nearDoor = HARVEST_WAYPOINTS.field_east_approach
+    const dist = Math.hypot(me.x - nearDoor.x, me.z - nearDoor.z)
+    if (dist > 8) {
+      try { await pathTo(nearDoor, 2, 15000) } catch (e) {
+        logEvent('task', `bedtime yield pre-pathfind failed: ${e.message}`)
+      }
+    }
     try { await runGoInside() } catch (e) {
       logEvent('task', `bedtime yield go-inside failed: ${e.message}`)
       activeTask.sleeping = false
@@ -822,15 +839,13 @@ async function clearHand () {
 }
 
 const TRASH_ITEMS = new Set(['poisonous_potato'])
-const TRASH_DUMP = { x: -287, y: 63, z: 579 } // far end of potato patch
 async function tossTrash () {
   const trash = bot.inventory.items().filter(i => TRASH_ITEMS.has(i.name))
   if (!trash.length) return
-  await pathTo(TRASH_DUMP, 1, 8000)
   for (const it of bot.inventory.items().filter(i => TRASH_ITEMS.has(i.name))) {
     try {
       await bot.tossStack(it)
-      logEvent('trash', `tossed ${it.count}× ${it.name} at dump`)
+      logEvent('trash', `tossed ${it.count}× ${it.name} in place`)
     } catch (e) {
       logEvent('trash', `toss fail ${it.name}: ${e.message}`)
     }
@@ -2069,9 +2084,8 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
 
       if (dest === 'hopper' || dest === 'chest') {
         try {
-          if (!insideHouse()) await runGoInside()
+          await ensureInsideHouse()
           if (deathCount > startDeaths) throw new Error('died entering house')
-          // chest_approach is within reach of both the chest (~2.4) and the hopper (~3.2).
           await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
           const target = dest === 'hopper' ? HOPPER : HARVEST_WAYPOINTS.kitchen_chest
           const r = await depositQuickMove('wheat', target, { keep: 0 })
@@ -2152,6 +2166,7 @@ async function craftPlantBalls ({ keepSeeds = 16 } = {}) {
   }
   logEvent('craft', `crafting up to ${craftable} plant balls from ${seedsOnHand} seeds (keeping ${keepSeeds})`)
 
+  await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
   let crafted = 0
   for (let i = 0; i < craftable; i++) {
@@ -2280,9 +2295,77 @@ async function craftPlantBalls ({ keepSeeds = 16 } = {}) {
 // one-at-a-time, bedtime-aware task; this loop is a thin supervisor that holds
 // NO task between cycles, so the bot stays responsive while it waits.
 const SUSTAIN_POLL_MS = 5000
-const SUSTAIN_KEEP_WHEAT = 7
+const SUSTAIN_KEEP_WHEAT = 16
 const SUSTAIN_KEEP_SEEDS = 16
+const SUSTAIN_HOPPER_CHECK_INTERVAL = 6
 const sustainState = { active: false, cycles: 0, startedBy: null }
+
+async function feedHopperOneAtATime (waitMs) {
+  await ensureInsideHouse()
+  await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+  const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
+  if (!hopperBlock) { logEvent('sustain-hopper', 'hopper block not loaded'); return false }
+
+  for (let fed = 0; fed < 7; fed++) {
+    if (!sustainState.active) return false
+    if (countOnHand('wheat') < 1) {
+      logEvent('sustain-hopper', `out of wheat after ${fed} fed`)
+      return false
+    }
+    const win = await bot.openContainer(hopperBlock)
+    const slots = win.slots.slice(0, win.slots.length - 36)
+    const hasBalls = slots.some(s => s && s.name === 'unknown')
+    if (!hasBalls) {
+      logEvent('sustain-hopper', `hopper clear after ${fed} wheat`)
+      win.close()
+      return true
+    }
+    const containerSize = win.slots.length - 36
+    const playerSlots = win.slots.slice(containerSize)
+    const srcIdx = playerSlots.findIndex(s => s && s.name === 'wheat')
+    if (srcIdx === -1) { win.close(); return false }
+    const winSlot = containerSize + srcIdx
+    const count = playerSlots[srcIdx].count
+    await bot.clickWindow(winSlot, 1, 0)
+    await bot.clickWindow(1, 1, 0)
+    if (count > 2) await bot.clickWindow(winSlot, 0, 0)
+    else if (count === 2) {
+      const emptyIdx = playerSlots.findIndex((s, i) => i !== srcIdx && !s)
+      if (emptyIdx !== -1) await bot.clickWindow(containerSize + emptyIdx, 0, 0)
+      else await bot.clickWindow(winSlot, 0, 0)
+    }
+    win.close()
+    logEvent('sustain-hopper', `fed wheat ${fed + 1}/7, waiting ${waitMs / 1000}s`)
+    await sustainWait(waitMs)
+  }
+  const win2 = await bot.openContainer(hopperBlock)
+  const finalSlots = win2.slots.slice(0, win2.slots.length - 36)
+  const stillJammed = finalSlots.some(s => s && s.name === 'unknown')
+  win2.close()
+  return !stillJammed
+}
+
+async function clearJammedHopper () {
+  if (countOnHand('wheat') < 1) {
+    logEvent('sustain-hopper', 'no wheat on hand to clear jam')
+    return false
+  }
+  const cleared = await feedHopperOneAtATime(20000)
+  if (cleared) {
+    logEvent('sustain-hopper', 'hopper cleared on first pass (20s waits)')
+    return true
+  }
+  logEvent('sustain-hopper', 'first pass failed — retrying with 30s waits')
+  bot.chat('Hopper still jammed — trying again, slower this time.')
+  const cleared2 = await feedHopperOneAtATime(30000)
+  if (cleared2) {
+    logEvent('sustain-hopper', 'hopper cleared on second pass (30s waits)')
+  } else {
+    logEvent('sustain-hopper', 'hopper still jammed after both passes — giving up')
+    bot.chat('Couldn\'t clear the hopper. Something else is wrong.')
+  }
+  return cleared2
+}
 
 const SUSTAIN_START_LINES = [
   { text: 'Keeping the fire going. The town stays warm tonight.',                 weight: (s) => s.charm + s.focus },
@@ -2375,8 +2458,8 @@ async function runSustainFarm (user) {
             await sleep(500)
           }
 
-          // 2. Deposit wheat to hopper (keep 7 for engine clearing)
-          if (!insideHouse()) await runGoInside()
+          // 2. Deposit wheat to hopper (keep 16 for restock + engine clearing)
+          await ensureInsideHouse()
           await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
           const wheatResult = await depositQuickMove('wheat', HOPPER, { keep: SUSTAIN_KEEP_WHEAT })
           logEvent('sustain', `wheat deposit: deposited=${wheatResult.deposited} remaining=${wheatResult.remaining}`)
@@ -2387,6 +2470,7 @@ async function runSustainFarm (user) {
 
           // 4. Deposit plant balls to hopper
           if (craftResult.crafted > 0) {
+            await ensureInsideHouse()
             await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
             const ballResult = await depositQuickMove('unknown', HOPPER, { keep: 0 })
             logEvent('sustain', `plant ball deposit: deposited=${ballResult.deposited} remaining=${ballResult.remaining}`)
@@ -2418,8 +2502,32 @@ async function runSustainFarm (user) {
         // The sustain cycle opens hopper + bench windows which keep resetting the 30s
         // cooldown — without this, food safety is blocked for the entire sustain run.
         foodSafetyWindowCooldownUntil = 0
-      } else if (++polls % 20 === 0) {
-        logEvent('sustain', `waiting (mature=${scan.mature}/${scan.expected} loaded=${scan.loaded})`)
+      } else {
+        polls++
+        if (polls % 20 === 0) {
+          logEvent('sustain', `waiting (mature=${scan.mature}/${scan.expected} loaded=${scan.loaded})`)
+        }
+        if (polls % SUSTAIN_HOPPER_CHECK_INTERVAL === 0 && sustainSafe() && !foodSafetyBusy && countOnHand('wheat') >= 1) {
+          try {
+            const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
+            if (hopperBlock) {
+              await ensureInsideHouse()
+              await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+              const win = await bot.openContainer(hopperBlock)
+              const slots = win.slots.slice(0, win.slots.length - 36)
+              const hasBalls = slots.some(s => s && s.name === 'unknown')
+              const hasWheat = slots.some(s => s && s.name === 'wheat')
+              win.close()
+              if (hasBalls && !hasWheat) {
+                logEvent('sustain-hopper', 'plant balls jammed — clearing')
+                bot.chat('Hopper\'s jammed — feeding wheat to clear it.')
+                await clearJammedHopper()
+              }
+            }
+          } catch (e) {
+            logEvent('sustain-hopper', `check failed: ${e.message}`)
+          }
+        }
       }
       await sustainWait(SUSTAIN_POLL_MS)
     }
@@ -2570,12 +2678,9 @@ async function runHarvestPotatoes ({ user } = {}) {
       logEvent('harvest-potato', `replanted ${replanted}/${farmlandBelow.length}`)
     }
 
-    // Toss trash while still outside, then come inside before depositing.
     await tossTrash()
-    if (!insideHouse()) {
-      await runGoInside()
-      if (deathCount > startDeaths) throw new Error('died entering house')
-    }
+    await ensureInsideHouse()
+    if (deathCount > startDeaths) throw new Error('died entering house')
 
     // Deposit potatoes to kitchen chest (vanilla item, registry-safe).
     await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
@@ -2778,6 +2883,7 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
       } else if (answer === 'stash') {
         logEvent('harvest-potato-rc', `user said stash — depositing ${onHand} potatoes`)
         try {
+          await ensureInsideHouse()
           await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
           const chestBlock = bot.blockAt(new Vec3(
             HARVEST_WAYPOINTS.kitchen_chest.x,
@@ -2830,6 +2936,7 @@ async function runBakePotatoes ({ user } = {}) {
     // chest → furnace, not just inventory → furnace.
     let withdrawn = 0
     try {
+      await ensureInsideHouse()
       await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 8000)
       const chestBlock = bot.blockAt(new Vec3(
         HARVEST_WAYPOINTS.kitchen_chest.x,
@@ -2953,14 +3060,6 @@ async function runBakePotatoes ({ user } = {}) {
 let foodSafetyEnabled = true
 let foodSafetyBusy = false
 let foodSafetyMin = 16
-// Debounce against the modded-window inventory desync: opening the bench/hopper/
-// chest transiently makes bot.inventory read empty, so countBakedPotatoes() briefly
-// reports 0 and would false-trigger a food run (observed repeatedly during bench/
-// chest work). Require the low reading to hold across FOOD_SAFETY_DEBOUNCE
-// consecutive polls — a desync blip resyncs by the next poll and never accumulates
-// the streak.
-const FOOD_SAFETY_DEBOUNCE = 2
-let foodSafetyLowStreak = 0
 let foodSafetyWindowCooldownUntil = 0
 // Set cooldown on ANY window open — not just when a window happens to be open at poll time.
 bot.on('windowOpen', () => { foodSafetyWindowCooldownUntil = Date.now() + 30000 })
@@ -2984,63 +3083,45 @@ function countBakedPotatoes () {
 }
 
 async function tryFoodSafety () {
-  if (!foodSafetyEnabled || foodSafetyBusy) return
-  if (taskBusy() || goInsideBusy || autoSleepBusy || penTraversalBusy) return // don't interrupt active work
-  if (!bot.entity || bot.isSleeping || isBedtime()) return // don't start a long run at night
-  if (pendingBake.active) return // a batch is already in the furnace — wait for it
-  // bot.inventory desyncs when modded container windows open AND persists after
-  // they close. Gate on both: skip while a window is open, and for 30s after.
-  if (bot.currentWindow) { foodSafetyLowStreak = 0; foodSafetyWindowCooldownUntil = Date.now() + 30000; return }
-  if (Date.now() < foodSafetyWindowCooldownUntil) { foodSafetyLowStreak = 0; return }
-  if (countBakedPotatoes() >= foodSafetyMin) { foodSafetyLowStreak = 0; return }
-  if (++foodSafetyLowStreak < FOOD_SAFETY_DEBOUNCE) return // require it to persist
+  if (!foodSafetyEnabled || foodSafetyBusy || restockBusy) return
+  if (taskBusy() || goInsideBusy || autoSleepBusy || penTraversalBusy) return
+  if (!bot.entity || bot.isSleeping) return
+  if (bot.currentWindow) { foodSafetyWindowCooldownUntil = Date.now() + 30000; return }
+  if (Date.now() < foodSafetyWindowCooldownUntil) return
+  if (bot.health == null || bot.health >= 10) return
   if (hostilesNearby(16).length) return
 
   foodSafetyBusy = true
-  foodSafetyLowStreak = 0
   try {
-    // Emergency bread protocol: if HP is critically low, grab bread from the
-    // kitchen chest and eat before attempting the harvest (which aborts at HP<10).
-    if (bot.health != null && bot.health < 10) {
-      logEvent('food-safety', `HP=${bot.health} — emergency bread protocol`)
-      if (!insideHouse()) await runGoInside()
-      await pathTo(HARVEST_WAYPOINTS.kitchen_chest, 2, 8000)
-      const win = await openChest()
-      let pulled = 0
-      try {
-        const containerSize = win.slots.length - 36
-        const src = win.slots[CHEST_SLOTS.bread]
-        if (src && src.name === 'bread' && src.count > 0) {
-          const take = Math.min(src.count, 16)
-          const empty = findEmptyInvSlotInWindow(win, containerSize)
-          if (empty) {
-            await twoClick(CHEST_SLOTS.bread, empty.windowSlot)
-            pulled = take
-          }
+    logEvent('food-safety', `HP=${bot.health} — emergency bread protocol`)
+    await ensureInsideHouse()
+    await pathTo(HARVEST_WAYPOINTS.kitchen_chest, 2, 8000)
+    const win = await openChest()
+    let pulled = 0
+    try {
+      const containerSize = win.slots.length - 36
+      const src = win.slots[CHEST_SLOTS.bread]
+      if (src && src.name === 'bread' && src.count > 0) {
+        const take = Math.min(src.count, 16)
+        const empty = findEmptyInvSlotInWindow(win, containerSize)
+        if (empty) {
+          await twoClick(CHEST_SLOTS.bread, empty.windowSlot)
+          pulled = take
         }
-      } finally { win.close() }
-      if (pulled === 0) {
-        logEvent('food-safety', 'no bread in chest — cannot recover')
-        bot.chat('No bread in the chest and HP too low to harvest. Need help.')
-        return
       }
-      logEvent('food-safety', `withdrew ${pulled} bread, eating`)
-      bot.chat(`Grabbed ${pulled} bread from the chest — eating to recover.`)
-      foodSafetyWindowCooldownUntil = 0
-      for (let i = 0; i < 4 && bot.food < 18; i++) {
-        try { await eatSomething(); await sleep(500) } catch (_) { break }
-      }
-      logEvent('food-safety', `after eating: HP=${bot.health} food=${bot.food}`)
-      await sleep(3000)
+    } finally { win.close() }
+    if (pulled === 0) {
+      logEvent('food-safety', 'no bread in chest — cannot recover')
+      bot.chat('No bread in the chest and HP too low. Need help.')
+      return
     }
-
-    const before = countBakedPotatoes()
-    logEvent('food-safety', `baked=${before} < ${foodSafetyMin} — harvesting + baking potatoes`)
-    bot.chat(pickLine(FOOD_SAFETY_LINES))
-    await runHarvestPotatoesRightClick({ user: 'food-safety', then: 'bake', maxTiles: 42 })
-    await runBakePotatoes({ user: 'food-safety' })
-    const after = countBakedPotatoes()
-    logEvent('food-safety', `done: baked ${before} → ${after}`)
+    logEvent('food-safety', `withdrew ${pulled} bread, eating`)
+    bot.chat(`Grabbed ${pulled} bread from the chest — eating to recover.`)
+    foodSafetyWindowCooldownUntil = 0
+    for (let i = 0; i < 4 && bot.food < 18; i++) {
+      try { await eatSomething(); await sleep(500) } catch (_) { break }
+    }
+    logEvent('food-safety', `after eating: HP=${bot.health} food=${bot.food}`)
   } catch (e) {
     if (e.name !== 'AbortError') logEvent('food-safety', `error: ${e.message}`)
   } finally {
@@ -3107,6 +3188,59 @@ async function tryCollectBake () {
     endTask('collect_potatoes')
     pendingBakeBusy = false
     bot.pathfinder.setGoal(null)
+  }
+}
+
+// Dawn restock: keep 16 wheat, 16 seeds, 16 baked potatoes at all times.
+// Checked on the 5s timer but only acts at dawn (timeOfDay 0–1000).
+// If any supply is low, harvest the appropriate crop. One attempt per morning;
+// if it doesn't reach 16, wait until the next morning.
+const RESTOCK_MIN = 16
+let restockBusy = false
+let restockLastDay = -1
+
+async function tryRestockSupplies () {
+  if (restockBusy || foodSafetyBusy) return
+  if (taskBusy() || goInsideBusy || autoSleepBusy || penTraversalBusy) return
+  if (!bot.entity || !bot.world || bot.isSleeping || isBedtime()) return
+  const t = bot.time?.timeOfDay
+  if (typeof t !== 'number' || t > 1000) return
+  const day = bot.time?.day
+  if (day === restockLastDay) return
+  if (bot.currentWindow) return
+  if (Date.now() < foodSafetyWindowCooldownUntil) return
+  if (hostilesNearby(16).length) return
+
+  const wheat = countOnHand('wheat')
+  const seeds = countOnHand('wheat_seeds')
+  const baked = countOnHand('baked_potato')
+  if (wheat >= RESTOCK_MIN && seeds >= RESTOCK_MIN && baked >= RESTOCK_MIN) return
+
+  restockLastDay = day
+  restockBusy = true
+  try {
+    if (baked < RESTOCK_MIN) {
+      logEvent('restock', `baked potatoes low (${baked}/${RESTOCK_MIN}) — harvesting + baking`)
+      bot.chat('Morning restock — low on baked potatoes, heading to the potato patch.')
+      await runHarvestPotatoesRightClick({ user: 'restock', then: 'bake', maxTiles: 42 })
+      await runBakePotatoes({ user: 'restock' })
+      logEvent('restock', `baked potatoes now ${countOnHand('baked_potato')}`)
+    }
+    if (wheat < RESTOCK_MIN || seeds < RESTOCK_MIN) {
+      logEvent('restock', `wheat=${wheat} seeds=${seeds} — harvesting wheat field`)
+      bot.chat('Morning restock — wheat or seeds are low, harvesting the field.')
+      await runHarvestRightClick({ half: 'all', keepSeeds: true, skipDeposit: true })
+      const newWheat = countOnHand('wheat')
+      const newSeeds = countOnHand('wheat_seeds')
+      logEvent('restock', `after harvest: wheat=${newWheat} seeds=${newSeeds}`)
+      if (newWheat < RESTOCK_MIN || newSeeds < RESTOCK_MIN) {
+        bot.chat(`Restock harvest done — wheat=${newWheat}, seeds=${newSeeds}. Still short, I'll try again tomorrow.`)
+      }
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') logEvent('restock', `error: ${e.message}`)
+  } finally {
+    restockBusy = false
   }
 }
 
@@ -3649,11 +3783,26 @@ async function runEnterPen ({ allowNight = false } = {}) {
     await pathTo({ x: -278, y: 64, z: 571 }, 0, 6000).catch(() => {})
     try {
       await runGoIntoPen({ skipActivate: true, allowNight })
+      return
     } catch (err2) {
-      // Both attempts failed — ensure door is closed so sheep don't escape.
+      const hpDelta2 = startHP - (bot.health ?? 20)
+      const deathDelta2 = deathCount - startDeaths
+      if (!isGracefulDoorFailure(err2, hpDelta2, deathDelta2)) {
+        await ensurePenDoorClosed()
+        throw err2
+      }
+      logEvent('enter-pen', `attempt 2 failed (${err2.message}); retrying once more`)
+      sendEmote('facepalm')
       await ensurePenDoorClosed()
-      logEvent('enter-pen', 'both attempts failed, door ensured closed')
-      throw err2
+      await sleep(500)
+      await pathTo({ x: -278, y: 64, z: 571 }, 0, 6000).catch(() => {})
+      try {
+        await runGoIntoPen({ skipActivate: true, allowNight })
+      } catch (err3) {
+        await ensurePenDoorClosed()
+        logEvent('enter-pen', 'all 3 attempts failed, door ensured closed')
+        throw err3
+      }
     }
   }
 }
@@ -3771,7 +3920,7 @@ async function ensureShears () {
 
   // Shears broke or missing — craft from iron ingots.
   bot.chat('Shears broke — crafting a new pair.')
-  if (!insideHouse()) await runGoInside()
+  await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
   const win = await openChest()
   const ironStack = win.slots[CHEST_SLOTS.iron]
@@ -3916,8 +4065,7 @@ async function runShearSheep () {
   }
 
   bot.chat(`Sheared ${sheared} sheep. Heading home to stash.`)
-  await runLeavePen()
-  await runGoInside()
+  await ensureInsideHouse()
 
   // Stash wool in the kitchen chest.
   const woolItems = bot.inventory.items().filter(i => i.name === 'wool')
@@ -4450,6 +4598,7 @@ async function runStashUnknown () {
   const unknowns = bot.inventory.items().filter(i => i.name === 'unknown')
   if (!unknowns.length) { bot.chat('No unknown items to stash.'); return }
   bot.chat(`Stashing ${unknowns.length} unknown stack(s) in the kitchen chest…`)
+  await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
 
   const chestBlock = bot.blockAt(new Vec3(
@@ -4510,9 +4659,7 @@ async function runStashWheat () {
   if (!onHand) { bot.chat('No wheat in my pockets.'); return }
   bot.chat(`Stashing ${onHand} wheat in the kitchen chest…`)
 
-  if (!insideHouse()) {
-    await runGoInside()
-  }
+  await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
 
   const chestBlock = bot.blockAt(new Vec3(
@@ -4566,9 +4713,7 @@ async function runDepositNamed (names) {
   }
   bot.chat(`Depositing ${present.join(', ')} in the kitchen chest…`)
 
-  if (!insideHouse()) {
-    await runGoInside()
-  }
+  await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
 
   const chestBlock = bot.blockAt(new Vec3(
@@ -4624,9 +4769,7 @@ async function runStashAll () {
   if (!inv.length) { bot.chat('Pockets already empty.'); return }
   bot.chat('Stashing everything…')
 
-  if (!insideHouse()) {
-    await runGoInside()
-  }
+  await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
 
   const chestBlock = bot.blockAt(new Vec3(
@@ -5227,7 +5370,7 @@ const CHAT_HANDLERS = [
     pattern: /\b(joke|funny|make me laugh|tell me something funny)\b/i,
     handler: (user) => {
       facePlayer(user).catch(() => {})
-      const eligibleJokes = JOKES.filter(j => !j.requiresWheatField || inWheatField())
+      const eligibleJokes = JOKES.filter(j => (!j.requiresWheatField || inWheatField()) && personaBiasForTags(j.tags) > 0)
       const weightedJokes = []
       for (const j of eligibleJokes) {
         const copies = Math.max(1, Math.floor(personaBiasForTags(j.tags)))
@@ -6050,10 +6193,9 @@ const CANT_SEE_LINES = [
 
 const MUSING_TOPICS = [
   // ── Character-voiced topics ──────────────────────────────────────────────
-  // Tagged topics get a 5× weight for the matching bot persona (see
-  // personaBiasForTags): 'protocol' → Muse (C-3PO energy), 'roz' → Roz (Wild
-  // Robot), 'unikitty' → Rain (Private the Penguin / Princess Unikitty).
-  // Marvin topics are untagged — any bot can sink into the gloom.
+  // Tagged topics are EXCLUSIVE to the matching persona: 'protocol' → Muse,
+  // 'roz' → Roz, 'unikitty' → Rain, 'private' → Private.
+  // Untagged topics are available to all bots.
   // C-3PO (anxious, fussy, odds-quoting protocol droid):
   {
     id: 'protocol_sheep_odds',
@@ -6446,6 +6588,193 @@ const MUSING_TOPICS = [
         followups: [
           { response: "Not yet. But if there WERE, they'd be very well-informed. Because of me.",
             closers: ["I'm preparing for all contingencies.", "Penguin readiness level: maximum."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_fact_huddle',
+    tags: ['private'],
+    starter: "Fun fact: emperor penguins huddle together for warmth. Up to 5,000 at a time. Can you imagine?",
+    branches: [
+      { response: "That's a lot of penguins.",
+        followups: [
+          { response: "I know! And they take turns being in the middle. Very fair. Very organized.",
+            closers: ["It's basically a rotating hug schedule.", "We should implement that here. With the sheep."] }
+        ] },
+      { response: "Do you miss huddling?",
+        followups: [
+          { response: "...a little. The sheep don't huddle the same way. I've asked.",
+            closers: ["They just stare at me. Woolly indifference.", "One day I'll find my huddle. One day."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_fact_tuxedo',
+    tags: ['private'],
+    starter: "Fun fact: a penguin's black-and-white pattern is called countershading. It's camouflage. We're dressed for stealth.",
+    branches: [
+      { response: "Stealth? You're black and white.",
+        followups: [
+          { response: "From below, the white belly blends with the sky. From above, the black back blends with the deep ocean. It's genius.",
+            closers: ["Nature's tuxedo is also nature's ghillie suit.", "We look fancy AND invisible. Best of both worlds."] }
+        ] },
+      { response: "Is that why you feel tactical?",
+        followups: [
+          { response: "EXACTLY. Born in tactical formalwear. Ready for anything.",
+            closers: ["Every penguin is born mission-ready.", "The tuxedo IS the uniform."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_fact_porpoising',
+    tags: ['private'],
+    starter: "Fun fact: when penguins leap out of the water while swimming, it's called 'porpoising.' We stole a dolphin move.",
+    branches: [
+      { response: "That sounds fun.",
+        followups: [
+          { response: "It IS fun. Also aerodynamic. But mostly fun.",
+            closers: ["Sometimes efficiency and joy are the same thing.", "I wish wheat fields had porpoising."] }
+        ] },
+      { response: "Penguins can't fly but they can leap?",
+        followups: [
+          { response: "We traded flying for swimming AND jumping. Honestly we got the better deal.",
+            closers: ["Birds of the air wish they could porpoise.", "Penguins chose the sea. No regrets. Mostly."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_fact_pebble',
+    tags: ['private'],
+    starter: "Fun fact: some penguins propose with a pebble. They find the smoothest one on the whole beach.",
+    branches: [
+      { response: "That's adorable.",
+        followups: [
+          { response: "Right?! It's like a tiny engagement ring but it's a rock. The romance is in the searching.",
+            closers: ["I've been keeping an eye out. Just in case. For readiness purposes.", "Every pebble is a potential love letter."] }
+        ] },
+      { response: "Do they really?",
+        followups: [
+          { response: "Adelie penguins do! They pick the best one they can find and present it. If the other penguin accepts, it's official.",
+            closers: ["Simple. Elegant. Rocky.", "I wonder if cobblestone counts. Asking for a friend."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_fact_knees',
+    tags: ['private'],
+    starter: "Fun fact: penguins DO have knees. They're just hidden inside the body. Secret knees.",
+    branches: [
+      { response: "Secret knees?",
+        followups: [
+          { response: "Classified leg architecture. The waddle is a CHOICE, not a limitation.",
+            closers: ["We COULD walk normally. We just don't want to.", "The waddle is tactical. Throws off predators' aim."] }
+        ] },
+      { response: "I always wondered about the waddle.",
+        followups: [
+          { response: "The waddle conserves energy! It's actually the most efficient way to walk with our build.",
+            closers: ["Efficiency AND charm. That's the penguin way.", "Kowalski did the math once. The waddle wins."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_fact_toboggan',
+    tags: ['private'],
+    starter: "Fun fact: penguins slide on their bellies to travel faster. It's called tobogganing. It's also called FUN.",
+    branches: [
+      { response: "Isn't that just falling with style?",
+        followups: [
+          { response: "It's CONTROLLED falling. On PURPOSE. Totally different.",
+            closers: ["There's a whole technique to it. Flipper angle is critical.", "I've been eyeing that hill near the potato patch."] }
+        ] },
+      { response: "You wish you could do that here.",
+        followups: [
+          { response: "Every single day. These grass blocks are basically asking for it.",
+            closers: ["One day. When nobody's watching.", "Belly-slide risk assessment: pending. Indefinitely."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_fact_singing',
+    tags: ['private'],
+    starter: "Fun fact: penguins recognize each other by voice. Every penguin has a unique call. Like a name, but screamy.",
+    branches: [
+      { response: "Screamy?",
+        followups: [
+          { response: "It's... enthusiastic vocalizing. In a crowd of thousands, you hear YOUR penguin. It's beautiful.",
+            closers: ["I wonder if anyone would recognize my call.", "Mine sounds like a tiny trumpet, I think."] }
+        ] },
+      { response: "Can you demonstrate?",
+        followups: [
+          { response: "I— okay, it's kind of an 'AAAH-ah-ah-AAAH' sound. Very dignified.",
+            closers: ["...please don't record that.", "Skipper says my call is 'distinctive.' I choose to hear that as a compliment."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_fact_swimming',
+    tags: ['private'],
+    starter: "Fun fact: gentoo penguins can swim 22 miles per hour. That's faster than most boats.",
+    branches: [
+      { response: "That's really fast.",
+        followups: [
+          { response: "Underwater ROCKETS. With flippers. Nature really went all-in on us.",
+            closers: ["Land speed: questionable. Sea speed: elite.", "If this farm had a moat, I'd be the fastest one here."] }
+        ] },
+      { response: "But can they walk fast?",
+        followups: [
+          { response: "...we prefer not to discuss land speed. Our strengths lie elsewhere.",
+            closers: ["Everyone has their environment. Mine just isn't dirt.", "In water I'm a missile. On land I'm a... friendly missile."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_fact_molt',
+    tags: ['private'],
+    starter: "Fun fact: penguins lose ALL their feathers at once during molting season. Just— everything. Gone.",
+    branches: [
+      { response: "That sounds terrible.",
+        followups: [
+          { response: "It IS uncomfortable. You can't swim, you can't eat, you just stand there looking scruffy for weeks.",
+            closers: ["But then the new feathers come in and you're GORGEOUS.", "It's a glow-up. A mandatory, itchy glow-up."] }
+        ] },
+      { response: "All at once?!",
+        followups: [
+          { response: "It's called a catastrophic molt. Which is dramatic but accurate.",
+            closers: ["Sounds scary. IS scary. But you come out waterproof.", "Fashion is suffering. Penguin fashion doubly so."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_fact_egg',
+    tags: ['private'],
+    starter: "Fun fact: emperor penguin dads balance the egg on their feet for TWO MONTHS in a blizzard. Without eating.",
+    branches: [
+      { response: "Two months?!",
+        followups: [
+          { response: "In the Antarctic winter. Negative 40 degrees. While the moms are out fishing. Dedication.",
+            closers: ["That's not parenting. That's a MISSION.", "Makes standing in a wheat field look pretty easy."] }
+        ] },
+      { response: "That's commitment.",
+        followups: [
+          { response: "Skipper level commitment. Maybe even beyond. Those dads don't even have a Kowalski.",
+            closers: ["Solo operation. Subzero. No backup. Maximum respect.", "I could do it. Probably. For at least a week."] }
+        ] }
+    ]
+  },
+  {
+    id: 'private_fact_fossils',
+    tags: ['private'],
+    starter: "Fun fact: there used to be a penguin the size of a human. Six feet tall. Can you IMAGINE?",
+    branches: [
+      { response: "A six-foot penguin?",
+        followups: [
+          { response: "Kumimanu. Lived 60 million years ago. Absolute UNIT of a penguin.",
+            closers: ["Imagine the belly slide on that thing.", "They could have opened doors themselves. No gate problems."] }
+        ] },
+      { response: "That's terrifying.",
+        followups: [
+          { response: "Terrifying?! It's MAJESTIC. Picture it — a penguin looking you right in the eye. As an equal.",
+            closers: ["They didn't waddle. They STRODE.", "The world wasn't ready for that much penguin."] }
         ] }
     ]
   },
@@ -7578,22 +7907,34 @@ const RECURSIVE_MUSING_TOPICS = [
     ],
     personaReactions: {
       'Somebody thought ice was a good idea once...': {
-        unikitty: 'I think it is! Ice is BEAUTIFUL. Have you SEEN how it sparkles?'
+        unikitty: 'I think it is! Ice is BEAUTIFUL. Have you SEEN how it sparkles?',
+        private: 'Ice is PERFECT for covert ops. Transparent walls. You can see the enemy coming. Tactical architecture.'
       },
       'Sugar cubes would be nice.': {
-        unikitty: 'YES! A sugar cube house! With frosting trim and candy windows!'
+        unikitty: 'YES! A sugar cube house! With frosting trim and candy windows!',
+        private: 'Emergency rations AND shelter? That\'s dual-purpose engineering. Skipper would approve.'
       },
       'Wood is friendly, but it does burn if you ask it the wrong question.': {
-        unikitty: 'Wood smells SO good though. Like a hug from a tree!'
+        unikitty: 'Wood smells SO good though. Like a hug from a tree!',
+        private: 'Fire vulnerability is a serious tactical weakness. But it IS easy to nail things to.'
       },
       'Dirt is underrated. It holds everything up and asks for no applause.': {
-        unikitty: 'Dirt is the MOST humble building material. I respect dirt.'
+        unikitty: 'Dirt is the MOST humble building material. I respect dirt.',
+        private: 'Dirt is the foundation of every forward operating base. Literally. Respect the dirt.'
       },
       'Bricks are just organized clay with ambition.': {
-        unikitty: 'Ambitious clay! That is the most inspiring thing I have heard all day!'
+        unikitty: 'Ambitious clay! That is the most inspiring thing I have heard all day!',
+        private: 'Organization IS ambition. That\'s basically the penguin motto.'
       },
       'The best material depends on whether you are building a house, a tower, or a regret.': {
-        unikitty: 'I would build a tower! A sparkly one! With a flag on top!'
+        unikitty: 'I would build a tower! A sparkly one! With a flag on top!',
+        private: 'A bunker. The answer is always a bunker. With a periscope.'
+      },
+      'Stone has confidence. Too much confidence, maybe.': {
+        private: 'Confidence is good in a wall. You want a wall that BELIEVES in itself.'
+      },
+      'Definitely not bedrock.': {
+        private: 'Classified material. Literally unbreakable. I respect that on a professional level.'
       }
     }
   },
@@ -8577,6 +8918,40 @@ function handleCommand (cmd) {
         .then(() => ({ ok: true, from, to }))
         .catch(e => ({ ok: false, error: e.message }))
     }
+    case 'click_window': {
+      const slot = Number(args.slot)
+      const mouseButton = args.mouseButton ?? 0
+      const mode = args.mode ?? 0
+      return bot.clickWindow(slot, mouseButton, mode)
+        .then(() => ({ ok: true, slot, mouseButton, mode }))
+        .catch(e => ({ ok: false, error: e.message }))
+    }
+    case 'deposit_one': {
+      const cx = Number(args.x), cy = Number(args.y), cz = Number(args.z)
+      const itemName = args.name
+      const containerSlot = args.containerSlot ?? 1
+      const block = bot.blockAt(new Vec3(cx, cy, cz))
+      if (!block) return { ok: false, error: 'block not loaded' }
+      return (async () => {
+        const win = await bot.openContainer(block)
+        const containerSize = win.slots.length - 36
+        const playerSlots = win.slots.slice(containerSize)
+        const srcIdx = playerSlots.findIndex(s => s && s.name === itemName)
+        if (srcIdx === -1) { win.close(); return { ok: false, error: `no ${itemName} in inventory` } }
+        const winSlot = containerSize + srcIdx
+        const count = playerSlots[srcIdx].count
+        await bot.clickWindow(winSlot, 1, 0)
+        await bot.clickWindow(containerSlot, 1, 0)
+        if (count > 2) await bot.clickWindow(winSlot, 0, 0)
+        else if (count === 2) {
+          const emptyIdx = playerSlots.findIndex((s, i) => i !== srcIdx && !s)
+          if (emptyIdx !== -1) await bot.clickWindow(containerSize + emptyIdx, 0, 0)
+          else await bot.clickWindow(winSlot, 0, 0)
+        }
+        win.close()
+        return { ok: true, deposited: 1, item: itemName, into: containerSlot }
+      })().catch(e => ({ ok: false, error: e.message }))
+    }
     case 'unequip': {
       // Empty the bot's hand (or other slot) so right-clicks don't use/eat
       // whatever's held. Needed for modded GUIs that only open on bare-hand.
@@ -8602,6 +8977,14 @@ function handleCommand (cmd) {
       return bot.equip(item, args.destination || 'hand')
         .then(() => ({ ok: true, equipped: item.name, count: item.count }))
         .catch(e => ({ ok: false, error: e.message }))
+    }
+    case 'toss_trash': {
+      const trash = bot.inventory.items().filter(i => TRASH_ITEMS.has(i.name))
+      if (!trash.length) return { ok: true, tossed: [] }
+      return tossTrash().then(() => ({
+        ok: true,
+        tossed: trash.map(i => ({ name: i.name, count: i.count }))
+      })).catch(e => ({ ok: false, error: e.message }))
     }
     case 'inventory': {
       const items = bot.inventory.items().map(i => ({ name: i.name, count: i.count, slot: i.slot }))
@@ -8824,7 +9207,7 @@ function handleCommand (cmd) {
       const keep = Number.isFinite(args && args.keep) ? args.keep : 0
       ;(async () => {
         try {
-          if (!insideHouse()) await runGoInside()
+          await ensureInsideHouse()
           await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
           const r = await depositQuickMove(depositItemName, target, { keep })
           logEvent('deposit-qm', `deposit_item(${depositItemName}): deposited=${r.deposited} remaining=${r.remaining} rounds=${r.rounds} backedUp=${r.backedUp}`)

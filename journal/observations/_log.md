@@ -7,6 +7,27 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-06-05b — Poisonous potato cleanup, tossTrash fixes (day 43494)
+
+Bot state at start: HP 19→20, food 15→19, deaths 0. Spawned at (-266.65, 65, 566.5) — **outside the house** (z=566.5, house z-min is 568).
+
+### Poisonous potato in inventory
+
+Found 1× `poisonous_potato` in slot 44 on session start. Origin uncertain — right-click harvests were believed not to produce them, but this disproves or qualifies that hypothesis. Discarded via new `toss_trash` ctl command. Updated [[../items/poisonous-potato]].
+
+### tossTrash() pathfind removed
+
+`tossTrash()` previously pathfound to a fixed dump spot at (-287, 63, 579). This broke when called inside the pen (potato harvest), since the pathfinder can't route through the fence gate. Fix: removed the pathfind entirely — now drops items at the bot's feet. Items despawn in 5 minutes regardless.
+
+### Spawn position outside house bounds
+
+Bot spawned at z=566.5, which is outside the `insideHouse()` bounding box (z >= 568). User reports the bot has deposited into the kitchen chest from this position — meaning it reached the chest through the wall without actually entering the house. The `chest_approach` waypoint is (-267, 65, 570) and the kitchen chest is at (-266, 67, 569). If the pathfinder routes to within `range=1` of `chest_approach` from the north side of the wall, it could reach the chest without crossing the house boundary. Open question: should `insideHouse()` bounds be expanded north, or should chest operations hard-require `insideHouse()` before pathfinding to the chest?
+
+### Links
+- [[../items/poisonous-potato]]
+
+---
+
 ## 2026-06-05 — Lily pad pathfinder fix, sustain loop test (day 43493)
 
 Bot state at start: HP 20, food 15, deaths 0, inside house at (-266, 65, 571). Day.
