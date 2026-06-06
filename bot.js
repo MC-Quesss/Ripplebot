@@ -1149,8 +1149,8 @@ function inWheatField () {
 // the crop rows.
 let idleWanderEnabled = true
 let idleWanderTimerId = null
-const IDLE_WANDER_MIN_MS = 20 * 1000
-const IDLE_WANDER_MAX_MS = 70 * 1000
+const IDLE_WANDER_MIN_MS = 60 * 1000
+const IDLE_WANDER_MAX_MS = 180 * 1000
 const WHEAT_FIELD_STAND_POINTS = [
   { x: -283, y: 64, z: 562 },
   { x: -283, y: 64, z: 554 },
@@ -1423,7 +1423,7 @@ async function runIdleWanderToField ({ announce = true } = {}) {
     return
   }
   const pt = WHEAT_FIELD_STAND_POINTS[Math.floor(Math.random() * WHEAT_FIELD_STAND_POINTS.length)]
-  if (announce) bot.chat(pickLine(withPersona(IDLE_WANDER_FIELD_LINES, IDLE_WANDER_FIELD_LINES_PERSONA)))
+  if (announce) logEvent('idle-wander', 'heading to wheat field')
   await pathTo(pt, 1, 12000)
   if (bot.entity) logEvent('idle-wander', `standing in wheat field at ${posStr(bot.entity.position)}`)
   await maybeRepairBareWheatTilesWhileWandering()
@@ -1444,7 +1444,7 @@ async function runIdleWanderToPen () {
     logEvent('idle-wander', `pen skipped, hostiles nearby: ${hostiles.map(h => h.name).join(', ')}`)
     return
   }
-  bot.chat(pickLine(withPersona(IDLE_WANDER_PEN_LINES, IDLE_WANDER_PEN_LINES_PERSONA)))
+  logEvent('idle-wander', 'heading to pen')
   await runEnterPen({ allowNight: true })
   if (!inPen()) {
     logEvent('idle-wander', 'pen visit did not end inside pen')
@@ -1452,13 +1452,10 @@ async function runIdleWanderToPen () {
   }
   await sleep(1200)
   if (isBedtime()) {
-    bot.chat(pickLine(SHEEP_COUNTING_LINES))
     if (inPen()) await runLeavePen()
     return
   }
-  bot.chat(pickLine(withPersona(IDLE_WANDER_PEN_INSIDE_LINES, IDLE_WANDER_PEN_INSIDE_LINES_PERSONA)))
   await sleep(1500 + Math.floor(Math.random() * 2500))
-  bot.chat(pickLine(SHEEP_COUNTING_LINES))
   await sleep(2500 + Math.floor(Math.random() * 4500))
   if (inPen()) await runLeavePen()
 }
@@ -1483,7 +1480,7 @@ async function tryIdleWander () {
 
   const action = randomIdleWanderTarget()
   try {
-    if (action !== 'stay') bot.chat(pickLine(withPersona(IDLE_WANDER_LINES, IDLE_WANDER_LINES_PERSONA)))
+    if (action !== 'stay') logEvent('idle-wander', `heading ${action}`)
 
     // Do not let idle wandering strand a bot in the sheep pen. Any non-pen
     // wander first exits the pen using the safe gate procedure.
@@ -1527,8 +1524,8 @@ function startIdleWanderTimer () {
 // render as action text and don't trigger conversational responses from other bots.
 // Independent of stand-down mode — a bot standing still is the ideal time for these.
 
-const AMBIENT_ACTION_MIN_MS = 90_000
-const AMBIENT_ACTION_MAX_MS = 240_000
+const AMBIENT_ACTION_MIN_MS = 180_000
+const AMBIENT_ACTION_MAX_MS = 420_000
 let ambientActionTimerId = null
 let lastAmbientActionAt = 0
 
@@ -1777,7 +1774,7 @@ const WHEAT_CROP_ROWS = [
   { label: 'south field south rows', xMin: FIELD_BOUNDS.xMin, xMax: FIELD_BOUNDS.xMax, zs: [563, 564, 565] },
 ]
 const WHEAT_READY_CHECK_MS = 5000
-const WHEAT_READY_ALERT_MS = 10000
+const WHEAT_READY_ALERT_MS = 120000
 const WHEAT_READY_LINES = [
   'The wheat is fully grown and ready for harvest.',
   'Harvest reminder: the wheat is ready.',
@@ -1871,12 +1868,12 @@ async function repairBareWheatTilesFromFieldVisit ({ announce = true, limit = 10
 
   const seedItem = bot.inventory.items().find(i => i.name === 'wheat_seeds' || i.name === 'seeds')
   if (!seedItem) {
-    if (announce) bot.chat(`I found ${bare.length} bare wheat tile${bare.length === 1 ? '' : 's'}, but I do not have seeds.`)
+    if (announce) logEvent('wheat-repair', `bare=${bare.length} no seeds`)
     logEvent('wheat-repair', `bare=${bare.length} no seeds`)
     return { repaired: 0, bare: bare.length, noSeeds: true }
   }
 
-  if (announce) bot.chat(`I found ${bare.length} bare wheat tile${bare.length === 1 ? '' : 's'}. Replanting.`)
+  if (announce) logEvent('wheat-repair', `replanting ${bare.length} bare tile(s)`)
   logEvent('wheat-repair', `start bare=${bare.length}`)
 
   let repaired = 0
@@ -1920,7 +1917,7 @@ async function repairBareWheatTilesFromFieldVisit ({ announce = true, limit = 10
     await clearHand()
   }
 
-  if (announce) bot.chat(`Wheat repair done: replanted ${repaired}/${bare.length} bare tile${bare.length === 1 ? '' : 's'}.`)
+  if (announce) logEvent('wheat-repair', `done repaired=${repaired}/${bare.length}`)
   logEvent('wheat-repair', `done repaired=${repaired}/${bare.length}`)
   return { repaired, bare: bare.length }
 }
@@ -2096,7 +2093,7 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
       if (deathCount > startDeaths) throw new Error('died exiting house')
       if (insideHouse()) {
         logEvent('harvest-rc', 'still inside after exit attempt — aborting')
-        bot.chat('Still inside — too late to head out. Will try next cycle.')
+        logEvent('harvest-rc', 'still inside after exit attempt — aborting')
         return
       }
     }
@@ -2127,11 +2124,11 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
       fieldWheat = filterByHalf(fieldWheat, fieldHalf)
       logEvent('harvest-rc', `found ${fieldWheat.length} wheat tiles in ${fieldHalf}`)
       if (!fieldWheat.length) {
-        bot.chat(`No wheat tiles found in ${label}.`)
+        logEvent('harvest-rc', `no wheat tiles in ${label}`)
         return { activated: 0, harvested: 0 }
       }
       fieldWheat = orderNautilusCCW(fieldWheat)
-      bot.chat(`Right-clicking ${fieldWheat.length} tiles in ${label}…`)
+      logEvent('harvest-rc', `right-clicking ${fieldWheat.length} tiles in ${label}`)
 
       let activated = 0
       let harvested = 0
@@ -2172,7 +2169,7 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
       }
       logEvent('harvest-rc', `${fieldHalf}: activated=${activated} harvested=${harvested}`)
 
-      bot.chat(`${label}: activated ${activated}, harvested ${harvested} mature. Sweeping…`)
+      logEvent('harvest-rc', `${label}: activated=${activated} harvested=${harvested} — sweeping`)
       const sweepZs = SWEEP_ZS[fieldHalf]
       let sweepIdx = 0
       for (const z of sweepZs) {
@@ -2236,22 +2233,16 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
           const target = dest === 'hopper' ? HOPPER : HARVEST_WAYPOINTS.kitchen_chest
           const r = await depositQuickMove('wheat', target, { keep: 0 })
           if (r.backedUp) {
-            bot.chat(dest === 'hopper'
-              ? `Hopper's backed up — fed ${r.deposited}, but ${r.remaining} wheat won't go. Bio-fuel intake may be jammed.`
-              : `Chest is full — stashed ${r.deposited}, keeping ${r.remaining}.`)
             logEvent('harvest-rc', `${dest} backed up: deposited=${r.deposited} remaining=${r.remaining} rounds=${r.rounds}`)
           } else {
-            bot.chat(dest === 'hopper'
-              ? `Fed all ${r.deposited} wheat into the hopper for the bio-fuel line.`
-              : `Put all ${r.deposited} wheat in the chest.`)
             logEvent('harvest-rc', `deposited ${r.deposited} wheat to ${dest} (quick-move, ${r.rounds} rounds)`)
           }
         } catch (e) {
-          bot.chat(`Couldn't reach the ${dest} — hanging onto the wheat. (${e.message})`)
+          logEvent('harvest-rc', `${dest} deposit failed: ${e.message} — keeping wheat`)
           logEvent('harvest-rc', `${dest} deposit failed: ${e.message}`)
         }
       } else {
-        bot.chat("Ok, I'll just hang on to it I guess.")
+        logEvent('harvest-rc', 'no reply after 30s, keeping wheat on hand')
         logEvent('harvest-rc', 'no reply after 30s, keeping wheat on hand')
       }
     }
@@ -2502,13 +2493,13 @@ async function clearJammedHopper () {
     return true
   }
   logEvent('sustain-hopper', 'first pass failed — retrying with 30s waits')
-  bot.chat('Hopper still jammed — trying again, slower this time.')
+  logEvent('sustain-hopper', 'first pass failed — retrying with 30s waits')
   const cleared2 = await feedHopperOneAtATime(30000)
   if (cleared2) {
     logEvent('sustain-hopper', 'hopper cleared on second pass (30s waits)')
   } else {
     logEvent('sustain-hopper', 'hopper still jammed after both passes — giving up')
-    bot.chat('Couldn\'t clear the hopper. Something else is wrong.')
+    logEvent('sustain-hopper', 'hopper still jammed after both passes')
   }
   return cleared2
 }
@@ -2554,7 +2545,7 @@ async function sustainWaitUntilSafe (reason) {
   let logged = false
   while (sustainState.active && !sustainSafe()) {
     if (!logged) {
-      bot.chat('Waiting inside until it is safe to resume.')
+      logEvent('sustain', 'waiting inside until safe to resume')
       logged = true
     }
     await sustainWait(5000)
@@ -2666,7 +2657,7 @@ async function runSustainFarm (user) {
               win.close()
               if (hasBalls && !hasWheat) {
                 logEvent('sustain-hopper', 'plant balls jammed — clearing')
-                bot.chat('Hopper\'s jammed — feeding wheat to clear it.')
+                logEvent('sustain-hopper', 'plant balls jammed — feeding wheat to clear')
                 await clearJammedHopper()
               }
             }
@@ -2679,7 +2670,7 @@ async function runSustainFarm (user) {
     }
   } catch (e) {
     logEvent('sustain', `loop error: ${e.message}`)
-    bot.chat(`Had to step back from the field: ${e.message}`)
+    logEvent('sustain', `loop error: ${e.message}`)
   } finally {
     sustainState.active = false
     logEvent('sustain', `stopped after ${sustainState.cycles} cycle(s)`)
@@ -2710,10 +2701,9 @@ async function runHarvestPotatoes ({ user } = {}) {
 
     const hostiles = hostilesNearby(16)
     if (hostiles.length) {
-      bot.chat(`Hostiles nearby (${hostiles.map(h => h.name).join(', ')}) — standing down.`)
+      logEvent('harvest-potato', `hostiles nearby — standing down`)
       return
     }
-    bot.chat(`Heading to the potato patch${user ? ', ' + user : ''}.`)
     logEvent('harvest-potato', `start startDeaths=${startDeaths}`)
     startFarmingMusingTimer()
 
@@ -2739,12 +2729,12 @@ async function runHarvestPotatoes ({ user } = {}) {
     })
     logEvent('harvest-potato', `found ${allPotatoes.length} potatoes, ${maturePotatoes.length} mature`)
     if (!maturePotatoes.length) {
-      bot.chat(`No mature potatoes yet (${allPotatoes.length} still growing).`)
+      logEvent('harvest-potato', `no mature potatoes (${allPotatoes.length} growing)`)
       // Even if none mature, come home rather than leaving bot outside.
       if (!insideHouse()) await runGoInside().catch(() => {})
       return
     }
-    bot.chat(`Found ${maturePotatoes.length} mature potatoes. Harvesting…`)
+    logEvent('harvest-potato', `harvesting ${maturePotatoes.length} mature potatoes`)
 
     const potatoCountBefore = bot.inventory.items()
       .filter(i => i.name === 'potato').reduce((s, i) => s + i.count, 0)
@@ -2783,7 +2773,7 @@ async function runHarvestPotatoes ({ user } = {}) {
     logEvent('harvest-potato', `attempted ${attempted}, broke ${dug}`)
 
     // Sweep the patch to collect drops.
-    bot.chat(`Harvested ${dug}. Sweeping for drops…`)
+    logEvent('harvest-potato', `dug=${dug} — sweeping for drops`)
     for (const pt of POTATO_SWEEP_POINTS) {
       checkAbort(myGen)
       if (deathCount > startDeaths) throw new Error('died during sweep')
@@ -2858,10 +2848,10 @@ async function runHarvestPotatoes ({ user } = {}) {
         }
       }
       win.close()
-      bot.chat(`Potato run done: ${dug} dug, ${gained} collected, ${deposited} stashed, ${potatoOnHand - deposited} on hand.`)
+      logEvent('harvest-potato', `done: dug=${dug} gained=${gained} deposited=${deposited} kept=${potatoOnHand - deposited}`)
       logEvent('harvest-potato', `dug=${dug} gained=${gained} deposited=${deposited}`)
     } catch (e) {
-      bot.chat(`Deposit failed: ${e.message}. Potatoes still in my pockets.`)
+      logEvent('harvest-potato', `deposit failed: ${e.message}`)
     }
   } finally {
     endTask(activeTask.name)
@@ -2892,10 +2882,9 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
 
     const hostiles = hostilesNearby(16)
     if (hostiles.length) {
-      bot.chat(`Hostiles nearby (${hostiles.map(h => h.name).join(', ')}) — standing down.`)
+      logEvent('harvest-potato-rc', `hostiles nearby — standing down`)
       return
     }
-    bot.chat(`Heading to the potato patch${user ? ', ' + user : ''}.`)
     logEvent('harvest-potato-rc', `start startDeaths=${startDeaths}`)
     startFarmingMusingTimer()
 
@@ -2905,7 +2894,6 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
       if (deathCount > startDeaths) throw new Error('died exiting house')
       if (insideHouse()) {
         logEvent('harvest-potato-rc', 'still inside after exit attempt — aborting')
-        bot.chat('Still inside — too late to head out. Will try next cycle.')
         return
       }
     }
@@ -2924,7 +2912,7 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
     allPotatoes = allPotatoes.filter(p => p.x >= SAFE_X_MIN)
     logEvent('harvest-potato-rc', `found ${allPotatoes.length} water-safe potato tiles`)
     if (!allPotatoes.length) {
-      bot.chat('No potatoes in the safe zone.')
+      logEvent('harvest-potato-rc', 'no potatoes in safe zone')
       return
     }
     // Boustrophedon order by z (small patch, no need for nautilus).
@@ -2945,7 +2933,7 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
       logEvent('harvest-potato-rc', `capping ${ordered.length} tiles to maxTiles=${maxTiles}`)
       ordered = ordered.slice(0, maxTiles)
     }
-    bot.chat(`Right-clicking ${ordered.length} potato tiles…`)
+    logEvent('harvest-potato-rc', `right-clicking ${ordered.length} potato tiles`)
 
     const potatoCountBefore = bot.inventory.items()
       .filter(it => it.name === 'potato').reduce((s, it) => s + it.count, 0)
@@ -2986,7 +2974,7 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
 
     // Full-coverage sweep over the same boustrophedon. Drops can land on the
     // ground when the bot activates from 2-3 blocks away.
-    bot.chat(`Activated ${activated}, harvested ${harvested} mature. Sweep…`)
+    logEvent('harvest-potato-rc', `activated=${activated} harvested=${harvested} — sweeping`)
     for (const pos of ordered) {
       checkAbort(myGen)
       if (deathCount > startDeaths) throw new Error('died during sweep')
@@ -3002,15 +2990,15 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
     const potatoItems = bot.inventory.items().filter(i => i.name === 'potato')
     const onHand = potatoItems.reduce((s, it) => s + it.count, 0)
     const gained = onHand - potatoCountBefore
-    bot.chat(`Potato run done — activated ${activated}, picked up ${gained}.`)
+    logEvent('harvest-potato-rc', `done: activated=${activated} gained=${gained} onHand=${onHand}`)
 
     if (onHand <= 0) {
-      bot.chat('No raw potatoes to deal with.')
+      logEvent('harvest-potato-rc', 'no raw potatoes to deal with')
     } else if (then === 'bake') {
       // Autonomous run (food-safety): no prompt. Keep the raw potatoes on hand;
       // the caller runs the bake step next (a separate task — baking can't start
       // while this harvest task is still held).
-      bot.chat(`Got ${onHand} potatoes — baking them.`)
+      logEvent('harvest-potato-rc', `auto-bake: ${onHand} potatoes`)
       logEvent('harvest-potato-rc', `auto-bake: keeping ${onHand} potatoes for bake step`)
     } else {
       const askLine = POTATO_ASK_LINES[Math.floor(Math.random() * POTATO_ASK_LINES.length)]
@@ -3044,12 +3032,12 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
             try { await win.deposit(it.type, it.metadata, it.count); deposited += it.count } catch (e) { break }
           }
           win.close()
-          bot.chat(`Stashed ${deposited} potatoes.`)
+          logEvent('harvest-potato-rc', `stashed ${deposited} potatoes`)
         } catch (e) {
-          bot.chat(`Stash failed: ${e.message}. Potatoes still in my pockets.`)
+          logEvent('harvest-potato-rc', `stash failed: ${e.message}`)
         }
       } else {
-        bot.chat('No answer — I\'ll just hold onto these for now.')
+        logEvent('harvest-potato-rc', 'no reply — keeping potatoes')
         logEvent('harvest-potato-rc', `no reply after 60s, keeping potatoes in inventory`)
       }
     }
@@ -3120,13 +3108,13 @@ async function runBakePotatoes ({ user } = {}) {
     const potatoItems = bot.inventory.items().filter(i => i.name === 'potato')
     const raw = potatoItems.reduce((s, i) => s + i.count, 0)
     if (raw === 0) {
-      bot.chat('No raw potatoes to bake — none in inventory or the chest.')
+      logEvent('bake-potato', 'no raw potatoes to bake')
       return
     }
     if (withdrawn > 0) {
-      bot.chat(`Pulled ${withdrawn} raw potato${withdrawn === 1 ? '' : 'es'} from the chest. Baking ${raw}…`)
+      logEvent('bake-potato', `pulled ${withdrawn} from chest, baking ${raw}`)
     } else {
-      bot.chat(`Baking ${raw} potato${raw === 1 ? '' : 'es'}…`)
+      logEvent('bake-potato', `baking ${raw}`)
     }
     logEvent('bake-potato', `start raw=${raw} withdrawn=${withdrawn}`)
 
@@ -3153,7 +3141,7 @@ async function runBakePotatoes ({ user } = {}) {
         if (!fuel || fuel.count < 1) {
           // Let the smelt begin anyway — user may have wood queued via the mod —
           // but warn in chat so they know to refill if nothing bakes.
-          bot.chat('Furnace looks low on fuel — baking anyway, watch the output.')
+          logEvent('bake-potato', 'furnace low on fuel — baking anyway')
         }
         // `bot.inventory.items()` is stable across furnace open.
         const toSmelt = bot.inventory.items().filter(i => i.name === 'potato')
@@ -3183,11 +3171,11 @@ async function runBakePotatoes ({ user } = {}) {
     pendingBake.active = true
     pendingBake.doneAt = Date.now() + (put * SECS_PER_ITEM + BUFFER_SECS) * 1000
     const waitMin = ((pendingBake.doneAt - Date.now()) / 60000).toFixed(1)
-    bot.chat(`${put} potatoes baking (~${waitMin} min). I'll collect them once they're done.`)
+    logEvent('bake-potato', `${put} potatoes baking (~${waitMin} min)`)
     logEvent('bake-potato', `started put=${put} doneAt=+${waitMin}min (non-blocking — collect later)`)
   } catch (e) {
     logEvent('bake-potato-error', e.message)
-    bot.chat(`Potato bake aborted: ${e.message}`)
+    logEvent('bake-potato', `aborted: ${e.message}`)
   } finally {
     endTask(activeTask.name)
     bot.pathfinder.setGoal(null)
@@ -3258,11 +3246,11 @@ async function tryFoodSafety () {
     } finally { win.close() }
     if (pulled === 0) {
       logEvent('food-safety', 'no bread in chest — cannot recover')
-      bot.chat('No bread in the chest and HP too low. Need help.')
+      logEvent('food-safety', 'no bread in chest — need help')
       return
     }
     logEvent('food-safety', `withdrew ${pulled} bread, eating`)
-    bot.chat(`Grabbed ${pulled} bread from the chest — eating to recover.`)
+    logEvent('food-safety', `eating ${pulled} bread to recover`)
     foodSafetyWindowCooldownUntil = 0
     for (let i = 0; i < 4 && bot.food < 18; i++) {
       try { await eatSomething(); await sleep(500) } catch (_) { break }
@@ -3321,11 +3309,11 @@ async function tryCollectBake () {
       // Smelt not finished (fuel low or batch larger than the wait estimate).
       // Take what's done and come back for the rest.
       pendingBake.doneAt = Date.now() + (inputLeft * 10 + 8) * 1000
-      bot.chat(`Collected ${taken} baked — ${inputLeft} still cooking, I'll be back.`)
+      logEvent('collect-bake', `taken=${taken} input_left=${inputLeft} — coming back`)
       logEvent('collect-bake', `taken=${taken} input_left=${inputLeft} onhand=${onHand} — rescheduled`)
     } else {
       pendingBake.active = false
-      bot.chat(`Collected ${taken} baked potato${taken === 1 ? '' : 'es'}, ${onHand} on hand.`)
+      logEvent('collect-bake', `done taken=${taken} onhand=${onHand}`)
       logEvent('collect-bake', `done taken=${taken} onhand=${onHand}`)
     }
   } catch (e) {
@@ -3367,20 +3355,20 @@ async function tryRestockSupplies () {
   try {
     if (baked < RESTOCK_MIN) {
       logEvent('restock', `baked potatoes low (${baked}/${RESTOCK_MIN}) — harvesting + baking`)
-      bot.chat('Morning restock — low on baked potatoes, heading to the potato patch.')
+      logEvent('restock', 'low on baked potatoes — heading to potato patch')
       await runHarvestPotatoesRightClick({ user: 'restock', then: 'bake', maxTiles: 42 })
       await runBakePotatoes({ user: 'restock' })
       logEvent('restock', `baked potatoes now ${countOnHand('baked_potato')}`)
     }
     if (wheat < RESTOCK_MIN || seeds < RESTOCK_MIN) {
       logEvent('restock', `wheat=${wheat} seeds=${seeds} — harvesting wheat field`)
-      bot.chat('Morning restock — wheat or seeds are low, harvesting the field.')
+      logEvent('restock', 'wheat or seeds low — harvesting field')
       await runHarvestRightClick({ half: 'all', keepSeeds: true, skipDeposit: true })
       const newWheat = countOnHand('wheat')
       const newSeeds = countOnHand('wheat_seeds')
       logEvent('restock', `after harvest: wheat=${newWheat} seeds=${newSeeds}`)
       if (newWheat < RESTOCK_MIN || newSeeds < RESTOCK_MIN) {
-        bot.chat(`Restock harvest done — wheat=${newWheat}, seeds=${newSeeds}. Still short, I'll try again tomorrow.`)
+        logEvent('restock', `still short: wheat=${newWheat} seeds=${newSeeds} — will retry tomorrow`)
       }
     }
   } catch (e) {
@@ -3833,7 +3821,7 @@ async function runGoIntoPen ({ skipActivate = false, allowNight = false } = {}) 
     await runGoOutside('wool')
   }
   const startDeaths = deathCount
-  bot.chat('Entering the pen.')
+  logEvent('pen', 'entering pen')
   suppressLookAt(20000)
   penTraversalBusy = true
   try {
@@ -3955,7 +3943,7 @@ async function runEnterPen ({ allowNight = false } = {}) {
 
 async function runGoOutOfPen ({ skipActivate = false } = {}) {
   const startDeaths = deathCount
-  if (!skipActivate) bot.chat('Leaving the pen.')
+  if (!skipActivate) logEvent('pen', 'leaving pen')
   suppressLookAt(20000)
   penTraversalBusy = true
   try {
@@ -4021,7 +4009,7 @@ async function runGoOutOfPen ({ skipActivate = false } = {}) {
 
   // 7. Verify.
   const atOutside = verifyAtOrientation(PEN_OUTSIDE, 1.5, 1.2)
-  bot.chat('Nailed it!')
+  logEvent('pen', 'gate sequence success')
   logEvent('go-out-of-pen', `arrived ${posStr(bot.entity.position)} onPad=${atOutside.ok}`)
   } finally {
     penTraversalBusy = false
@@ -4065,14 +4053,14 @@ async function ensureShears () {
   }
 
   // Shears broke or missing — craft from iron ingots.
-  bot.chat('Shears broke — crafting a new pair.')
+  logEvent('shear', 'crafting new shears')
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
   const win = await openChest()
   const ironStack = win.slots[CHEST_SLOTS.iron]
   if (!ironStack || ironStack.count < 2) {
     win.close()
-    bot.chat("Can't craft shears — need at least 2 iron ingots in chest slot 45.")
+    logEvent('shear', 'need 2 iron ingots in chest slot 45')
     return false
   }
   const containerSize = win.slots.length - 36
@@ -4090,7 +4078,7 @@ async function ensureShears () {
   // Find iron in inventory and place 2 into the grid.
   const ironInv = bot.inventory.items().find(i => i.name === 'iron_ingot')
   if (!ironInv || ironInv.count < 2) {
-    bot.chat("Iron didn't land in inventory — can't craft.")
+    logEvent('shear', "iron didn't land in inventory")
     return false
   }
 
@@ -4111,13 +4099,13 @@ async function ensureShears () {
   const resultSlot = bot.inventory.slots[0]
   if (!resultSlot) {
     logEvent('shear', 'no result in craft slot 0 after placing iron')
-    bot.chat("Craft didn't produce shears — recipe may differ on this server.")
+    logEvent('shear', 'craft produced nothing — recipe may differ')
     await sweepCraftGridToInv()
     return false
   }
   const dest = await takeOneCraft()
   if (dest < 0) {
-    bot.chat("Couldn't pick up crafted shears.")
+    logEvent('shear', "couldn't pick up crafted shears")
     await sweepCraftGridToInv()
     return false
   }
@@ -4135,7 +4123,7 @@ async function ensureShears () {
     }
   }
 
-  bot.chat('Shears crafted. Ready to go.')
+  logEvent('shear', 'shears crafted')
   await pathTo(HOUSE_CENTER, 0, 10000)
   return true
 }
@@ -4153,7 +4141,7 @@ async function runShearSheep () {
 
   // Equip shears.
   const shears = bot.inventory.items().find(i => i.name === 'shears')
-  if (!shears) { bot.chat("I don't have shears."); return }
+  if (!shears) { logEvent('shear', 'no shears in inventory'); return }
   await bot.equip(shears, 'hand')
   logEvent('shear', 'shears equipped')
 
@@ -4167,12 +4155,12 @@ async function runShearSheep () {
   })
 
   if (!sheep.length) {
-    bot.chat('No woolly sheep in the pen.')
+    logEvent('shear', 'no woolly sheep in pen')
     await clearHand()
     return
   }
 
-  bot.chat(`Shearing ${sheep.length} sheep.`)
+  logEvent('shear', `shearing ${sheep.length} sheep`)
   let sheared = 0
 
   for (const s of sheep) {
@@ -4210,7 +4198,7 @@ async function runShearSheep () {
     }
   }
 
-  bot.chat(`Sheared ${sheared} sheep. Heading home to stash.`)
+  logEvent('shear', `sheared ${sheared} sheep — heading to stash`)
   await ensureInsideHouse()
 
   // Stash wool in the kitchen chest.
@@ -4230,11 +4218,11 @@ async function runShearSheep () {
         }
         win.close()
         const total = woolItems.reduce((s, w) => s + w.count, 0)
-        bot.chat(`Stashed ${total} wool.`)
+        logEvent('shear', `stashed ${total} wool`)
         logEvent('shear', `stashed ${total} wool`)
       } catch (e) {
         logEvent('shear', `stash failed: ${e.message}`)
-        bot.chat(`Couldn't stash wool: ${e.message}`)
+        logEvent('shear', `stash failed: ${e.message}`)
       }
     }
   }
@@ -4497,7 +4485,7 @@ async function runBake (mode = 'both') {
       }
     }
 
-    bot.chat(`${mode === 'dough' ? 'Mixing' : 'Baking'} up to ${batchSize}…`)
+    logEvent('bake-bread', `${mode === 'dough' ? 'mixing' : 'baking'} up to ${batchSize}`)
 
     // Shared state: where the dough ends up (either from mix stage or pulled
     // from chest slot 21 in bread-only mode).
@@ -4599,7 +4587,7 @@ async function runBake (mode = 'both') {
         try { await depositToChestSlot(doughSlot, CHEST_SLOTS.dough) }
         catch (e) { logEvent('bake', `couldn't stash dough: ${e.message}`) }
         const doughCount = bot.inventory.slots[doughSlot]?.count || 'some'
-        bot.chat(`Dough mixed: ${doughCount} stashed in slot 21.`)
+        logEvent('bake-bread', `dough mixed: ${doughCount} stashed in slot 21`)
         logEvent('bake', `dough done`)
         return
       }
@@ -4698,11 +4686,11 @@ async function runBake (mode = 'both') {
 
     const breadOnHand = bot.inventory.items().filter(i => i.name === 'bread').reduce((s, i) => s + i.count, 0)
     const breadTotal = deposited + breadOnHand
-    bot.chat(`Done. ${breadTotal} bread made, ${deposited} stashed, ${breadOnHand} on hand.`)
+    logEvent('bake-bread', `done: ${breadTotal} bread, ${deposited} stashed, ${breadOnHand} on hand`)
     logEvent('bake', `bread=${breadTotal} stashed=${deposited} onhand=${breadOnHand}`)
   } catch (e) {
     logEvent('bake-error', e.message)
-    bot.chat(`Bake failed: ${e.message}`)
+    logEvent('bake-bread', `failed: ${e.message}`)
   } finally {
     // Last-chance cleanup — sweep grid before exiting. Anything left in the
     // 2x2 (or result slot) will fall on the ground when the next window
@@ -4742,8 +4730,8 @@ async function eatSomething () {
 // chest. Used to clear modded items that auto-eat / equip-by-name can't handle.
 async function runStashUnknown () {
   const unknowns = bot.inventory.items().filter(i => i.name === 'unknown')
-  if (!unknowns.length) { bot.chat('No unknown items to stash.'); return }
-  bot.chat(`Stashing ${unknowns.length} unknown stack(s) in the kitchen chest…`)
+  if (!unknowns.length) { logEvent('stash', 'no unknown items'); return }
+  logEvent('stash', `stashing ${unknowns.length} unknown stack(s)`)
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
 
@@ -5337,7 +5325,7 @@ const CHAT_HANDLERS = [
       runBakePotatoes({ user }).catch(e => {
         if (e.name === 'AbortError') return
         logEvent('bake-potato-error', e.message)
-        bot.chat(`Potato bake aborted: ${e.message}`)
+        logEvent('bake-potato', `aborted: ${e.message}`)
       })
     },
   },
