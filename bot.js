@@ -1539,7 +1539,7 @@ const AMBIENT_ACTION_LINES = [
   { text: 'stretches arms overhead', weight: s => s.patience },
   { text: 'scuffs a boot against the ground', weight: s => s.snark },
   { text: 'squints at the horizon', weight: s => s.focus },
-  { text: 'absently picks at a splinter on the fence', weight: s => s.patience + s.charm },
+  { text: 'absently picks at a splinter on the fence', weight: s => s.patience + s.charm, requires: () => nearFence() },
   { text: 'takes a slow breath', weight: s => s.patience + s.focus },
   { text: 'glances around, taking stock of things', weight: s => s.focus },
   { text: 'rolls shoulders back with a quiet pop', weight: s => s.chaos },
@@ -1551,7 +1551,7 @@ const AMBIENT_ACTION_LINES_PERSONA = {
   roz: [
     { text: 'kneels to examine a small wildflower', weight: s => s.curiosity * 2, tags: ['roz'] },
     { text: 'holds very still, watching a bird nearby', weight: s => s.patience * 2, tags: ['roz'] },
-    { text: 'traces a finger along the fence rail', weight: s => s.charm * 2, tags: ['roz'] },
+    { text: 'traces a finger along the fence rail', weight: s => s.charm * 2, tags: ['roz'], requires: () => nearFence() },
     { text: 'turns an acorn over in one hand, studying it', weight: s => s.curiosity * 2, tags: ['roz'] },
     { text: 'listens to the wheat rustle, head tilted', weight: s => s.patience * 2, tags: ['roz'] },
   ],
@@ -1577,7 +1577,7 @@ const AMBIENT_ACTION_LINES_PERSONA = {
     { text: 'wiggles fingers at a passing butterfly', weight: s => s.curiosity * 2, tags: ['unikitty'] },
   ],
   private: [
-    { text: 'scans the treeline out of habit', weight: s => s.focus * 2, tags: ['private'] },
+    { text: 'scans the treeline out of habit', weight: s => s.focus * 2, tags: ['private'], emote: 'salute' },
     { text: 'practices semaphore flags to no one in particular', weight: s => s.focus * 2, tags: ['private'] },
     { text: 'tries to remember if that was an L or a J in semaphore', weight: s => s.curiosity * 2, tags: ['private'] },
     { text: 'holds arms out at angles, practicing a new letter', weight: s => s.focus * 2, tags: ['private'] },
@@ -1585,6 +1585,20 @@ const AMBIENT_ACTION_LINES_PERSONA = {
     { text: 'checks six. All clear. Smiles.', weight: s => s.focus * 2, tags: ['private'] },
     { text: 'mouths "smile and wave" to itself', weight: s => s.charm * 2, tags: ['private'] },
   ],
+}
+
+function nearFence () {
+  if (!bot.entity) return false
+  const p = bot.entity.position
+  for (let dx = -2; dx <= 2; dx++) {
+    for (let dz = -2; dz <= 2; dz++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const b = bot.blockAt(new Vec3(Math.floor(p.x) + dx, Math.floor(p.y) + dy, Math.floor(p.z) + dz))
+        if (b && /fence/i.test(b.name)) return true
+      }
+    }
+  }
+  return false
 }
 
 function tryAmbientAction () {
@@ -1595,7 +1609,8 @@ function tryAmbientAction () {
   const now = Date.now()
   if (now - lastAmbientActionAt < 90_000) return
   if (Math.random() < 0.4 && tryWildlifeComment()) { lastAmbientActionAt = now; return }
-  const pool = withPersona(AMBIENT_ACTION_LINES, AMBIENT_ACTION_LINES_PERSONA)
+  const full = withPersona(AMBIENT_ACTION_LINES, AMBIENT_ACTION_LINES_PERSONA)
+  const pool = full.filter(e => !e.requires || e.requires())
   const entry = pickLineEntry(pool)
   bot.chat(`/me ${entry.text}`)
   if (entry.emote) sendEmote(entry.emote)
