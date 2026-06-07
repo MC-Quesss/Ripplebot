@@ -152,6 +152,46 @@ const bot = mineflayer.createBot({ ...clientOpts, client })
 bot.loadPlugin(pathfinder)
 bot.loadPlugin(autoEat)
 
+// Patch: mineflayer-auto-eat leaks entity_status + updateSlot listeners on eat
+// timeout — the setTimeout rejects the promise but never removes the listeners.
+// Over many sustain cycles this triggers MaxListenersExceededWarning.
+if (bot.autoEat) {
+  const origBuild = bot.autoEat.buildEatingListener.bind(bot.autoEat)
+  bot.autoEat.buildEatingListener = function (relevantItem, timeout) {
+    return new Promise((res, rej) => {
+      const eatingListener = (packet) => {
+        if (packet.entityId === bot.entity.id && packet.entityStatus === 9) {
+          clearTimeout(timer)
+          bot._client.off('entity_status', eatingListener)
+          bot.inventory.off('updateSlot', itemListener)
+          res()
+        }
+      }
+      const itemListener = (slot, oldItem, newItem) => {
+        if (oldItem?.slot === relevantItem.slot && newItem?.type !== relevantItem.type) {
+          clearTimeout(timer)
+          bot._client.off('entity_status', eatingListener)
+          bot.inventory.off('updateSlot', itemListener)
+          rej(new Error(`Item switched early to: ${newItem?.name}!\nItem: ${newItem}`))
+        }
+      }
+      bot._client.on('entity_status', eatingListener)
+      bot.inventory.on('updateSlot', itemListener)
+      this._rejectionBinding = (error) => {
+        clearTimeout(timer)
+        bot._client.off('entity_status', eatingListener)
+        bot.inventory.off('updateSlot', itemListener)
+        rej(error)
+      }
+      const timer = setTimeout(() => {
+        bot._client.off('entity_status', eatingListener)
+        bot.inventory.off('updateSlot', itemListener)
+        rej(new Error(`Eating timed out with a time of ${timeout} milliseconds!`))
+      }, timeout)
+    })
+  }
+}
+
 // Cross-bot phrase de-duplication. Each bot remembers exact-ish lines it hears
 // in chat, then avoids picking that same phrase as its immediate next random
 // line. Because every bot hears the shared chat, this suppresses echo-chamber
@@ -235,12 +275,12 @@ bot.once('spawn', () => {
   })
 
   logEvent('pathfinder', 'ready')
-  // Auto-eat config: trigger at food <= 14, prefer saturation-richest food
+  // Auto-eat config: eat whenever not full, prefer saturation-richest food
   if (bot.autoEat) {
     bot.autoEat.setOpts({
       priority: 'saturation',
-      startAt: 14,
-      bannedFood: [], // no foods blocked; modded food is usually fine
+      minHunger: 20,
+      bannedFood: [],
     })
     bot.autoEat.enableAuto()
     bot.on('autoeat_started', (item) => logEvent('auto-eat', `eating ${item?.name ?? 'food'}`))
