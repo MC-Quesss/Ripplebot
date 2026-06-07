@@ -5592,6 +5592,7 @@ const IDUNNO_LINES_PERSONA = {
 bot.on('chat', (username, message) => {
   if (username === bot.username) return
   rememberChatPhrase(message)
+  if (looksLikeBot(username)) markBotChatHeardNow()
   logEvent('chat', `<${username}> ${message}`)
   if (isIdleWanderFieldAnnouncement(message)) {
     tryJoinFieldWanderFromChat(username, message).catch(e => {
@@ -6710,7 +6711,7 @@ const MUSING_TOPICS = [
   },
   {
     id: 'private_penguin_fact',
-    tags: ['unikitty'],
+    tags: ['private'],
     starter: "Fun fact: penguins can hold their breath for 20 minutes. Not relevant. Just impressive.",
     branches: [
       { response: "Why do you know that?",
@@ -6721,7 +6722,7 @@ const MUSING_TOPICS = [
       { response: "Are there penguins here?",
         followups: [
           { response: "Not yet. But if there WERE, they'd be very well-informed. Because of me.",
-            closers: ["I'm preparing for all contingencies.", "Penguin readiness level: maximum."] }
+            closers: ["I'm preparing for all contingencies.", "Penguin readiness level: medium, um um um um."] }
         ] }
     ]
   },
@@ -8127,8 +8128,34 @@ const MUSING_COOLDOWN_MS = 150000
 // Pause before a bot speaks its next musing line, so the back-and-forth reads at
 // a human, contemplative pace instead of rapid-fire. Each reply lands
 // MIN..(MIN+SPREAD) ms after the partner's line.
-const MUSING_REPLY_DELAY_MIN_MS = 5500
+const MUSING_REPLY_DELAY_MIN_MS = 10000
 const MUSING_REPLY_DELAY_SPREAD_MS = 5000
+const MUSING_BOT_CHAT_AWARE_GAP_MS = 10000
+let lastBotChatHeardAt = 0
+
+function markBotChatHeardNow () {
+  lastBotChatHeardAt = Date.now()
+}
+
+function scheduleMusingChatAwareReply (topicId, baseDelay, fn) {
+  const snapshot = topicId
+
+  function waitThenSpeak (delay) {
+    setTimeout(() => {
+      if (musingState.currentTopicId !== snapshot) return
+
+      const waitMore = (lastBotChatHeardAt + MUSING_BOT_CHAT_AWARE_GAP_MS) - Date.now()
+      if (waitMore > 0) {
+        waitThenSpeak(waitMore)
+        return
+      }
+
+      fn()
+    }, delay)
+  }
+
+  waitThenSpeak(baseDelay)
+}
 
 function nodeChildren (node) {
   if (node.followups) return { type: 'nodes', items: node.followups }
@@ -8164,11 +8191,8 @@ function shouldContinueRecursive (depth, topic) {
 
 function recursiveMusingSendAndAdvance (topicId) {
   const delay = MUSING_REPLY_DELAY_MIN_MS + Math.random() * MUSING_REPLY_DELAY_SPREAD_MS
-  const snapshot = topicId
 
-  setTimeout(() => {
-    if (musingState.currentTopicId !== snapshot) return
-
+  scheduleMusingChatAwareReply(topicId, delay, () => {
     const topic = musingState.pendingTopic
     if (!topic) {
       endMusingConversation()
@@ -8179,8 +8203,11 @@ function recursiveMusingSendAndAdvance (topicId) {
 
     if (!shouldContinueRecursive(musingState.depth, topic)) {
       const closer = pickRandom(topic.closers)
-      bot.chat(closer)
-      logEvent('musing', `recursive closer: "${closer.substring(0, 40)}..."`)
+      if (closer) {
+        markBotChatHeardNow()
+        bot.chat(closer)
+      }
+      logEvent('musing', `recursive closer: "${String(closer).substring(0, 40)}..."`)
       endMusingConversation()
       return
     }
@@ -8190,6 +8217,7 @@ function recursiveMusingSendAndAdvance (topicId) {
     const line = reaction || pickRecursiveLine(topic, musingState.usedLines)
     musingState.usedLines.add(line)
 
+    markBotChatHeardNow()
     bot.chat(line)
     logEvent('musing', `recursive ${reaction ? `persona (${persona})` : 'said'}: "${line.substring(0, 40)}..."`)
 
@@ -8265,14 +8293,14 @@ function pickBranchRotating (branches, topicId) {
 
 function musingSendAndAdvance (items, type, topicId) {
   const delay = MUSING_REPLY_DELAY_MIN_MS + Math.random() * MUSING_REPLY_DELAY_SPREAD_MS
-  const snapshot = topicId
 
-  setTimeout(() => {
-    if (musingState.currentTopicId !== snapshot) return
-
+  scheduleMusingChatAwareReply(topicId, delay, () => {
     if (type === 'closers') {
       const closer = pickAvoidingRecentPhrase(items)
-      if (closer) bot.chat(closer)
+      if (closer) {
+        markBotChatHeardNow()
+        bot.chat(closer)
+      }
       logEvent('musing', `said closer: "${String(closer).substring(0, 40)}..."`)
       endMusingConversation()
       return
@@ -8287,6 +8315,7 @@ function musingSendAndAdvance (items, type, topicId) {
       return
     }
     const personaLine = node.personaAlts?.[botPersonaKey()]
+    markBotChatHeardNow()
     bot.chat(personaLine || node.response)
     logEvent('musing', `said: "${(personaLine || node.response).substring(0, 40)}..."`)
 
