@@ -675,8 +675,14 @@ const POTATO_SWEEP_POINTS = [
 const FIELD_BOUNDS = { xMin: -287, xMax: -279, zMin: 559, zMax: 565 }
 const NORTH_FIELD_BOUNDS = { xMin: -287, xMax: -279, zMin: 551, zMax: 557 }
 const HOSTILE_NAMES = new Set([
-  'zombie', 'skeleton', 'creeper', 'witch', 'enderman', 'spider',
-  'slime', 'husk', 'drowned', 'phantom', 'stray', 'cave_spider',
+  'zombie', 'zombie_villager', 'husk', 'drowned',
+  'skeleton', 'stray', 'wither_skeleton',
+  'creeper', 'spider', 'cave_spider',
+  'witch', 'enderman', 'slime', 'magma_cube', 'phantom',
+  'blaze', 'ghast', 'silverfish', 'endermite',
+  'guardian', 'elder_guardian', 'shulker', 'vex',
+  'evoker', 'vindicator', 'pillager', 'ravager',
+  'wither', 'hoglin', 'zoglin', 'piglin_brute', 'warden',
 ])
 
 const JOKES = [
