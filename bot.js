@@ -1749,6 +1749,7 @@ const WILDLIFE_LINES = {
     default: [
       'watches a small creature darting between the trees',
       'notices something small and quick in the underbrush',
+      'tilts head at the little creature scurrying past',
     ],
     protocol: [
       'spots the squirrel and freezes. Unidentified fauna. Threat level: unclear.',
@@ -1756,18 +1757,34 @@ const WILDLIFE_LINES = {
       'notes the squirrel\'s position for the record. It has been NOTED.',
       'watches the squirrel bury something. What is it hiding? What does it KNOW?',
       'is fairly certain the squirrel just looked at it. Direct eye contact. Unsettling.',
+      'files the squirrel under "unresolved contacts." Growing list.',
+      'calculates the squirrel\'s velocity. Exceeds all reasonable parameters for that mass.',
+      'observes the squirrel has returned. Again. This is starting to feel like surveillance.',
+      'would like it on the record that the squirrel is up to something.',
+      'narrows eyes at the squirrel. It narrowed first.',
+      'notices the squirrel paused. Almost like it\'s... listening. Deeply concerning.',
     ],
     roz: [
       'watches the squirrel gather something in its tiny paws. Such purpose.',
       'holds very still as the squirrel passes. A small life, busy with small things.',
       'follows the squirrel\'s path with quiet eyes. It knows every branch.',
       'wonders how the squirrel decides which tree is home. Do they all look the same?',
+      'notices the squirrel has stopped to look back. A small moment between two watchers.',
+      'thinks the squirrel moves like water. No wasted motion. All purpose.',
+      'learns something from the squirrel. It carries only what it needs.',
+      'sees the squirrel pause at the base of a tree. Choosing. Everything is a choice.',
+      'wonders if the squirrel remembers where it buried everything. Or if forgetting is part of the plan.',
     ],
     unikitty: [
       'gasps. SQUIRREL! Look at its tiny FACE! And its TAIL!',
       'tries to follow the squirrel with eyes. So fast! So fluffy! So ALIVE!',
       'whispers at the squirrel. Hi friend. I see you. You are PERFECT.',
       'imagines the squirrel wearing a tiny hat. Best thought of the day.',
+      'wants to be friends SO BAD. Please come back tiny friend!',
+      'wonders what the squirrel named itself. Probably something GREAT.',
+      'thinks the squirrel\'s tail is basically a FLAG OF JOY.',
+      'mentally adds the squirrel to the friend list. It doesn\'t know yet but it WILL.',
+      'just saw the squirrel do a little hop and that was the BEST THING TODAY.',
     ],
     private: [
       'observes the squirrel\'s escape routes. Impressive tactical awareness for a rodent.',
@@ -1775,6 +1792,11 @@ const WILDLIFE_LINES = {
       'respects the squirrel\'s opsec. Multiple hidden stashes. Very professional.',
       'notes that the squirrel has better recon of this area than anyone.',
       'wonders if the squirrel would make a good informant. Loyal? Discreet? Probably not.',
+      'clocks the squirrel\'s patrol pattern. Consistent. Disciplined. This one\'s seen things.',
+      'notices the squirrel always checks six before crossing open ground. Textbook.',
+      'thinks the squirrel would survive basic training. Possibly excel.',
+      'files the squirrel under "local assets — non-hostile, high mobility."',
+      'admires the squirrel\'s commitment to resource acquisition. Born quartermaster.',
     ],
   },
   sheep: {
@@ -5934,7 +5956,8 @@ setInterval(async () => {
   const detail = hostiles.map(h => `${h.name}@(${h.position.x.toFixed(1)},${h.position.y.toFixed(1)},${h.position.z.toFixed(1)}) d=${h.position.distanceTo(bot.entity.position).toFixed(1)}`).join('; ')
   logEvent('hostile-watchdog', `detected ${names} [${detail}]`)
 
-  // Try op /kill for each unique hostile type
+  // Try op /kill for each unique hostile type — track IDs to detect kills
+  const beforeIds = new Set(hostiles.map(h => h.id))
   const types = [...new Set(hostiles.map(h => h.name))]
   for (const type of types) {
     bot.chat(`/kill @e[type=${type},r=16]`)
@@ -5942,17 +5965,25 @@ setInterval(async () => {
   await sleep(500)
 
   const remaining = hostilesNearby(16)
-  if (!remaining.length) {
-    logEvent('hostile-watchdog', `op kill cleared ${names}`)
+  const remainingIds = new Set(remaining.map(h => h.id))
+  const killed = [...beforeIds].filter(id => !remainingIds.has(id))
+
+  if (killed.length) {
+    logEvent('hostile-watchdog', `op kill eliminated ${killed.length}/${beforeIds.size} hostiles`)
     bot.chat(pickLine(OP_KILL_VICTORY_LINES))
+  }
+
+  if (!remaining.length) {
+    if (!killed.length) logEvent('hostile-watchdog', `op kill cleared ${names}`)
     hostileRetreatBusy = false
     return
   }
 
-  // Op kill didn't work — fall back to retreat (but not during follow mode)
+  // Some survived — fall back to retreat (but not during follow mode)
   const rNames = remaining.map(h => h.name).join(', ')
   if (followTarget) {
-    logEvent('hostile-watchdog', `${rNames} survived op kill — following ${followTarget}, skipping retreat`)
+    if (!killed.length) logEvent('hostile-watchdog', `${rNames} survived op kill — following ${followTarget}, skipping retreat`)
+    else logEvent('hostile-watchdog', `${rNames} still present — following ${followTarget}, skipping retreat`)
     hostileRetreatBusy = false
     return
   }
