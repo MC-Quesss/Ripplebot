@@ -113,8 +113,10 @@ client.on('position', (packet) => {
 // window id and type so the grid can be driven via raw window_click if mineflayer
 // won't surface it as bot.currentWindow.
 let lastRawWindow = null
+const realOpenWindowIds = new Set()
 client.on('open_window', (packet) => {
   lastRawWindow = packet
+  realOpenWindowIds.add(packet.windowId)
   try { logEvent('open_window', JSON.stringify(packet)) } catch (_) { logEvent('open_window', 'unserializable open_window packet') }
 })
 client.on('close_window', (packet) => {
@@ -128,7 +130,8 @@ client.on('close_window', (packet) => {
 // never arrives). We adopt that orphaned window by synthesizing the open_window
 // mineflayer expects; it then populates from the stashed window_items and fires
 // windowOpen. Vanilla containers (chest/furnace/hopper) get a real open_window,
-// so currentWindow is already set by the time we check — we skip those.
+// so we skip those — tracked via realOpenWindowIds to avoid phantom windows when
+// a vanilla container opens and closes before setImmediate fires.
 client.on('window_items', (packet) => {
   if (!packet || !packet.windowId) return
   const wid = packet.windowId
@@ -137,7 +140,8 @@ client.on('window_items', (packet) => {
   // Defer one tick so mineflayer's own window_items handler stashes the packet
   // first; then our synthetic open_window triggers immediate population.
   setImmediate(() => {
-    if (bot.currentWindow && bot.currentWindow.id === wid) return // vanilla path handled it
+    if (realOpenWindowIds.has(wid)) return // vanilla container — real open_window handled it
+    if (bot.currentWindow && bot.currentWindow.id === wid) return
     client.emit('open_window', {
       windowId: wid,
       inventoryType: 'minecraft:container',
@@ -292,6 +296,7 @@ bot.once('spawn', () => {
   startWheatReadyWatcher()
   startIdleWanderTimer()
   startAmbientActionTimer()
+  startSquirrelWatcher()
   startMusingTimer()
 })
 
@@ -329,10 +334,51 @@ function isBedtime () {
   const t = bot.time?.timeOfDay
   return typeof t === 'number' && t >= 12500 && t <= 23500
 }
+const FOLLOW_BEDTIME_LINES = [
+  { text: 'It is getting dark... should we head back?',     weight: (s) => s.patience + 5 },
+  { text: 'The sun is setting. Just saying.',                weight: (s) => s.focus + 5 },
+]
+const FOLLOW_BEDTIME_LINES_PERSONA = {
+  protocol: [
+    { text: 'Sir, the probability of survival outdoors at night is approximately... low.',  weight: (s) => s.focus + s.snark },
+    { text: 'I have a bad feeling about this darkness.',                                     weight: (s) => s.charm + s.patience },
+    { text: 'Might I suggest we retreat indoors before something dreadful happens?',         weight: (s) => s.focus + 10 },
+    { text: 'The nighttime fauna are statistically hostile. I would very much like to leave.', weight: (s) => s.snark + s.focus },
+    { text: 'I am NOT equipped for nocturnal combat. At all. In any capacity.',              weight: (s) => s.snark + s.chaos },
+  ],
+  roz: [
+    { text: 'The stars are coming out. I have never seen them from this far away.',          weight: (s) => s.curiosity + s.charm },
+    { text: 'Night falls differently out here. I want to stay and listen.',                  weight: (s) => s.curiosity + s.patience },
+    { text: 'The dark does not frighten me. It is just... unfamiliar.',                      weight: (s) => s.curiosity + 10 },
+    { text: 'I wonder what the wheat field looks like under moonlight.',                     weight: (s) => s.curiosity + s.charm },
+    { text: 'Everything is quieter now. I think I like it.',                                 weight: (s) => s.patience + s.charm },
+  ],
+  private: [
+    { text: 'Night ops! This is just like Antarctica, minus the penguins.',                  weight: (s) => s.charm + s.curiosity },
+    { text: 'Darkness is just opportunity in a trench coat. Let\'s keep moving!',            weight: (s) => s.charm + s.chaos },
+    { text: 'I trained for this in sub-zero conditions. This is nothing.',                   weight: (s) => s.charm + 10 },
+    { text: 'Hostile territory after dark? Skipper would be proud.',                         weight: (s) => s.focus + s.charm },
+    { text: 'The cold never bothered me. Neither does the dark. Probably.',                  weight: (s) => s.charm + s.snark },
+  ],
+  unikitty: [
+    { text: 'Ooh! Nighttime adventure! EVERYTHING IS MORE EXCITING IN THE DARK!',           weight: (s) => s.chaos + s.charm },
+    { text: 'The moon is SO PRETTY! Can we stay out just a LITTLE longer?',                  weight: (s) => s.charm + s.curiosity },
+    { text: 'I\'m not scared! I\'m THRILLED! ...mostly thrilled!',                           weight: (s) => s.chaos + s.charm },
+  ],
+}
+let followBedtimeCooldown = 0
 async function tryAutoSleep () {
   if (!autoSleepEnabled || autoSleepBusy) return
   if (bot.isSleeping) return
   if (!isBedtime()) return
+  if (followTarget) {
+    const now = Date.now()
+    if (now > followBedtimeCooldown) {
+      bot.chat(pickLine(withPersona(FOLLOW_BEDTIME_LINES, FOLLOW_BEDTIME_LINES_PERSONA)))
+      followBedtimeCooldown = now + 120000
+    }
+    return
+  }
   if (goInsideBusy || taskBusy() || penTraversalBusy) return
   if (!insideHouse()) {
     logEvent('auto-sleep', 'bedtime but outside — heading in first')
@@ -893,6 +939,12 @@ async function tossTrash () {
 }
 
 function countOnHand (name) {
+  const win = bot.currentWindow
+  if (win) {
+    return win.items()
+      .filter(i => i.name === name && i.slot >= win.inventoryStart)
+      .reduce((s, i) => s + i.count, 0)
+  }
   return bot.inventory.items()
     .filter(i => i.name === name)
     .reduce((s, i) => s + i.count, 0)
@@ -1786,6 +1838,39 @@ function tryWildlifeComment () {
   return true
 }
 
+let lastSquirrelCommentAt = 0
+let squirrelWatcherId = null
+
+function checkSquirrelNearby () {
+  if (!bot.entity) return
+  if (bot.isSleeping) return
+  if (musingState.status !== 'idle') return
+  const now = Date.now()
+  if (now - lastSquirrelCommentAt < 90_000) return
+  if (now - lastWildlifeCommentAt < 30_000) return
+  const wildlife = getWildlifeNearby()
+  if (!wildlife || wildlife.type !== 'squirrel') return
+  const lines = WILDLIFE_LINES.squirrel
+  const persona = botPersonaKey()
+  const pool = lines[persona] || lines.default
+  const line = pool[Math.floor(Math.random() * pool.length)]
+  bot.chat(`/me ${line}`)
+  lastSquirrelCommentAt = now
+  lastWildlifeCommentAt = now
+  lastAmbientActionAt = now
+  logEvent('wildlife-squirrel', `squirrel (d=${wildlife.dist.toFixed(1)}): ${line}`)
+}
+
+function startSquirrelWatcher () {
+  if (squirrelWatcherId) return
+  squirrelWatcherId = setInterval(checkSquirrelNearby, 7_000)
+  logEvent('squirrel-watcher', 'started, checking every 7s')
+}
+
+function stopSquirrelWatcher () {
+  if (squirrelWatcherId) { clearInterval(squirrelWatcherId); squirrelWatcherId = null }
+}
+
 function startAmbientActionTimer () {
   if (ambientActionTimerId) return
   function scheduleNext () {
@@ -2475,7 +2560,7 @@ const SUSTAIN_POLL_MS = 5000
 const SUSTAIN_KEEP_WHEAT = 16
 const SUSTAIN_KEEP_SEEDS = 16
 const SUSTAIN_HOPPER_CHECK_INTERVAL = 6
-const sustainState = { active: false, cycles: 0, startedBy: null }
+const sustainState = { active: false, cycles: 0, startedBy: null, lastCycleDay: -1 }
 
 async function feedHopperOneAtATime (waitMs) {
   await ensureInsideHouse()
@@ -2568,8 +2653,10 @@ async function sustainWait (ms) {
   for (let i = 0; i < steps && sustainState.active; i++) await sleep(1000)
 }
 
-// "Safe to act" gate for the sustain loop. Daytime, no hostiles, HP reasonable.
+// "Safe to act" gate for the sustain loop. Daytime, no hostiles, HP reasonable,
+// not following someone.
 function sustainSafe () {
+  if (followTarget) return false
   if (isBedtime()) return false
   if (hostilesNearby(16).length) return false
   if (bot.health != null && bot.health < 10) return false
@@ -2580,8 +2667,8 @@ function sustainSafe () {
 async function sustainWaitUntilSafe (reason) {
   if (sustainSafe()) return true
   logEvent('sustain', `pausing — ${reason}`)
-  // Get inside first
-  try { if (!insideHouse()) await runGoInside() } catch (_) {}
+  // Get inside first (but not during follow mode)
+  try { if (!followTarget && !insideHouse()) await runGoInside() } catch (_) {}
   let logged = false
   while (sustainState.active && !sustainSafe()) {
     if (!logged) {
@@ -2664,6 +2751,7 @@ async function runSustainFarm (user) {
             await sleep(500)
           }
 
+          sustainState.lastCycleDay = bot.time?.day ?? -1
           bot.chat(pickLine(SUSTAIN_CYCLE_DONE_LINES))
         } catch (e) {
           if (e.name === 'AbortError' && !sustainState.active) {
@@ -2673,7 +2761,7 @@ async function runSustainFarm (user) {
           logEvent('sustain', `cycle ${sustainState.cycles} failed (recoverable): ${e.message} [type=${e.name} active=${sustainState.active}]`)
           retryAfterInterrupt = true
           logEvent('sustain', `retryAfterInterrupt=true, heading inside`)
-          try { if (!insideHouse()) await runGoInside() } catch (_) {}
+          try { if (!followTarget && !insideHouse()) await runGoInside() } catch (_) {}
         }
         // Clear food-safety cooldown so tryFoodSafety can run during the poll wait.
         // The sustain cycle opens hopper + bench windows which keep resetting the 30s
@@ -2695,9 +2783,9 @@ async function runSustainFarm (user) {
               const hasBalls = slots.some(s => s && s.name === 'unknown')
               const hasWheat = slots.some(s => s && s.name === 'wheat')
               win.close()
-              if (hasBalls && !hasWheat) {
-                logEvent('sustain-hopper', 'plant balls jammed — clearing')
-                logEvent('sustain-hopper', 'plant balls jammed — feeding wheat to clear')
+              const currentDay = bot.time?.day ?? -1
+              if (hasBalls && !hasWheat && currentDay > sustainState.lastCycleDay) {
+                logEvent('sustain-hopper', `plant balls jammed — feeding wheat to clear (day ${currentDay}, last cycle day ${sustainState.lastCycleDay})`)
                 await clearJammedHopper()
               }
             }
@@ -5818,9 +5906,19 @@ bot.on('entityHurt', (entity) => {
 })
 
 // Hostile watchdog — proactive retreat. Every 2.5s, if the bot is outside and
-// hostiles are within 16 blocks, abort the current task and rush home. The
-// sustain loop's recoverable catch handles the abort gracefully and retries
-// once the field is safe again.
+// hostiles are within 16 blocks, try to /kill them with op powers first. If
+// the mob disappears, celebrate. If it survives (not op, or out of range for
+// the selector), abort the current task and rush home.
+const OP_KILL_VICTORY_LINES = [
+  { text: 'Kapow!',                                    weight: (s) => s.charm + s.chaos },
+  { text: 'Huzzah!',                                   weight: (s) => s.charm + 10 },
+  { text: 'I pranked him good.',                        weight: (s) => s.snark + s.chaos },
+  { text: 'And STAY down.',                             weight: (s) => s.snark + 10 },
+  { text: 'Problem solved. Administratively.',          weight: (s) => s.focus + s.snark },
+  { text: 'The farm is protected.',                     weight: (s) => s.focus + s.patience },
+  { text: 'Never bring a sword to an op fight.',        weight: (s) => s.snark + s.chaos },
+  { text: 'Perimeter secured.',                         weight: (s) => s.focus + 10 },
+]
 let hostileRetreatBusy = false
 setInterval(async () => {
   if (hostileRetreatBusy) return
@@ -5830,9 +5928,32 @@ setInterval(async () => {
   hostileRetreatBusy = true
   const names = hostiles.map(h => h.name).join(', ')
   const detail = hostiles.map(h => `${h.name}@(${h.position.x.toFixed(1)},${h.position.y.toFixed(1)},${h.position.z.toFixed(1)}) d=${h.position.distanceTo(bot.entity.position).toFixed(1)}`).join('; ')
-  logEvent('hostile-retreat', `detected ${names} — aborting task and rushing inside [${detail}]`)
-  bot.chat(`Hostiles (${names})! Heading inside!`)
-  // Abort current task so harvest/sustain cycle errors out gracefully
+  logEvent('hostile-watchdog', `detected ${names} [${detail}]`)
+
+  // Try op /kill for each unique hostile type
+  const types = [...new Set(hostiles.map(h => h.name))]
+  for (const type of types) {
+    bot.chat(`/kill @e[type=${type},r=16]`)
+  }
+  await sleep(500)
+
+  const remaining = hostilesNearby(16)
+  if (!remaining.length) {
+    logEvent('hostile-watchdog', `op kill cleared ${names}`)
+    bot.chat(pickLine(OP_KILL_VICTORY_LINES))
+    hostileRetreatBusy = false
+    return
+  }
+
+  // Op kill didn't work — fall back to retreat (but not during follow mode)
+  const rNames = remaining.map(h => h.name).join(', ')
+  if (followTarget) {
+    logEvent('hostile-watchdog', `${rNames} survived op kill — following ${followTarget}, skipping retreat`)
+    hostileRetreatBusy = false
+    return
+  }
+  logEvent('hostile-retreat', `${rNames} survived op kill — aborting task and rushing inside`)
+  bot.chat(`Hostiles (${rNames})! Heading inside!`)
   abortGen++
   bot.pathfinder.setGoal(null)
   followTarget = null; followEntity = null; followChainPos = 0
