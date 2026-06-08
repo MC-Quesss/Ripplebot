@@ -291,6 +291,10 @@ bot.once('spawn', () => {
     bot.on('autoeat_finished', () => { logEvent('auto-eat', 'done'); bot.unequip('hand').catch(() => {}) })
     logEvent('auto-eat', 'enabled (start at food<=14)')
   }
+  if (NICKNAME) {
+    bot.chat(`/nick ${NICKNAME}`)
+    logEvent('nick', `set nickname to ${NICKNAME}`)
+  }
   startAutoSleep()
   startPenPlateGuard()
   startWheatReadyWatcher()
