@@ -5962,28 +5962,32 @@ setInterval(async () => {
   for (const type of types) {
     bot.chat(`/kill @e[type=${type},r=16]`)
   }
-  await sleep(500)
+  await sleep(2000)
 
   const remaining = hostilesNearby(16)
   const remainingIds = new Set(remaining.map(h => h.id))
-  const killed = [...beforeIds].filter(id => !remainingIds.has(id))
+  const survived = [...beforeIds].filter(id => remainingIds.has(id))
 
-  if (killed.length) {
-    logEvent('hostile-watchdog', `op kill eliminated ${killed.length}/${beforeIds.size} hostiles`)
+  if (survived.length < beforeIds.size) {
+    const killedCount = beforeIds.size - survived.length
+    logEvent('hostile-watchdog', `op kill eliminated ${killedCount}/${beforeIds.size} hostiles`)
     bot.chat(pickLine(OP_KILL_VICTORY_LINES))
+    lastAmbientActionAt = Date.now()
   }
 
-  if (!remaining.length) {
-    if (!killed.length) logEvent('hostile-watchdog', `op kill cleared ${names}`)
+  // Only retreat if original mobs are still present
+  if (!survived.length) {
     hostileRetreatBusy = false
     return
   }
 
-  // Some survived — fall back to retreat (but not during follow mode)
-  const rNames = remaining.map(h => h.name).join(', ')
+  // Original mobs survived — fall back to retreat (but not during follow mode)
+  const rNames = survived.map(id => {
+    const e = remaining.find(h => h.id === id)
+    return e ? e.name : 'unknown'
+  }).join(', ')
   if (followTarget) {
-    if (!killed.length) logEvent('hostile-watchdog', `${rNames} survived op kill — following ${followTarget}, skipping retreat`)
-    else logEvent('hostile-watchdog', `${rNames} still present — following ${followTarget}, skipping retreat`)
+    logEvent('hostile-watchdog', `${rNames} survived op kill — following ${followTarget}, skipping retreat`)
     hostileRetreatBusy = false
     return
   }
