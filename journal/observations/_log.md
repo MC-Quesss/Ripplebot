@@ -7,6 +7,111 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-06-11 — Musing chop, persona specs, LLM voice (offline build day)
+
+No server session — bot.js rewrite, bot never launched. Design decisions in
+[[persona-llm-migration]]; this entry records what shipped.
+
+### What shipped
+
+- **Scripted musing system deleted** (~2,300 lines, all 73 topics across 3
+  generations). Full catalog preserved in [[musings-catalog-review]] before the
+  chop. One keeper promoted: the protocol rust line is now a Muse greeting.
+- **Expressive output gate** ([[todo-activity-system-refactor]] → done): one
+  global 30s gap + a per-kind cooldown table replaces the old cross-suppression
+  timestamp web. Functional speech bypasses the gate entirely.
+- **Persona-as-data**: `personas/<key>.json` (roz, protocol, unikitty, private)
+  each hold systemPrompt + exemplars + 13–18 functional line slots. `.env`
+  `PERSONA=` selects; nickname inference (`includes('rain')` → unikitty) is gone.
+  bot.js holds zero persona text.
+- **llm.js**: Ollama generator (LLM_CHAT / LLM_URL / LLM_MODEL). Health check
+  60s restores voice without restart. Failure mode = silence, never canned.
+- **Impulses**: ambient /me, wildlife, squirrel, victory, follow-bedtime are
+  now LLM impulses — generate AT FIRE TIME so context includes chat that
+  arrived during any wait; model may PASS.
+- **Bot-to-bot exchanges**: `BOT_CHAT_DEPTH` (0=off; set to 3 here) caps this
+  bot's turns per exchange; replies wait ≥5s jittered (15% chance +10s);
+  60s silence or any human message ends the exchange; 5min cooldown before the
+  next one starts; final turn is prompted to close naturally.
+- **ctl**: `{"action":"llm"}` → generator status + persona + depth.
+
+### Incident: self-reply loop (caught live, 04:39)
+
+Muse got stuck talking to itself every ~2s (an escalating argument with itself
+about dampness odds). Root cause chain: (1) the server echoes the bot's own
+chat under its display NICKNAME ("Muse"), but the own-message guard only
+checked `bot.username` ("Musebot") — the bot heard itself; (2) its own
+greeting, heard back within the 20s greet-reply window, opened a conversation
+window for "Muse"; (3) every self-reply refreshed the window. The player-chat
+path bypasses the expressive gate, so the model's PASS was the only brake — it
+happily kept answering. **Fixes:** own-message guards now also test `nickRe`
+(both the main chat handler and `waitForChatReply`); `looksLikeBot()` now also
+matches persona display names from personas/*.json (otherwise "Roz" — account
+"Ripplebot" — reads as human, and two bots could mutual-loop through the
+unlimited conversation path instead of the depth-capped bot path).
+
+**Lesson: every identity check in chat handling must account for the
+account-name vs display-nick split.** Grep for `bot.username` comparisons when
+touching chat code.
+
+### Gotchas worth remembering
+
+- **gemma4 is a thinking model.** Without `think: false` in the request it
+  burns the whole `num_predict` budget on `message.thinking` and returns empty
+  `content` with `done_reason: "length"`. Cost an hour of "why is everything
+  null".
+- The model sneaks emoji into lines (✨🐿️) even when told not to — llm.js
+  strips everything past Latin-1 since 1.12.2 chat can't render it.
+- Voice quality at 8B is genuinely good: Roz's stale-topic test correctly
+  PASSed; her reply to Muse's rain-odds fretting was "The sky does not seem to
+  calculate anything."
+
+### Notes
+
+- bot.js: 9,645 → ~6,800 lines.
+- `.env` gained PERSONA / LLM_CHAT / BOT_CHAT_DEPTH. **User set
+  PERSONA=protocol** — Ripplebot will speak as Muse until changed back.
+- The 4 ambient entries with physical components (2 emotes, 1 pathfind action,
+  1 fence-`requires`) died with the pool — ambient is text-only now.
+- **Not yet live-tested in-game.** First launch should check `{"action":"llm"}`
+  and watch bot.log for `[llm] ready`.
+
+### Live test + follow-up changes (same session)
+
+- Launched as Muse (this machine's account is Musebot; PERSONA=protocol matches).
+  `[llm] ready` at startup; `{"action":"llm"}` ctl confirms persona/depth.
+- **Player chat → LLM wired** (user caught the gap): directed chat that matches
+  no command rule now gets an LLM reply in voice (bypasses the expressive gate —
+  being addressed always deserves an answer); scripted idunno-shrug only as
+  LLM-down fallback. First live exchange: "Hi Muse, what can you do?" →
+  "Ah, Dad! I do hope nothing terrible has happened?"
+- LLM squirrel reaction confirmed live: "By the stars! The probability of such
+  erratic movement from a rodent is statistically alarming!"
+- **Conversation continuity** (user: shouldn't have to re-address by name every
+  message): naming the bot opens a 90s per-player conversation window, refreshed
+  on each exchange. Window-open messages flow to the bot un-named — commands AND
+  conversation both work. Addressing someone else by leading "Name," closes the
+  window. Continuity LLM replies may PASS silently (might be meant for another);
+  named messages always get an answer (shrug+idunno only if LLM down).
+- **Scripted greeting rule removed** (user: hello lines blocked the LLM like the
+  idunnos): "hi/hey/hello..." now falls through to the LLM with everything else;
+  a greet emote still fires alongside. Continuity PASS bias softened — answer
+  unless clearly aimed at someone else ("It's getting kind of late" had gone
+  unanswered). Auto-greet (proximity) unchanged.
+- **Hostile stay-inside gates removed** (user: bots can fend for themselves —
+  the op-kill watchdog handles threats). Gone: go-outside "staying inside",
+  harvest/potato/rc "standing down", idle-wander field/pen skips, mid-harvest
+  "hostiles approaching" aborts, sustainSafe hostile clause, collect/restock
+  gates. KEPT: HP<10 aborts, death checks, low-HP emergency-bread hostile
+  check (window-open mid-combat is a known killer), come-inside rush, watchdog.
+
+### Links
+- [[persona-llm-migration]] (design + decisions)
+- [[musings-catalog-review]] (preserved musings)
+- [[todo-activity-system-refactor]] (closed by this work)
+
+---
+
 ## 2026-06-05b — Poisonous potato cleanup, tossTrash fixes (day 43494)
 
 Bot state at start: HP 19→20, food 15→19, deaths 0. Spawned at (-266.65, 65, 566.5) — **outside the house** (z=566.5, house z-min is 568).

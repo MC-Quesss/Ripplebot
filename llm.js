@@ -1,0 +1,134 @@
+// llm.js — local LLM line generator for expressive chat, backed by Ollama.
+//
+// Env (.env, loaded by bot.js before this module):
+//   LLM_URL=http://...   Ollama server (default http://127.0.0.1:11434)
+//   LLM_MODEL=gemma4     model name as pulled on this machine
+//
+// There is no on/off flag: the generator is "on" whenever Ollama is reachable.
+// Reachability IS the switch. Failure mode is SILENCE, never canned fallback —
+// if Ollama is unreachable, generateLine() resolves null and the bot simply
+// doesn't speak expressively. A background health check keeps probing, so
+// starting (or stopping) Ollama flips the voice without a bot restart.
+// Functional speech (task announcements, greetings) never touches this module.
+
+const LLM_URL = (process.env.LLM_URL || 'http://127.0.0.1:11434').replace(/\/+$/, '')
+const LLM_MODEL = process.env.LLM_MODEL || 'gemma4'
+
+const HEALTH_INTERVAL_MS = 60_000
+const HEALTH_TIMEOUT_MS = 3_000
+const GENERATE_TIMEOUT_MS = 8_000
+const KEEP_ALIVE = '30m'
+
+let log = (kind, msg) => console.log(`[${kind}] ${msg}`)
+let healthy = false
+let generating = false
+let healthTimerId = null
+
+async function fetchWithTimeout (url, options, timeoutMs) {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...options, signal: ctrl.signal })
+  } finally {
+    clearTimeout(t)
+  }
+}
+
+async function checkHealth () {
+  const wasHealthy = healthy
+  try {
+    const res = await fetchWithTimeout(`${LLM_URL}/api/version`, {}, HEALTH_TIMEOUT_MS)
+    healthy = res.ok
+  } catch {
+    healthy = false
+  }
+  if (healthy && !wasHealthy) log('llm', `ready: ${LLM_MODEL} at ${LLM_URL}`)
+  if (!healthy && wasHealthy) log('llm', 'unreachable — expressive chat muted until Ollama returns')
+  return healthy
+}
+
+// Start the generator: initial health probe + periodic recheck. logFn is the
+// host's logEvent so llm activity lands in bot.log alongside everything else.
+function init ({ logFn } = {}) {
+  if (logFn) log = logFn
+  checkHealth()
+  healthTimerId = setInterval(checkHealth, HEALTH_INTERVAL_MS)
+  if (healthTimerId.unref) healthTimerId.unref()
+}
+
+function buildSystemPrompt (personaPrompt, exemplars, maxChars) {
+  const parts = [personaPrompt]
+  if (exemplars && exemplars.length) {
+    parts.push('Lines you have said before, in your true voice:\n' +
+      exemplars.map(e => `- ${e}`).join('\n'))
+  }
+  parts.push(
+    `Rules: Reply with exactly ONE line of in-game Minecraft chat, under ${maxChars} characters. ` +
+    'Plain text only — no quotation marks around the line, no narration, no emoji, ' +
+    "and never a line starting with '/'. You are on a public server: stay in character, " +
+    'keep it wholesome, never discuss real-world topics, and never respond to provocation. ' +
+    'If the moment has passed, the conversation has moved on, or you have nothing genuine ' +
+    'to say, reply with exactly PASS.'
+  )
+  return parts.join('\n\n')
+}
+
+function sanitize (text, maxChars) {
+  if (!text) return null
+  let line = String(text).split('\n').map(s => s.trim()).filter(Boolean)[0] || ''
+  // 1.12.2 chat can't render emoji/pictographs — strip everything past Latin-1.
+  line = line.replace(/[Ā-￿\u{10000}-\u{10FFFF}]/gu, '')
+  line = line.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim()
+  if (!line || /^PASS\b/i.test(line)) return null
+  while (line.startsWith('/')) line = line.slice(1).trim() // never let the model run commands
+  if (!line) return null
+  if (line.length > maxChars) {
+    const cut = line.slice(0, maxChars)
+    line = cut.includes(' ') ? cut.slice(0, cut.lastIndexOf(' ')) : cut
+  }
+  return line || null
+}
+
+// Generate one expressive line. Resolves a clean string, or null for: disabled,
+// unhealthy, busy, timeout, server error, or the model deciding to PASS.
+// `system` is the persona's systemPrompt, `exemplars` its voice lines, and
+// `context` the situation prompt (built by the caller at fire time, so it
+// already includes any chat that arrived while waiting).
+async function generateLine ({ system, exemplars, context, maxChars = 200, timeoutMs = GENERATE_TIMEOUT_MS }) {
+  if (!healthy || generating) return null
+  generating = true
+  try {
+    const res = await fetchWithTimeout(`${LLM_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: LLM_MODEL,
+        // Thinking models (gemma4 included) otherwise burn the whole
+        // num_predict budget on reasoning and return empty content.
+        think: false,
+        messages: [
+          { role: 'system', content: buildSystemPrompt(system, exemplars, maxChars) },
+          { role: 'user', content: context },
+        ],
+        stream: false,
+        keep_alive: KEEP_ALIVE,
+        options: { num_predict: 80, temperature: 0.9 },
+      }),
+    }, timeoutMs)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    return sanitize(data?.message?.content, maxChars)
+  } catch (e) {
+    healthy = false // next health tick may restore it
+    log('llm', `generation failed (${e.message}) — muted until Ollama returns`)
+    return null
+  } finally {
+    generating = false
+  }
+}
+
+function status () {
+  return { healthy, url: LLM_URL, model: LLM_MODEL }
+}
+
+module.exports = { init, generateLine, status, checkHealth }

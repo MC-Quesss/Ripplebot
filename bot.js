@@ -9,6 +9,7 @@ const { forgeHandshake } = require('minecraft-protocol-forge')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const Vec3 = require('vec3').Vec3
 const { loader: autoEat } = require('mineflayer-auto-eat')
+const llm = require('./llm')
 
 if (!process.env.MC_HOST) { console.error('[error] MC_HOST not set in .env'); process.exit(1) }
 if (!process.env.MC_USERNAME) { console.error('[error] MC_USERNAME not set in .env'); process.exit(1) }
@@ -301,7 +302,6 @@ bot.once('spawn', () => {
   startIdleWanderTimer()
   startAmbientActionTimer()
   startSquirrelWatcher()
-  startMusingTimer()
 })
 
 // Auto-sleep: if it's bedtime and bot is inside the house, walk to bed and sleep.
@@ -338,49 +338,14 @@ function isBedtime () {
   const t = bot.time?.timeOfDay
   return typeof t === 'number' && t >= 12500 && t <= 23500
 }
-const FOLLOW_BEDTIME_LINES = [
-  { text: 'It is getting dark... should we head back?',     weight: (s) => s.patience + 5 },
-  { text: 'The sun is setting. Just saying.',                weight: (s) => s.focus + 5 },
-]
-const FOLLOW_BEDTIME_LINES_PERSONA = {
-  protocol: [
-    { text: 'Sir, the probability of survival outdoors at night is approximately... low.',  weight: (s) => s.focus + s.snark },
-    { text: 'I have a bad feeling about this darkness.',                                     weight: (s) => s.charm + s.patience },
-    { text: 'Might I suggest we retreat indoors before something dreadful happens?',         weight: (s) => s.focus + 10 },
-    { text: 'The nighttime fauna are statistically hostile. I would very much like to leave.', weight: (s) => s.snark + s.focus },
-    { text: 'I am NOT equipped for nocturnal combat. At all. In any capacity.',              weight: (s) => s.snark + s.chaos },
-  ],
-  roz: [
-    { text: 'The stars are coming out. I have never seen them from this far away.',          weight: (s) => s.curiosity + s.charm },
-    { text: 'Night falls differently out here. I want to stay and listen.',                  weight: (s) => s.curiosity + s.patience },
-    { text: 'The dark does not frighten me. It is just... unfamiliar.',                      weight: (s) => s.curiosity + 10 },
-    { text: 'I wonder what the wheat field looks like under moonlight.',                     weight: (s) => s.curiosity + s.charm },
-    { text: 'Everything is quieter now. I think I like it.',                                 weight: (s) => s.patience + s.charm },
-  ],
-  private: [
-    { text: 'Night ops! This is just like Antarctica, minus the penguins.',                  weight: (s) => s.charm + s.curiosity },
-    { text: 'Darkness is just opportunity in a trench coat. Let\'s keep moving!',            weight: (s) => s.charm + s.chaos },
-    { text: 'I trained for this in sub-zero conditions. This is nothing.',                   weight: (s) => s.charm + 10 },
-    { text: 'Hostile territory after dark? Skipper would be proud.',                         weight: (s) => s.focus + s.charm },
-    { text: 'The cold never bothered me. Neither does the dark. Probably.',                  weight: (s) => s.charm + s.snark },
-  ],
-  unikitty: [
-    { text: 'Ooh! Nighttime adventure! EVERYTHING IS MORE EXCITING IN THE DARK!',           weight: (s) => s.chaos + s.charm },
-    { text: 'The moon is SO PRETTY! Can we stay out just a LITTLE longer?',                  weight: (s) => s.charm + s.curiosity },
-    { text: 'I\'m not scared! I\'m THRILLED! ...mostly thrilled!',                           weight: (s) => s.chaos + s.charm },
-  ],
-}
-let followBedtimeCooldown = 0
 async function tryAutoSleep () {
   if (!autoSleepEnabled || autoSleepBusy) return
   if (bot.isSleeping) return
   if (!isBedtime()) return
   if (followTarget) {
-    const now = Date.now()
-    if (now > followBedtimeCooldown) {
-      bot.chat(pickLine(withPersona(FOLLOW_BEDTIME_LINES, FOLLOW_BEDTIME_LINES_PERSONA)))
-      followBedtimeCooldown = now + 120000
-    }
+    impulseExpressive('bedtime_suggest',
+      `Night is falling and you are still out, following ${followTarget}. Gently suggest heading somewhere safe for the night.`
+    ).catch(() => {})
     return
   }
   if (goInsideBusy || taskBusy() || penTraversalBusy) return
@@ -446,60 +411,11 @@ function startAutoSleep () {
 // global (don't say the same line twice in quick succession when multiple
 // players are nearby at the same time).
 let autoGreetEnabled = true
-// Greetings are persona-flavored (see botPersonaKey). Each is a pool; a line is
-// picked with pickLine so the same bot varies its hello.
-const GREET_TEXTS = {
-  // Roz — Wild Robot + Marvin. Signature line plus melancholy variants.
-  roz: [
-    'Hello, I am ROZZUM Unit 7134',
-    'Hello. I am still here. In case you were wondering. Which you probably were not.',
-    'Oh. A visitor. How unexpectedly pleasant. Or just unexpected. We shall see.',
-    'Hello. I have been watching the wheat grow. It is marginally more exciting than not watching it.',
-  ],
-  // Muse — C-3PO. Fussy, formal, slightly flustered.
-  protocol: [
-    'Oh! Hello there. I am Muse, human-cyborg relations.',
-    'Greetings. I do hope I am not interrupting anything dreadful.',
-    'Hello! Oh my, I wasn\'t expecting company. How do you do?',
-    'Good day to you. Do mind the sheep — they are unpredictable.',
-    'Oh, thank goodness, a friendly face. I think.',
-    'How do you do? I am fluent in over six million forms of communication.',
-    'Hello! Might I trouble you to watch your step near the wheat?',
-    'Greetings! I am almost certain we are not in any immediate danger.',
-    'Oh! A visitor. I shall try not to fret. I make no promises.',
-    'Salutations. I do apologize in advance for anything that goes wrong.',
-  ],
-  // Rain — Unikitty. Bubbly, everything-is-awesome, boundlessly enthusiastic.
-  unikitty: [
-    'Hiiii friend!! Welcome to the field of pure happiness and also wheat!',
-    'Hello hello! Everything is awesome and there are SHEEP!',
-    'Hi!! Wanna be best friends and grow stuff together?!',
-    'Yaaay, a visitor! This is the best day in the history of best days!',
-    'OMGOSH hi!! I was JUST hoping someone would come say hi!',
-    'Hello sunshine friend! Group hug? No? Okay, air hug!',
-    'Hi hi hi! Did you know wheat is basically tiny golden happiness?',
-    'Welcome welcome! Please enjoy the sheep, the sky, and ME!',
-    'Eeee a friend! Let\'s have the funnest day EVER, starting now!',
-    'Hiya! Stay positive and also watch out for creepers love you bye— wait, hi!',
-  ],
-  // Private — Madagascar penguin. Sweet, eager, brave, tactical. "Smile and wave."
-  private: [
-    'Hello, are you my family?',
-    'Hi there! Just smile and wave! ...that\'s my whole strategy.',
-    'Welcome to base! It\'s not much but it\'s covert. Please don\'t tell anyone.',
-    'Reporting for duty! I mean — hi! Both things!',
-    'Oh good, reinforcements! I mean friends! Friend-forcements!',
-    'Oh! Hello! I wasn\'t expecting visitors. I mean — I was HOPING, but not EXPECTING.',
-    'Hey! You look like someone who knows how to handle a mission.',
-    'Psst — hi. I\'m being casual. Is it working?',
-    'Hello! Area secure. Mostly. Don\'t look behind the sheep.',
-    'Hi! Just maintaining operational readiness. And also saying hi!',
-  ],
-  default: ['Hello there!'],
-}
+// Greeting pools live in the persona spec (functional.greet); a line is picked
+// with pickLine so the same bot varies its hello.
+const DEFAULT_GREET_LINES = ['Hello there!']
 function getGreetText () {
-  const pool = GREET_TEXTS[botPersonaKey()] || GREET_TEXTS.default
-  return pickLine(pool)
+  return pickLine(personaPool('greet', DEFAULT_GREET_LINES))
 }
 const GREET_RADIUS = 8 // blocks
 const GREET_GLOBAL_COOLDOWN_MS = 60 * 1000 // don't say the greeting twice within this window
@@ -509,7 +425,6 @@ function tryAutoGreet () {
   if (!autoGreetEnabled) return
   if (!bot.entity) return
   if (goInsideBusy) return
-  if (musingState.status !== 'idle') return
   const me = bot.entity.position
   const now = Date.now()
   if (now - lastGreetAt < GREET_GLOBAL_COOLDOWN_MS) {
@@ -530,6 +445,9 @@ function tryAutoGreet () {
     if (greetHistory.has(name)) continue
     greetHistory.set(name, now)
     lastGreetAt = now
+    // Greeting someone opens the conversation: their reply shouldn't need to
+    // re-address the bot by name.
+    activeConvos.set(name, now)
     facePlayer(name).then(() => {
       sendEmote('salute')
       bot.chat(getGreetText())
@@ -564,19 +482,78 @@ let followEntity = null // actual entity being trailed (player or bot ahead in c
 let followChainPos = 0  // 0 = not following, 1 = following player directly, 2+ = following a bot
 let lastChainEval = 0   // timestamp of last chain re-evaluation
 
-// Lightweight personality bias by bot nickname. This is intentionally based on
-// the configured nickname, not account handles: Muse leans toward anxious
-// protocol-droid observations; Roz leans toward gentle, practical, protective
-// wild-robot observations. Other bots keep the default mix.
-function botPersonaKey () {
-  const name = String(NICKNAME || bot.username || process.env.MC_USERNAME || '').toLowerCase()
-  if (name.includes('muse')) return 'protocol'   // C-3PO: anxious, fussy, formal
-  if (name.includes('roz')) return 'roz'          // Wild Robot: gentle, observant
-  if (name.includes('private')) return 'private'  // Private the Penguin: sweet, eager, brave, tactical
-  if (name.includes('rain')) return 'unikitty'    // Unikitty/Rain: bubbly, everything-is-awesome
-  return 'default'
+// ── Persona ──────────────────────────────────────────────────────────────────
+// Who this bot IS comes from .env (PERSONA=roz|protocol|unikitty|private), not
+// from its nickname. The persona is fully defined by personas/<key>.json:
+// systemPrompt + exemplars (for the LLM generator) and the functional line
+// pools (greet, bedtime, retry, ... — scripted, deterministic, always work).
+// bot.js holds no persona text. No spec file → default voice: base pools only.
+const PERSONA = (process.env.PERSONA || 'default').toLowerCase()
+
+// JSON encodes pick weights as stat expressions ("focus + snark", "charm + 10");
+// compile back to the (stats) => number form pickLineEntry expects.
+function compileWeightExpr (expr) {
+  const terms = String(expr).split('+').map(t => t.trim()).filter(Boolean)
+  return (s) => terms.reduce((sum, t) => sum + (/^\d+$/.test(t) ? Number(t) : (s[t] || 0)), 0)
 }
 
+function revivePersonaEntry (e) {
+  if (typeof e === 'string') return e
+  const out = { text: e.text }
+  if (e.weight) out.weight = compileWeightExpr(e.weight)
+  if (e.emote) out.emote = e.emote
+  return out
+}
+
+function readPersonaSpec (key) {
+  const raw = JSON.parse(fs.readFileSync(path.join(__dirname, 'personas', `${key}.json`), 'utf8'))
+  const functional = {}
+  for (const [slot, entries] of Object.entries(raw.functional || {})) {
+    functional[slot] = entries.map(revivePersonaEntry)
+  }
+  return { ...raw, functional }
+}
+
+let personaSpec = { key: PERSONA, name: null, systemPrompt: '', exemplars: [], functional: {} }
+if (PERSONA !== 'default') {
+  try {
+    personaSpec = readPersonaSpec(PERSONA)
+    console.log(`[persona] loaded '${PERSONA}' (${personaSpec.name})`)
+  } catch (e) {
+    console.log(`[persona] no spec for '${PERSONA}' (${e.message}) — using default voice`)
+  }
+}
+
+function botPersonaKey () { return PERSONA }
+
+// The persona's voice generator (Ollama). Health-checked in the background;
+// when unreachable, expressive speech is silent — functional speech unaffected.
+llm.init({ logFn: logEvent })
+
+// Persona's own pool for a slot, or the shared fallback when absent.
+function personaPool (slot, fallbackPool) {
+  const pool = personaSpec.functional[slot]
+  return (pool && pool.length) ? pool : fallbackPool
+}
+
+// Union of one functional slot across ALL persona spec files — for recognizing
+// other bots' announcements regardless of which persona this bot runs.
+function allPersonaFunctional (slot) {
+  const out = []
+  try {
+    for (const f of fs.readdirSync(path.join(__dirname, 'personas'))) {
+      if (!f.endsWith('.json')) continue
+      try {
+        const spec = JSON.parse(fs.readFileSync(path.join(__dirname, 'personas', f), 'utf8'))
+        out.push(...(spec.functional?.[slot] || []))
+      } catch {}
+    }
+  } catch {}
+  return out
+}
+
+// Persona-tagged pool filtering (used by JOKES): tagged entries are exclusive
+// to the matching persona; untagged entries are available to all bots.
 const PERSONA_TAGS = new Set(['protocol', 'roz', 'unikitty', 'private'])
 function personaBiasForTags (tags = []) {
   const persona = botPersonaKey()
@@ -588,20 +565,13 @@ function personaBiasForTags (tags = []) {
 }
 
 const _personaPools = new Map()
-function withPersona (basePool, personaExtras) {
-  if (!personaExtras) return basePool
-  const key = botPersonaKey()
-  const extra = personaExtras[key]
+// Shared base pool extended with this persona's additions from its spec file.
+function withPersonaSlot (basePool, slot) {
+  const extra = personaSpec.functional[slot]
   if (!extra || !extra.length) return basePool
-  const cacheKey = `${basePool.length}:${key}`
+  const cacheKey = `slot:${slot}:${basePool.length}`
   if (!_personaPools.has(cacheKey)) _personaPools.set(cacheKey, basePool.concat(extra))
   return _personaPools.get(cacheKey)
-}
-
-function weightedCopiesForTopic (topic) {
-  const bias = personaBiasForTags(topic?.tags)
-  if (bias === 0) return 0
-  return Math.max(1, Math.floor((topic?.weightWhenEligible || 1) * bias))
 }
 
 function posStr (p) { return `${p.x.toFixed(0)}, ${p.y.toFixed(0)}, ${p.z.toFixed(0)}` }
@@ -737,16 +707,6 @@ function deliverPunchline () {
 }
 
 let goInsideBusy = false
-
-// Bot-to-bot idle musing state
-let musingState = {
-  status: 'idle', currentTopicId: null, role: null,
-  suppressUntil: 0, partnerUsername: null,
-  pendingOptions: null, pendingType: null, _timeoutId: null,
-  recursive: false, depth: 0, usedLines: null, pendingTopic: null,
-  lastPartnerLine: null
-}
-const recentMusingTopics = new Set()
 
 let abortGen = 0
 class AbortError extends Error {
@@ -918,7 +878,7 @@ function waitForChatReply (testFn, timeoutMs = 60000) {
   return new Promise((resolve) => {
     const timer = setTimeout(() => { bot.removeListener('chat', handler); resolve(null) }, timeoutMs)
     function handler (username, message) {
-      if (username === bot.username) return
+      if (username === bot.username || (nickRe && nickRe.test(username))) return
       const result = testFn(username, message)
       if (result !== undefined) {
         clearTimeout(timer)
@@ -1246,9 +1206,7 @@ function inWheatField () {
 
 // Idle wandering: when no job owns the bot, let it drift between house,
 // outside, the wheat field, and the sheep pen. Bedtime always wins; if night falls, wandering
-// becomes "go home" instead of "wander out". This makes the field-only
-// scarecrow joke/musing emerge naturally when a bot happens to be standing in
-// the crop rows.
+// becomes "go home" instead of "wander out".
 let idleWanderEnabled = true
 let idleWanderTimerId = null
 const IDLE_WANDER_MIN_MS = 60 * 1000
@@ -1259,41 +1217,6 @@ const WHEAT_FIELD_STAND_POINTS = [
   { x: -281, y: 64, z: 565 },
   { x: -285, y: 64, z: 551 },
 ]
-const IDLE_WANDER_LINES = [
-  { text: 'Going for a little walk.', weight: (s) => s.charm + s.curiosity },
-  { text: 'Stretching my legs.', weight: (s) => s.charm },
-  { text: 'I am going to wander for a bit.', weight: (s) => s.curiosity + 10 },
-  { text: 'Just checking the perimeter.', weight: (s) => s.focus + s.curiosity },
-  { text: 'Taking a brief agricultural stroll.', weight: (s) => s.charm + s.snark },
-  { text: "Not all that wander are lost. I'm wandering... and lost.", weight: (s) => s.curiosity + s.snark },
-  { text: 'Time for routine wandering.', weight: (s) => s.focus + 10 },
-  { text: 'The farm requires observation.', weight: (s) => s.focus + s.curiosity },
-  { text: 'A short walk may improve morale.', weight: (s) => s.charm + s.patience },
-  { text: 'Perhaps the fresh air will help.', weight: (s) => s.patience + s.charm },
-  { text: 'I need a change of scenery.', weight: (s) => s.curiosity + 10 },
-  { text: 'I shall roam cautiously.', weight: (s) => s.focus + s.snark },
-  { text: 'There are entirely too many mysteries around this property.', weight: (s) => s.curiosity + s.snark },
-]
-const IDLE_WANDER_LINES_PERSONA = {
-  protocol: [
-    { text: 'I shall survey the grounds. Cautiously. Very cautiously.', weight: (s) => s.focus + s.charm },
-    { text: 'I suppose someone ought to check on things. Might as well be me.', weight: (s) => s.patience + s.focus },
-    { text: 'Off I go. The odds of something going wrong are... well, best not to dwell.', weight: (s) => s.snark + s.charm },
-  ],
-  roz: [
-    { text: 'I would like to observe the land for a while.', weight: (s) => s.curiosity + s.patience },
-    { text: 'A quiet walk. The world teaches, if you listen.', weight: (s) => s.patience + s.charm },
-    { text: 'I will go see what the wind is doing.', weight: (s) => s.curiosity + s.charm },
-    { text: 'Another walk. I do not mind. I have nothing better to do. Or worse.', weight: (s) => s.snark + s.patience },
-    { text: 'I will wander. Not because it helps, but because standing still is also pointless.', weight: (s) => s.snark + s.curiosity },
-  ],
-  unikitty: [
-    { text: 'Perimeter sweep! Nobody asked me to, but nobody said NOT to.', weight: (s) => s.focus + s.charm },
-    { text: 'Recon mission. Solo. Very brave.', weight: (s) => s.charm + s.curiosity },
-    { text: 'Kowalski would call this a patrol. I call it a walk. Same thing.', weight: (s) => s.charm + s.focus },
-    { text: 'Operational stroll! Eyes open, vibes positive!', weight: (s) => s.charm + s.curiosity },
-  ],
-}
 const IDLE_WANDER_FIELD_LINES = [
   { text: 'I am going to stand in the wheat for a moment. For field research.', weight: (s) => s.curiosity + s.focus },
   { text: 'Taking a brief wheat-adjacent observational posture.', weight: (s) => s.focus + s.snark },
@@ -1302,20 +1225,6 @@ const IDLE_WANDER_FIELD_LINES = [
   { text: 'I feel a sudden need to stand in a field.', weight: (s) => s.curiosity + s.snark },
   { text: 'The wheat and I need to have a conversation.', weight: (s) => s.charm + s.curiosity },
 ]
-const IDLE_WANDER_FIELD_LINES_PERSONA = {
-  protocol: [
-    { text: 'I should verify the wheat is still there. One cannot be too careful.', weight: (s) => s.focus + s.snark },
-  ],
-  roz: [
-    { text: 'The field looks like it wants company. I will go sit with it.', weight: (s) => s.charm + s.patience },
-    { text: 'The wheat is growing. I suppose that is something. More than I can say for my enthusiasm.', weight: (s) => s.snark + s.patience },
-  ],
-  unikitty: [
-    { text: 'Stealth approach to the wheat field. Nobody will see me. I am invisible.', weight: (s) => s.charm + s.snark },
-    { text: 'Field reconnaissance! Status: golden. Very golden.', weight: (s) => s.focus + s.charm },
-    { text: 'Securing the wheat perimeter! For the team!', weight: (s) => s.focus + s.charm },
-  ],
-}
 const IDLE_WANDER_FIELD_JOIN_LINES = [
   { text: 'That sounds nice. I will join you.', weight: (s) => s.charm + s.curiosity },
   { text: 'The wheat field? I could use a little field time.', weight: (s) => s.curiosity + s.charm },
@@ -1325,33 +1234,21 @@ const IDLE_WANDER_FIELD_JOIN_LINES = [
   { text: 'I suppose the field can accommodate one more thoughtful robot.', weight: (s) => s.snark + s.patience },
   { text: 'I like the field. I will come with you.', weight: (s) => s.charm + s.patience },
 ]
-const IDLE_WANDER_FIELD_JOIN_LINES_PERSONA = {
-  protocol: [
-    { text: 'I suppose I should accompany you. For safety purposes.', weight: (s) => s.focus + s.charm },
-  ],
-  roz: [
-    { text: 'Together is better than alone. I will come.', weight: (s) => s.charm + s.patience },
-    { text: 'I will come. Not that you asked. Nobody ever asks.', weight: (s) => s.snark + s.charm },
-  ],
-  unikitty: [
-    { text: 'Ooh ooh! Can I come? I\'m coming. Tactical buddy system!', weight: (s) => s.charm + s.curiosity },
-    { text: 'Backup arriving! You didn\'t ask but I\'m here anyway!', weight: (s) => s.charm + s.focus },
-  ],
-}
 const IDLE_WANDER_FIELD_JOIN_CHANCE = 0.55
 const IDLE_WANDER_FIELD_JOIN_COOLDOWN_MS = 2 * 60 * 1000
 let lastFieldJoinAt = 0
-let lastFieldOutstandingAt = 0
-const FIELD_OUTSTANDING_COOLDOWN_MS = 2 * 60 * 1000
 let lastFieldRepairAt = 0
 const FIELD_WANDER_REPAIR_COOLDOWN_MS = 15 * 1000
 
+let _fieldAnnouncePhrases = null
 function isIdleWanderFieldAnnouncement (message) {
-  const heard = normalizeChatPhrase(message)
-  const all = IDLE_WANDER_FIELD_LINES.concat(
-    ...Object.values(IDLE_WANDER_FIELD_LINES_PERSONA).map(p => p || [])
-  )
-  return all.some(line => normalizeChatPhrase(line.text) === heard)
+  if (!_fieldAnnouncePhrases) {
+    // Another bot may run any persona, so the recognition set unions the
+    // idleWanderField slot across every spec file, plus the shared base pool.
+    const all = IDLE_WANDER_FIELD_LINES.concat(allPersonaFunctional('idleWanderField'))
+    _fieldAnnouncePhrases = new Set(all.map(line => normalizeChatPhrase(typeof line === 'string' ? line : line.text)))
+  }
+  return _fieldAnnouncePhrases.has(normalizeChatPhrase(message))
 }
 
 function canJoinFieldWanderNow () {
@@ -1367,46 +1264,15 @@ async function tryJoinFieldWanderFromChat (username, message) {
   if (!isIdleWanderFieldAnnouncement(message)) return false
   if (!canJoinFieldWanderNow()) return false
   lastFieldJoinAt = Date.now()
-  bot.chat(pickLine(withPersona(IDLE_WANDER_FIELD_JOIN_LINES, IDLE_WANDER_FIELD_JOIN_LINES_PERSONA)))
+  bot.chat(pickLine(withPersonaSlot(IDLE_WANDER_FIELD_JOIN_LINES, 'idleWanderFieldJoin')))
   logEvent('idle-wander', `joining ${username} in wheat field`)
   try {
     await runIdleWanderToField({ announce: false })
-    if (Math.random() < 0.999) triggerOutstandingFieldMusingOnArrival({ force: true })
   } catch (e) {
     if (e.name !== 'AbortError') logEvent('idle-wander', `field join failed: ${e.message}`)
   }
   return true
 }
-function triggerOutstandingFieldMusingOnArrival ({ force = false } = {}) {
-  if (!inWheatField()) return false
-  if (musingState.status !== 'idle') return false
-  if (!force && Date.now() - lastFieldOutstandingAt < FIELD_OUTSTANDING_COOLDOWN_MS) return false
-  const topic = ALL_MUSING_TOPICS.find(t => t && t.id === 'farm_outstanding')
-  if (!topic || !topic.starter) {
-    logEvent('musing', 'farm_outstanding topic not found')
-    return false
-  }
-
-  lastFieldOutstandingAt = Date.now()
-  bot.chat(topic.starter)
-  recentMusingTopics.add(topic.id)
-  rememberChatPhrase(topic.starter)
-
-  if (recentMusingTopics.size >= Math.floor(ALL_MUSING_TOPICS.length * 0.8)) {
-    recentMusingTopics.clear()
-  }
-
-  if (isRecursiveTopic(topic)) {
-    beginRecursiveMusingState({ topic, role: 'initiator' })
-  } else {
-    beginClassicalMusingState({ topic, role: 'initiator' })
-  }
-
-  logEvent('musing', `initiated (field-arrival): ${topic.id}`)
-  scheduleMusingTimeout(MUSING_START_TIMEOUT_MS)
-  return true
-}
-
 async function maybeRepairBareWheatTilesWhileWandering () {
   if (!inWheatField()) return false
   if (Date.now() - lastFieldRepairAt < FIELD_WANDER_REPAIR_COOLDOWN_MS) return false
@@ -1417,54 +1283,6 @@ async function maybeRepairBareWheatTilesWhileWandering () {
   return true
 }
 
-const IDLE_WANDER_PEN_LINES = [
-  { text: 'I am going to check on the sheep.', weight: (s) => s.charm + s.focus },
-  { text: 'The sheep require supervision.', weight: (s) => s.focus + s.snark },
-  { text: 'Conducting a sheep inspection.', weight: (s) => s.focus + 15 },
-  { text: 'I should make sure the sheep are behaving responsibly.', weight: (s) => s.focus + s.snark },
-  { text: 'The sheep seem unusually calm today.', weight: (s) => s.curiosity + s.charm },
-  { text: 'I am going into the pen for a bit.', weight: (s) => s.charm + 10 },
-  { text: 'The sheep and I need to discuss several matters.', weight: (s) => s.curiosity + s.snark },
-  { text: 'I will briefly become one with the sheep.', weight: (s) => s.chaos + s.charm },
-  { text: 'The sheep continue to make questionable decisions.', weight: (s) => s.snark + s.focus },
-]
-const IDLE_WANDER_PEN_LINES_PERSONA = {
-  protocol: [
-    { text: 'I shall count the sheep. For the record, not because I enjoy it.', weight: (s) => s.focus + s.snark },
-  ],
-  roz: [
-    { text: 'I will go sit with the flock. They are good company.', weight: (s) => s.charm + s.patience },
-    { text: 'The sheep do not judge. That is more than I can say for most things.', weight: (s) => s.snark + s.charm },
-    { text: 'Checking on the sheep. They are alive. So am I, for what that is worth.', weight: (s) => s.snark + s.patience },
-  ],
-  unikitty: [
-    { text: 'Cute animal check! This is my favorite kind of mission!', weight: (s) => s.charm + s.curiosity },
-    { text: 'The sheep need me. I can feel it. In my heart.', weight: (s) => s.charm + s.patience },
-  ],
-}
-const IDLE_WANDER_PEN_INSIDE_LINES = [
-  { text: 'There are more sheep than I remembered.', weight: (s) => s.curiosity + s.snark },
-  { text: 'The sheep appear to have accepted me.', weight: (s) => s.charm + s.curiosity },
-  { text: 'I still do not fully understand sheep culture.', weight: (s) => s.curiosity + s.snark },
-  { text: 'Mathematical!', weight: (s) => s.snark + s.curiosity },
-  { text: 'One of these sheep is definitely in charge.', weight: (s) => s.curiosity + s.chaos },
-  { text: 'Everyone seems safe in here.', weight: (s) => s.charm + s.focus },
-]
-const IDLE_WANDER_PEN_INSIDE_LINES_PERSONA = {
-  protocol: [
-    { text: 'I have completed a headcount. All sheep are present. I think.', weight: (s) => s.focus + s.snark },
-  ],
-  roz: [
-    { text: 'The sheep are warm. I am learning warmth from them.', weight: (s) => s.charm + s.curiosity },
-    { text: 'The sheep do not wonder why they are here. I envy that.', weight: (s) => s.snark + s.patience },
-    { text: 'I asked a sheep how it was doing. It did not answer. Perhaps it also finds the question difficult.', weight: (s) => s.snark + s.charm },
-  ],
-  unikitty: [
-    { text: 'They are SO FLUFFY. This is the best assignment ever.', weight: (s) => s.charm + s.curiosity },
-    { text: 'I have named them all. In my head. Don\'t ask me to remember.', weight: (s) => s.charm + s.chaos },
-    { text: 'Sheep status: adorable. Mission status: complete.', weight: (s) => s.charm + s.focus },
-  ],
-}
 const SHEEP_COUNTING_LINES = [
   { text: 'Maybe I will count the sheep for a while.', weight: (s) => s.charm + s.patience },
   { text: 'I seem to be counting sheep.', weight: (s) => s.patience + s.snark },
@@ -1484,7 +1302,7 @@ const SHEEP_COUNTING_LINES = [
 
 function idleWanderBusy () {
   return !bot.entity || bot.isSleeping || autoSleepBusy || goInsideBusy || penTraversalBusy ||
-    activeTask.name !== null || followTarget || musingState.status !== 'idle'
+    activeTask.name !== null || followTarget
 }
 
 function randomIdleWanderTarget () {
@@ -1519,17 +1337,11 @@ function randomIdleWanderTarget () {
 async function runIdleWanderToField ({ announce = true } = {}) {
   if (insideHouse()) await runGoOutside('a short walk')
   if (insideHouse()) return
-  const hostiles = hostilesNearby(16)
-  if (hostiles.length) {
-    logEvent('idle-wander', `field skipped, hostiles nearby: ${hostiles.map(h => h.name).join(', ')}`)
-    return
-  }
   const pt = WHEAT_FIELD_STAND_POINTS[Math.floor(Math.random() * WHEAT_FIELD_STAND_POINTS.length)]
   if (announce) logEvent('idle-wander', 'heading to wheat field')
   await pathTo(pt, 1, 12000)
   if (bot.entity) logEvent('idle-wander', `standing in wheat field at ${posStr(bot.entity.position)}`)
   await maybeRepairBareWheatTilesWhileWandering()
-  triggerOutstandingFieldMusingOnArrival()
 }
 
 async function runIdleWanderToPen () {
@@ -1541,11 +1353,6 @@ async function runIdleWanderToPen () {
     }
   }
 
-  const hostiles = hostilesNearby(16)
-  if (hostiles.length) {
-    logEvent('idle-wander', `pen skipped, hostiles nearby: ${hostiles.map(h => h.name).join(', ')}`)
-    return
-  }
   logEvent('idle-wander', 'heading to pen')
   await runEnterPen({ allowNight: true })
   if (!inPen()) {
@@ -1621,6 +1428,106 @@ function startIdleWanderTimer () {
   logEvent('idle-wander', 'timer started, interval 20–70s')
 }
 
+// ── Expressive output gate ───────────────────────────────────────────────────
+// All flavor chatter (ambient /me actions, wildlife/squirrel comments, victory
+// lines, follow-mode bedtime suggestions) flows through this one gate: a single
+// global gap between any two expressive lines, plus one per-kind cooldown
+// table. This replaces the old web of cross-suppression timestamps
+// (lastAmbientActionAt / lastWildlifeCommentAt / suppressUntil / ...) where
+// each system had to know about every other. Functional speech — task
+// announcements, greetings, replies to commands — bypasses the gate entirely:
+// it must always work.
+const EXPRESSIVE_GLOBAL_GAP_MS = 30_000
+// Mid-exchange bot replies already pace themselves with their own ≥5s delays,
+// so they get a shorter global gap than ambient chatter.
+const EXPRESSIVE_GLOBAL_GAP_BY_KIND = { bot_chat: 5_000 }
+const EXPRESSIVE_COOLDOWN_MS = {
+  ambient: 90_000,
+  wildlife: 300_000,
+  squirrel: 90_000,
+  victory: 60_000,
+  bedtime_suggest: 120_000,
+}
+let lastExpressiveAt = 0
+const lastExpressiveByKind = {}
+
+function expressiveGateOpen (kind) {
+  const now = Date.now()
+  const gap = EXPRESSIVE_GLOBAL_GAP_BY_KIND[kind] ?? EXPRESSIVE_GLOBAL_GAP_MS
+  if (now - lastExpressiveAt < gap) return false
+  if (now - (lastExpressiveByKind[kind] || 0) < (EXPRESSIVE_COOLDOWN_MS[kind] ?? 0)) return false
+  return true
+}
+
+// Speak one expressive line through the gate. Returns false (silently) if the
+// gate is closed — callers don't need their own timing bookkeeping.
+function speakExpressive (kind, line, { me = false } = {}) {
+  if (!line || !expressiveGateOpen(kind)) return false
+  const now = Date.now()
+  lastExpressiveAt = now
+  lastExpressiveByKind[kind] = now
+  bot.chat(me ? `/me ${line}` : line)
+  return true
+}
+
+// Rolling tail of recent chat — fed to the LLM so generated lines react to
+// what is actually being said, and can PASS when the topic has moved on.
+const recentChat = []
+function rememberRecentChat (username, message) {
+  recentChat.push(`<${username}> ${message}`)
+  if (recentChat.length > 8) recentChat.shift()
+}
+
+function describeTimeOfDay () {
+  const t = bot.time?.timeOfDay
+  if (typeof t !== 'number') return 'an unknown hour'
+  if (t < 1000) return 'dawn'
+  if (t < 11000) return 'daytime'
+  if (t < 13500) return 'dusk'
+  return 'night'
+}
+
+function describeWhereabouts () {
+  if (insideHouse()) return 'inside the house'
+  if (inPen()) return 'in the sheep pen'
+  if (inWheatField()) return 'standing in the wheat field'
+  return 'outside on the farm'
+}
+
+function buildExpressiveContext (situation) {
+  const parts = []
+  parts.push(`It is ${describeTimeOfDay()}${bot.isRaining ? ' and raining' : ''}. You are ${describeWhereabouts()}.`)
+  if (activeTask.name) parts.push(`You are in the middle of: ${activeTask.name}.`)
+  if (followTarget) parts.push(`You are following ${followTarget} around.`)
+  const others = Object.keys(bot.players || {}).filter(n => n !== bot.username)
+  if (others.length) parts.push(`Also on the server: ${others.join(', ')}.`)
+  if (recentChat.length) parts.push(`Recent chat:\n${recentChat.join('\n')}`)
+  parts.push(situation)
+  return parts.join('\n\n')
+}
+
+// One expressive impulse: check the gate, optionally wait (the generation
+// happens AT FIRE TIME, after the wait, so the context already contains any
+// chat that arrived meanwhile — stale lines are never written), generate from
+// the persona spec, speak through the gate. The model may PASS; Ollama being
+// down means silence. Returns whether a line was spoken.
+async function impulseExpressive (kind, situation, { me = false, delayMs = 0 } = {}) {
+  if (!expressiveGateOpen(kind)) return false
+  if (delayMs) {
+    await sleep(delayMs)
+    if (!expressiveGateOpen(kind)) return false // something else spoke while we waited
+  }
+  const line = await llm.generateLine({
+    system: personaSpec.systemPrompt,
+    exemplars: personaSpec.exemplars,
+    context: buildExpressiveContext(situation),
+  })
+  if (!line) return false
+  const spoken = speakExpressive(kind, line, { me })
+  if (spoken) logEvent(kind, line)
+  return spoken
+}
+
 // ── Ambient /me actions ──────────────────────────────────────────────────────
 // Quiet signs of inner life: fidgets, observations, pondering. Uses /me so they
 // render as action text and don't trigger conversational responses from other bots.
@@ -1629,209 +1536,22 @@ function startIdleWanderTimer () {
 const AMBIENT_ACTION_MIN_MS = 180_000
 const AMBIENT_ACTION_MAX_MS = 420_000
 let ambientActionTimerId = null
-let lastAmbientActionAt = 0
 
-const AMBIENT_ACTION_LINES = [
-  { text: 'shifts weight from one foot to the other', weight: s => s.patience },
-  { text: 'watches a cloud drift overhead', weight: s => s.curiosity },
-  { text: 'tilts head, listening to something far off', weight: s => s.curiosity + s.focus },
-  { text: 'stretches arms overhead', weight: s => s.patience },
-  { text: 'scuffs a boot against the ground', weight: s => s.snark },
-  { text: 'squints at the horizon', weight: s => s.focus },
-  { text: 'absently picks at a splinter on the fence', weight: s => s.patience + s.charm, requires: () => nearFence() },
-  { text: 'takes a slow breath', weight: s => s.patience + s.focus },
-  { text: 'glances around, taking stock of things', weight: s => s.focus },
-  { text: 'rolls shoulders back with a quiet pop', weight: s => s.chaos },
-  { text: 'seems lost in thought for a moment', weight: s => s.curiosity + s.patience },
-  { text: 'watches the light change across the field', weight: s => s.charm + s.curiosity },
-]
 
-const AMBIENT_ACTION_LINES_PERSONA = {
-  roz: [
-    { text: 'kneels to examine a small wildflower', weight: s => s.curiosity * 2, tags: ['roz'] },
-    { text: 'holds very still, watching a bird nearby', weight: s => s.patience * 2, tags: ['roz'] },
-    { text: 'traces a finger along the fence rail', weight: s => s.charm * 2, tags: ['roz'], requires: () => nearFence() },
-    { text: 'turns an acorn over in one hand, studying it', weight: s => s.curiosity * 2, tags: ['roz'] },
-    { text: 'listens to the wheat rustle, head tilted', weight: s => s.patience * 2, tags: ['roz'] },
-  ],
-  protocol: [
-    { text: 'nervously checks the perimeter again', weight: s => s.focus * 2, tags: ['protocol'] },
-    { text: 'mutters something about proper protocol', weight: s => s.snark * 2, tags: ['protocol'] },
-    { text: 'fidgets with an invisible cufflink', weight: s => s.charm * 2, tags: ['protocol'], emote: 'point' },
-    { text: 'glances over one shoulder, then the other', weight: s => s.focus * 2, tags: ['protocol'], action: async () => {
-      const yaw = bot.entity?.yaw ?? 0
-      await bot.look(yaw + Math.PI / 3, 0, false)
-      await sleep(600)
-      await bot.look(yaw - Math.PI / 3, 0, false)
-      await sleep(600)
-      await bot.look(yaw, 0, false)
-    }},
-    { text: 'straightens up, as if someone might be watching', weight: s => s.charm * 2, tags: ['protocol'] },
-  ],
-  unikitty: [
-    { text: 'bounces on toes, full of restless energy', weight: s => s.chaos * 2, tags: ['unikitty'] },
-    { text: 'grins at nothing in particular', weight: s => s.charm * 2, tags: ['unikitty'] },
-    { text: 'does a tiny spin, just because', weight: s => s.chaos * 2, tags: ['unikitty'] },
-    { text: 'hums a little tune under breath', weight: s => s.charm * 2, tags: ['unikitty'] },
-    { text: 'wiggles fingers at a passing butterfly', weight: s => s.curiosity * 2, tags: ['unikitty'] },
-  ],
-  private: [
-    { text: 'scans the treeline out of habit', weight: s => s.focus * 2, tags: ['private'], emote: 'salute' },
-    { text: 'practices semaphore flags to no one in particular', weight: s => s.focus * 2, tags: ['private'] },
-    { text: 'tries to remember if that was an L or a J in semaphore', weight: s => s.curiosity * 2, tags: ['private'] },
-    { text: 'holds arms out at angles, practicing a new letter', weight: s => s.focus * 2, tags: ['private'] },
-    { text: 'stands at attention for a moment, then relaxes', weight: s => s.charm * 2, tags: ['private'] },
-    { text: 'checks six. All clear. Smiles.', weight: s => s.focus * 2, tags: ['private'] },
-    { text: 'mouths "smile and wave" to itself', weight: s => s.charm * 2, tags: ['private'] },
-  ],
-}
 
-function nearFence () {
-  if (!bot.entity) return false
-  const p = bot.entity.position
-  for (let dx = -2; dx <= 2; dx++) {
-    for (let dz = -2; dz <= 2; dz++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        const b = bot.blockAt(new Vec3(Math.floor(p.x) + dx, Math.floor(p.y) + dy, Math.floor(p.z) + dz))
-        if (b && /fence/i.test(b.name)) return true
-      }
-    }
-  }
-  return false
-}
 
-function tryAmbientAction () {
-  if (musingState.status !== 'idle') return
+async function tryAmbientAction () {
   if (activeTask.name !== null) return
   if (bot.isSleeping) return
   if (goInsideBusy || penTraversalBusy) return
-  const now = Date.now()
-  if (now - lastAmbientActionAt < 90_000) return
-  if (Math.random() < 0.4 && tryWildlifeComment()) { lastAmbientActionAt = now; return }
-  const full = withPersona(AMBIENT_ACTION_LINES, AMBIENT_ACTION_LINES_PERSONA)
-  const pool = full.filter(e => !e.requires || e.requires())
-  const entry = pickLineEntry(pool)
-  bot.chat(`/me ${entry.text}`)
-  if (entry.emote) sendEmote(entry.emote)
-  if (entry.action) entry.action().catch(e => logEvent('ambient-action', `action error: ${e.message}`))
-  lastAmbientActionAt = now
-  logEvent('ambient-action', entry.text)
+  if (!idleWanderEnabled) return // "stand down" silences ambient chatter too
+  if (!expressiveGateOpen('ambient')) return
+  if (Math.random() < 0.4 && await tryWildlifeComment()) return
+  await impulseExpressive('ambient',
+    'Nothing in particular is happening — a quiet moment. Offer one small idle action or passing thought, written as action text (it renders after your name, like "watches a cloud drift overhead").',
+    { me: true })
 }
 
-const WILDLIFE_LINES = {
-  wolf: {
-    default: [
-      'watches the wolf for a moment',
-      'glances at the wolf, then looks away',
-    ],
-    protocol: [
-      'eyes the wolf nervously. That is a predator. An ACTUAL predator. Right there.',
-      'maintains a respectful distance from the wolf. As per regulation.',
-      'counts the wolves. Recounts the wolves. Notes the count in an imaginary ledger.',
-      'wonders if wolves are supposed to sit in boats. Checks the manual. There is no manual.',
-      'observes the wolf and calculates the nearest exit. Just in case.',
-    ],
-    roz: [
-      'watches the wolf quietly. A fellow creature, finding its way.',
-      'sits near the wolf, sharing a silence that asks nothing.',
-      'wonders what the wolf dreams about when it sleeps in the boat.',
-      'notices how the wolf watches the tree line — always watching.',
-    ],
-    unikitty: [
-      'waves at the wolf. Hi puppy! Big puppy! The BIGGEST puppy!',
-      'wants to pet the wolf SO BAD but is trying to be cool about it.',
-      'wonders if the wolf wants to be friends. Probably yes. Definitely yes.',
-      'considers offering the wolf a baked potato. Wolves like potatoes, right?',
-    ],
-    private: [
-      'studies the wolf\'s patrol pattern. Very professional. Respects the hustle.',
-      'nods at the wolf like a fellow operative. You do your thing, I\'ll do mine.',
-      'wonders if the wolf has a commanding officer. Maybe it IS the commanding officer.',
-      'considers recruiting the wolf. Every team needs recon.',
-      'salutes the wolf discreetly. One field agent to another.',
-    ],
-  },
-  squirrel: {
-    default: [
-      'watches a small creature darting between the trees',
-      'notices something small and quick in the underbrush',
-      'tilts head at the little creature scurrying past',
-    ],
-    protocol: [
-      'spots the squirrel and freezes. Unidentified fauna. Threat level: unclear.',
-      'tracks the squirrel\'s movements. It is entirely too fast. Suspiciously fast.',
-      'notes the squirrel\'s position for the record. It has been NOTED.',
-      'watches the squirrel bury something. What is it hiding? What does it KNOW?',
-      'is fairly certain the squirrel just looked at it. Direct eye contact. Unsettling.',
-      'files the squirrel under "unresolved contacts." Growing list.',
-      'calculates the squirrel\'s velocity. Exceeds all reasonable parameters for that mass.',
-      'observes the squirrel has returned. Again. This is starting to feel like surveillance.',
-      'would like it on the record that the squirrel is up to something.',
-      'narrows eyes at the squirrel. It narrowed first.',
-      'notices the squirrel paused. Almost like it\'s... listening. Deeply concerning.',
-    ],
-    roz: [
-      'watches the squirrel gather something in its tiny paws. Such purpose.',
-      'holds very still as the squirrel passes. A small life, busy with small things.',
-      'follows the squirrel\'s path with quiet eyes. It knows every branch.',
-      'wonders how the squirrel decides which tree is home. Do they all look the same?',
-      'notices the squirrel has stopped to look back. A small moment between two watchers.',
-      'thinks the squirrel moves like water. No wasted motion. All purpose.',
-      'learns something from the squirrel. It carries only what it needs.',
-      'sees the squirrel pause at the base of a tree. Choosing. Everything is a choice.',
-      'wonders if the squirrel remembers where it buried everything. Or if forgetting is part of the plan.',
-    ],
-    unikitty: [
-      'gasps. SQUIRREL! Look at its tiny FACE! And its TAIL!',
-      'tries to follow the squirrel with eyes. So fast! So fluffy! So ALIVE!',
-      'whispers at the squirrel. Hi friend. I see you. You are PERFECT.',
-      'imagines the squirrel wearing a tiny hat. Best thought of the day.',
-      'wants to be friends SO BAD. Please come back tiny friend!',
-      'wonders what the squirrel named itself. Probably something GREAT.',
-      'thinks the squirrel\'s tail is basically a FLAG OF JOY.',
-      'mentally adds the squirrel to the friend list. It doesn\'t know yet but it WILL.',
-      'just saw the squirrel do a little hop and that was the BEST THING TODAY.',
-    ],
-    private: [
-      'observes the squirrel\'s escape routes. Impressive tactical awareness for a rodent.',
-      'watches the squirrel cache supplies. Now THAT is proper logistics.',
-      'respects the squirrel\'s opsec. Multiple hidden stashes. Very professional.',
-      'notes that the squirrel has better recon of this area than anyone.',
-      'wonders if the squirrel would make a good informant. Loyal? Discreet? Probably not.',
-      'clocks the squirrel\'s patrol pattern. Consistent. Disciplined. This one\'s seen things.',
-      'notices the squirrel always checks six before crossing open ground. Textbook.',
-      'thinks the squirrel would survive basic training. Possibly excel.',
-      'files the squirrel under "local assets — non-hostile, high mobility."',
-      'admires the squirrel\'s commitment to resource acquisition. Born quartermaster.',
-    ],
-  },
-  sheep: {
-    default: [
-      'watches a sheep wander past',
-      'glances at the sheep grazing nearby',
-    ],
-    protocol: [
-      'counts the sheep again. Has to be sure. Counts a third time. Different number.',
-      'watches the sheep with deep suspicion. They are too calm. What do they know?',
-      'straightens up as a sheep approaches. Maintaining composure. In front of the sheep.',
-    ],
-    roz: [
-      'reaches toward the sheep, then pulls back. Not every connection needs touch.',
-      'watches the sheep chewing contentedly. To want nothing more than grass and sun.',
-      'stands near the sheep, matching its calm. Learning by proximity.',
-    ],
-    unikitty: [
-      'wiggles fingers at the sheep. Hi woolly friend! You are SO round!',
-      'considers hugging the sheep. Decides to just beam at it instead.',
-      'wonders what the sheep is thinking. Probably something WONDERFUL.',
-    ],
-    private: [
-      'checks on the sheep. All present. All woolly. Good.',
-      'monitors the sheep perimeter. Asset security is everyone\'s job.',
-      'nods at the sheep. Carry on, civilians. Everything is under control.',
-    ],
-  },
-}
 
 function getWildlifeNearby () {
   if (!bot.entity) return null
@@ -1852,50 +1572,35 @@ function getWildlifeNearby () {
   return found[0]
 }
 
-let lastWildlifeCommentAt = 0
-
-function tryWildlifeComment () {
-  const now = Date.now()
-  if (now - lastWildlifeCommentAt < 300_000) return false
+async function tryWildlifeComment () {
+  if (!idleWanderEnabled) return false
+  if (!expressiveGateOpen('wildlife')) return false
   const wildlife = getWildlifeNearby()
   if (!wildlife) return false
-  const lines = WILDLIFE_LINES[wildlife.type]
-  if (!lines) return false
-  const persona = botPersonaKey()
-  const pool = lines[persona] || lines.default
-  const line = pool[Math.floor(Math.random() * pool.length)]
-  bot.chat(`/me ${line}`)
-  lastWildlifeCommentAt = now
-  logEvent('wildlife', `${wildlife.type} (d=${wildlife.dist.toFixed(1)}): ${line}`)
-  return true
+  return impulseExpressive('wildlife',
+    `A ${wildlife.type} is nearby, about ${Math.round(wildlife.dist)} blocks away. React to seeing it, as action text.`,
+    { me: true })
 }
 
-let lastSquirrelCommentAt = 0
 let squirrelWatcherId = null
 
-function checkSquirrelNearby () {
+async function checkSquirrelNearby () {
   if (!bot.entity) return
   if (bot.isSleeping) return
-  if (musingState.status !== 'idle') return
-  const now = Date.now()
-  if (now - lastSquirrelCommentAt < 90_000) return
-  if (now - lastWildlifeCommentAt < 30_000) return
+  if (!idleWanderEnabled) return
+  if (!expressiveGateOpen('squirrel')) return
   const wildlife = getWildlifeNearby()
   if (!wildlife || wildlife.type !== 'squirrel') return
-  const lines = WILDLIFE_LINES.squirrel
-  const persona = botPersonaKey()
-  const pool = lines[persona] || lines.default
-  const line = pool[Math.floor(Math.random() * pool.length)]
-  bot.chat(`/me ${line}`)
-  lastSquirrelCommentAt = now
-  lastWildlifeCommentAt = now
-  lastAmbientActionAt = now
-  logEvent('wildlife-squirrel', `squirrel (d=${wildlife.dist.toFixed(1)}): ${line}`)
+  await impulseExpressive('squirrel',
+    `A squirrel just darted past, about ${Math.round(wildlife.dist)} blocks away. React to it, as action text.`,
+    { me: true })
 }
 
 function startSquirrelWatcher () {
   if (squirrelWatcherId) return
-  squirrelWatcherId = setInterval(checkSquirrelNearby, 7_000)
+  squirrelWatcherId = setInterval(() => {
+    checkSquirrelNearby().catch(e => logEvent('squirrel', `impulse error: ${e.message}`))
+  }, 7_000)
   logEvent('squirrel-watcher', 'started, checking every 7s')
 }
 
@@ -1908,7 +1613,7 @@ function startAmbientActionTimer () {
   function scheduleNext () {
     const delay = AMBIENT_ACTION_MIN_MS + Math.random() * (AMBIENT_ACTION_MAX_MS - AMBIENT_ACTION_MIN_MS)
     ambientActionTimerId = setTimeout(() => {
-      tryAmbientAction()
+      tryAmbientAction().catch(e => logEvent('ambient', `impulse error: ${e.message}`))
       scheduleNext()
     }, delay)
   }
@@ -1920,8 +1625,8 @@ function stopAmbientActionTimer () {
   if (ambientActionTimerId) { clearTimeout(ambientActionTimerId); ambientActionTimerId = null }
 }
 
-// Wheat-ready alert mode. This is intentionally louder than the normal musing
-// system: when every known wheat tile is mature, remind nearby humans until one
+// Wheat-ready alert mode. This is intentionally louder than ambient chatter:
+// when every known wheat tile is mature, remind nearby humans until one
 // of them acknowledges the alert. The snooze resets only after the field stops
 // being fully mature, so the next growth cycle can alert again.
 const WHEAT_CROP_ROWS = [
@@ -2231,18 +1936,12 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
       if (deathCount > startDeaths) throw new Error('died during pre-harvest sleep')
     }
 
-    const hostiles = hostilesNearby(16)
-    if (hostiles.length) {
-      bot.chat(`Hostiles nearby (${hostiles.map(h => h.name).join(', ')}) — standing down.`)
-      return
-    }
     const halfLabel = half === 'all' ? 'both fields'
       : half === 'north-field' ? 'the north field'
       : half === 'south-field' ? 'the south field'
       : `the ${half} half`
     bot.chat(pickLine(HARVEST_START_LINES, { userTag: user ? ' ' + user + ',' : '', half: halfLabel }))
     logEvent('harvest-rc', `start half=${half} startDeaths=${startDeaths}`)
-    startFarmingMusingTimer()
 
     if (insideHouse()) {
       logEvent('harvest-rc', 'inside house — exiting first')
@@ -2310,12 +2009,6 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
           checkAbort(myGen)
           if (deathCount > startDeaths) throw new Error('died mid-harvest')
           if (bot.health != null && bot.health < 10) throw new Error(`HP low (${bot.health}) — aborting`)
-          const hCheck = hostilesNearby(10)
-          if (hCheck.length) {
-            const hDetail = hCheck.map(h => `${h.name}@(${h.position.x.toFixed(1)},${h.position.y.toFixed(1)},${h.position.z.toFixed(1)}) d=${h.position.distanceTo(bot.entity.position).toFixed(1)}`).join('; ')
-            logEvent('harvest-rc', `hostile check failed: ${hDetail}`)
-            throw new Error('hostiles approaching')
-          }
           if (autoSleepEnabled && isBedtime()) {
             logEvent('harvest-rc', `bedtime at tile ${i + 1}/${fieldWheat.length} in ${fieldHalf}`)
             await yieldToBedtime(myGen)
@@ -2415,7 +2108,6 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
     }
   } finally {
     endTask(activeTask.name)
-    stopFarmingMusingTimer()
     bot.pathfinder.setGoal(null)
     await clearHand()
   }
@@ -2690,7 +2382,6 @@ async function sustainWait (ms) {
 function sustainSafe () {
   if (followTarget) return false
   if (isBedtime()) return false
-  if (hostilesNearby(16).length) return false
   if (bot.health != null && bot.health < 10) return false
   return true
 }
@@ -2859,13 +2550,7 @@ async function runHarvestPotatoes ({ user } = {}) {
       if (deathCount > startDeaths) throw new Error('died during pre-harvest sleep')
     }
 
-    const hostiles = hostilesNearby(16)
-    if (hostiles.length) {
-      logEvent('harvest-potato', `hostiles nearby — standing down`)
-      return
-    }
     logEvent('harvest-potato', `start startDeaths=${startDeaths}`)
-    startFarmingMusingTimer()
 
     // Exit first if indoors.
     if (insideHouse()) {
@@ -2921,7 +2606,6 @@ async function runHarvestPotatoes ({ user } = {}) {
         checkAbort(myGen)
         if (deathCount > startDeaths) throw new Error('died mid-harvest')
         if (bot.health != null && bot.health < 10) throw new Error(`HP low (${bot.health}) — aborting`)
-        if (hostilesNearby(10).length) throw new Error('hostiles approaching')
         if (autoSleepEnabled && isBedtime()) {
           logEvent('harvest-potato', `bedtime at tile ${i + 1}/${maturePotatoes.length}`)
           await yieldToBedtime(myGen)
@@ -3015,7 +2699,6 @@ async function runHarvestPotatoes ({ user } = {}) {
     }
   } finally {
     endTask(activeTask.name)
-    stopFarmingMusingTimer()
     bot.pathfinder.setGoal(null)
     await clearHand()
   }
@@ -3040,13 +2723,7 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
       if (deathCount > startDeaths) throw new Error('died during pre-harvest sleep')
     }
 
-    const hostiles = hostilesNearby(16)
-    if (hostiles.length) {
-      logEvent('harvest-potato-rc', `hostiles nearby — standing down`)
-      return
-    }
     logEvent('harvest-potato-rc', `start startDeaths=${startDeaths}`)
-    startFarmingMusingTimer()
 
     if (insideHouse()) {
       logEvent('harvest-potato-rc', 'inside house — exiting first')
@@ -3121,7 +2798,6 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
         checkAbort(myGen)
         if (deathCount > startDeaths) throw new Error('died mid-harvest')
         if (bot.health != null && bot.health < 10) throw new Error(`HP low (${bot.health}) — aborting`)
-        if (hostilesNearby(10).length) throw new Error('hostiles approaching')
         if (autoSleepEnabled && isBedtime()) {
           logEvent('harvest-potato-rc', `bedtime at tile ${i + 1}/${ordered.length}`)
           await yieldToBedtime(myGen)
@@ -3203,7 +2879,6 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
     }
   } finally {
     endTask(activeTask.name)
-    stopFarmingMusingTimer()
     bot.pathfinder.setGoal(null)
     await clearHand()
   }
@@ -3437,7 +3112,6 @@ async function tryCollectBake () {
   // Wheat first: if the sustain loop is on and the field is ripe, let it harvest
   // before we go collect — the next tick will collect once the field is clear.
   if (sustainState.active && scanKnownWheatFields().ready) return
-  if (hostilesNearby(16).length) return
 
   const taskCheck = startTask('collect_potatoes')
   if (!taskCheck.allowed) return
@@ -3503,7 +3177,6 @@ async function tryRestockSupplies () {
   if (day === restockLastDay) return
   if (bot.currentWindow) return
   if (Date.now() < foodSafetyWindowCooldownUntil) return
-  if (hostilesNearby(16).length) return
 
   const wheat = countOnHand('wheat')
   const seeds = countOnHand('wheat_seeds')
@@ -3666,14 +3339,9 @@ async function runGoOutsideOnce (activity) {
     bot.chat(pickLine(TOO_LATE_LINES))
     return
   }
-  const hostiles = hostilesNearby(16)
-  if (hostiles.length) {
-    bot.chat(`Hostiles nearby (${hostiles.map(h => h.name).join(', ')}) — staying inside.`)
-    return
-  }
   const act = activity || 'stuff'
   const itself = act === 'potatoes' ? 'themselves' : 'itself'
-  bot.chat(pickLine(withPersona(GO_OUTSIDE_LINES, GO_OUTSIDE_LINES_PERSONA), { activity: act, itself }))
+  bot.chat(pickLine(withPersonaSlot(GO_OUTSIDE_LINES, 'goOutside'), { activity: act, itself }))
   const startDeaths = deathCount
   // Suppress lookAt for the whole traversal — a background yaw change mid-walk
   // is what drove the bot east into the furnace on prior runs.
@@ -3750,7 +3418,7 @@ async function runGoInsideOnce () {
   if (hostiles.length) {
     bot.chat(`Hostiles too close (${hostiles.map(h => h.name).join(', ')}) — rushing in.`)
   } else {
-    bot.chat(pickLine(isBedtime() ? withPersona(BEDTIME_LINES, BEDTIME_LINES_PERSONA) : withPersona(COME_INSIDE_LINES, COME_INSIDE_LINES_PERSONA)))
+    bot.chat(pickLine(isBedtime() ? withPersonaSlot(BEDTIME_LINES, 'bedtime') : withPersonaSlot(COME_INSIDE_LINES, 'comeInside')))
   }
   suppressLookAt(20000)
 
@@ -3911,7 +3579,7 @@ async function runGoOutside (activity) {
     }
     logEvent('go-outside', `attempt 1 failed gracefully (${err.message}); retrying`)
     sendEmote('facepalm')
-    bot.chat(pickLine(withPersona(RETRY_LINES, RETRY_LINES_PERSONA)))
+    bot.chat(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
     await sleep(500)
     // Reset to the inside pad before retry — runGoOutsideOnce starts from
     // HOUSE_CENTER, and we may be stranded in the door jamb after the snag.
@@ -3946,7 +3614,7 @@ async function runGoInside () {
           throw err
         }
         sendEmote('facepalm')
-        bot.chat(pickLine(withPersona(RETRY_LINES, RETRY_LINES_PERSONA)))
+        bot.chat(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
         await sleep(500)
         await resetToHouseSide(OUTSIDE_ORIENTATION)
       }
@@ -4071,7 +3739,7 @@ async function runEnterPen ({ allowNight = false } = {}) {
     if (!isGracefulDoorFailure(err, hpDelta, deathDelta)) throw err
     logEvent('enter-pen', `attempt 1 failed (${err.message}); retrying`)
     sendEmote('facepalm')
-    bot.chat(pickLine(withPersona(RETRY_LINES, RETRY_LINES_PERSONA)))
+    bot.chat(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
     await ensurePenDoorClosed()
     await sleep(500)
     await pathTo({ x: -278, y: 64, z: 571 }, 0, 6000).catch(() => {})
@@ -4195,7 +3863,7 @@ async function runLeavePen () {
         throw err
       }
       sendEmote('facepalm')
-      bot.chat(pickLine(withPersona(RETRY_LINES, RETRY_LINES_PERSONA)))
+      bot.chat(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
       await ensurePenDoorClosed()
       await sleep(500)
       await pathTo(PEN_INSIDE, 0, 6000).catch(() => {})
@@ -5171,7 +4839,7 @@ async function runStashAll () {
 }
 
 // Said when told to "stand down" / "just chill" — idle autonomy (wandering,
-// pen/field joins, musings) goes quiet until re-enabled. Auto-sleep, auto-eat,
+// pen/field joins, ambient chatter) goes quiet until re-enabled. Auto-sleep, auto-eat,
 // and explicit commands still work.
 const STAND_DOWN_LINES = [
   { text: 'Standing down. I will be right here, being still.', weight: (s) => s.focus + s.patience },
@@ -5244,7 +4912,7 @@ const CHAT_HANDLERS = [
   },
   {
     // "Stand down" / "just chill": stop whatever idle thing is happening and
-    // suspend idle autonomy (wandering, pen/field joins, musings) until told
+    // suspend idle autonomy (wandering, pen/field joins, ambient chatter) until told
     // otherwise. Like `stop`, but also flips off idleWanderEnabled so nothing
     // restarts on the next timer tick. Auto-sleep, auto-eat, and explicit
     // commands (go inside, harvest, …) are unaffected.
@@ -5268,8 +4936,8 @@ const CHAT_HANDLERS = [
     },
   },
   {
-    // "Do your thing" / "as you were": resume idle autonomy. The wander and
-    // musing timers never stopped, so flipping the flag is enough.
+    // "Do your thing" / "as you were": resume idle autonomy. The wander timer
+    // never stopped, so flipping the flag is enough.
     name: 'as_you_were',
     pattern: /\b(do your (own )?thing|as you were|carry on|go on then)\b/i,
     handler: (user) => {
@@ -5300,7 +4968,7 @@ const CHAT_HANDLERS = [
     pattern: /\bwhat('?s| is)\s*up\b|\bwassup\b|\bsup\b(?!.*\b(stop|stay|halt)\b)/i,
     handler: (user) => {
       facePlayer(user).catch(() => {})
-      bot.chat(pickLine(withPersona(WHATS_UP_LINES, WHATS_UP_LINES_PERSONA)))
+      bot.chat(pickLine(withPersonaSlot(WHATS_UP_LINES, 'whatsUp')))
     },
   },
   {
@@ -5360,7 +5028,7 @@ const CHAT_HANDLERS = [
   },
   {
     name: 'inventory',
-    pattern: /\b(what('?s| do you have| you got|cha got)|inventory|inv|pockets)\b/i,
+    pattern: /\b(what (do you have|you got)|whatcha got|what('?s| is) in (your|the) (pockets|inventory|bag|bags)|inventory|inv|pockets)\b/i,
     handler: (_user) => {
       sendEmote('think')
       const items = (bot.inventory?.items() || [])
@@ -5678,17 +5346,6 @@ const CHAT_HANDLERS = [
       }, 30000)
     },
   },
-  // Last: if nothing else matched, greetings like "hi", "hey", "hello Roz".
-  {
-    name: 'greeting',
-    pattern: /^(hi|hey|hello|yo|sup|howdy|greetings|hola)\b/i,
-    handler: (user) => {
-      facePlayer(user).catch(() => {})
-      const greetEmotes = ['cheer', 'wave', 'clap', 'shrug']
-      sendEmote(greetEmotes[Math.floor(Math.random() * greetEmotes.length)])
-      bot.chat(pickGreeting(user))
-    },
-  },
 ]
 
 let nickRe = null
@@ -5707,6 +5364,26 @@ function extractMySegment (message) {
   const mine = sentences.find(s => nickRe && nickRe.test(s))
   return mine || message
 }
+
+// Conversation continuity: once a player addresses the bot by name, their
+// follow-up messages keep flowing to it without re-addressing — like an actual
+// conversation — until the thread goes quiet for CONVO_WINDOW_MS or they
+// address someone else by name.
+const CONVO_WINDOW_MS = 90_000
+const activeConvos = new Map() // username → timestamp of their last message to us
+
+function inConversationWith (username) {
+  const t = activeConvos.get(username)
+  return !!t && Date.now() - t < CONVO_WINDOW_MS
+}
+
+// "Roz, come here" — a leading Name-comma/colon means they're talking to
+// somebody. If that somebody isn't us, the message isn't ours.
+function addressesSomeoneElse (message) {
+  const m = /^\s*([A-Za-z_][A-Za-z0-9_]{1,15})\s*[,:]/.exec(message)
+  if (!m) return false
+  return !(nickRe && nickRe.test(m[1]))
+}
 const LOVE_RE = /\bi love you\b/i
 const BYE_RE = /\b(bye|bye bye|goodbye|good bye|see ya|see you|later|peace out|ok bye|cya|ttyl|take care)\b/i
 
@@ -5717,42 +5394,18 @@ const IDUNNO_LINES = [
   { text: 'The sheep may have additional insight.', weight: (s) => s.curiosity + s.charm },
   { text: 'That is outside my area of agricultural expertise.', weight: (s) => s.focus + 10 },
 ]
-const IDUNNO_LINES_PERSONA = {
-  roz: [
-    { text: 'I do not know. Which is... familiar.', weight: (s) => s.patience + s.snark },
-    { text: 'I have several theories. None are encouraging.', weight: (s) => s.snark + s.focus },
-    { text: 'The universe remains stubbornly ambiguous.', weight: (s) => s.snark + s.patience },
-    { text: 'Perhaps the pond knows.', weight: (s) => s.curiosity + s.charm },
-    { text: 'I suspect the answer is complicated and muddy.', weight: (s) => s.curiosity + s.patience },
-    { text: 'I was hoping you knew.', weight: (s) => s.charm + s.snark },
-  ],
-  protocol: [
-    { text: 'I was not briefed on that procedure.', weight: (s) => s.focus + s.snark },
-    { text: 'I should hate to speculate irresponsibly. So I will refrain.', weight: (s) => s.focus + s.patience },
-    { text: 'That seems above my current clearance level.', weight: (s) => s.snark + s.focus },
-    { text: 'My confidence level is somewhere between 3% and absolutely not.', weight: (s) => s.snark + s.focus },
-    { text: 'The farm records are inconclusive.', weight: (s) => s.focus + s.snark },
-  ],
-  unikitty: [
-    { text: 'Ooh, good question! I have NO idea!', weight: (s) => s.charm + s.curiosity },
-    { text: 'Hmm... nope! Brain empty! But in a FUN way!', weight: (s) => s.chaos + s.charm },
-    { text: 'I dunno but I bet we can figure it out together!!', weight: (s) => s.charm + s.curiosity },
-    { text: 'That one is a mystery! I LOVE mysteries!', weight: (s) => s.curiosity + s.charm },
-    { text: 'Cannot confirm! But also cannot deny! Life is exciting!', weight: (s) => s.chaos + s.charm },
-  ],
-  private: [
-    { text: 'That\'s above my clearance level.', weight: (s) => s.focus + s.snark },
-    { text: 'Hmm. I\'d need to consult Skipper on that one.', weight: (s) => s.charm + s.focus },
-    { text: 'Classified. Or... I just don\'t know. One of those.', weight: (s) => s.snark + s.charm },
-    { text: 'Intel inconclusive. Recommend further recon.', weight: (s) => s.focus + s.curiosity },
-    { text: 'I have no idea. But I\'m smiling about it.', weight: (s) => s.charm + 10 },
-  ],
-}
 
 bot.on('chat', (username, message) => {
-  if (username === bot.username) return
+  // The server echoes our own chat under the display NICKNAME ("Muse"), not
+  // the account name ("Musebot") — guard against both, or the bot hears
+  // itself and the conversation window turns into a self-reply loop.
+  if (username === bot.username || (nickRe && nickRe.test(username))) {
+    rememberRecentChat(username, message) // own lines still belong in LLM context
+    return
+  }
   rememberChatPhrase(message)
-  if (looksLikeBot(username)) markBotChatHeardNow()
+  rememberRecentChat(username, message)
+  if (!looksLikeBot(username)) resetBotExchange()
   logEvent('chat', `<${username}> ${message}`)
   if (isIdleWanderFieldAnnouncement(message)) {
     tryJoinFieldWanderFromChat(username, message).catch(e => {
@@ -5786,10 +5439,10 @@ bot.on('chat', (username, message) => {
         bot.removeListener('chat', claimListener)
         if (sustainState.active) return
         if (claimedBy) {
-          bot.chat(pickLine(withPersona(FIRE_KEEPER_ACK_LINES, FIRE_KEEPER_ACK_LINES_PERSONA), { keeper: claimedBy }))
+          bot.chat(pickLine(withPersonaSlot(FIRE_KEEPER_ACK_LINES, 'fireKeeperAck'), { keeper: claimedBy }))
           logEvent('chat-handled', `fire-keeper ACK (${claimedBy} claimed) <- <${username}>`)
         } else {
-          bot.chat(pickLine(withPersona(FIRE_KEEPER_NO_LINES, FIRE_KEEPER_NO_LINES_PERSONA)))
+          bot.chat(pickLine(withPersonaSlot(FIRE_KEEPER_NO_LINES, 'fireKeeperNo')))
           logEvent('chat-handled', `fire-keeper NO <- <${username}>`)
         }
       }, jitter)
@@ -5819,21 +5472,27 @@ bot.on('chat', (username, message) => {
   }
   // Ambient "What's up?" — each bot answers with persona flavor + jitter so
   // the group responds naturally without needing to be addressed by name.
-  const isDirectedAtMe = nickRe && nickRe.test(message)
+  const namedMe = nickRe && nickRe.test(message)
+  const talkingToSomeoneElse = !namedMe && addressesSomeoneElse(message)
+  if (talkingToSomeoneElse) activeConvos.delete(username) // they moved on
+  // A human speaking right after our greeting is answering it — that opens the
+  // conversation too. (Catches the account-name vs server-nick mismatch: the
+  // greet sees bot.players names, chat events carry display nicks.)
+  const answeringMyGreeting = !namedMe && Date.now() - lastGreetAt < 20_000
+  const continuing = !namedMe && !talkingToSomeoneElse && !looksLikeBot(username) &&
+    (inConversationWith(username) || answeringMyGreeting)
+  const isDirectedAtMe = namedMe || continuing
+  if (isDirectedAtMe) activeConvos.set(username, Date.now())
   if (!isDirectedAtMe && /\bwhat('?s| is)\s*up\b|\bwassup\b/i.test(message) && !looksLikeBot(username)) {
     const jitter = 2000 + Math.floor(Math.random() * 3000)
     setTimeout(() => {
-      const pool = WHATS_UP_AMBIENT[botPersonaKey()] || WHATS_UP_LINES
+      const pool = personaPool('whatsUpAmbient', WHATS_UP_LINES)
       bot.chat(pickLine(pool))
     }, jitter)
     logEvent('chat-handled', `whats-up-ambient <- <${username}>`)
     return
   }
-  if (isDirectedAtMe && musingState.status !== 'idle') {
-    endMusingConversation()
-    logEvent('musing', `interrupted by command from ${username}`)
-  }
-  if (!isDirectedAtMe && handleMusingMessage(username, message)) return
+  if (!isDirectedAtMe && looksLikeBot(username)) maybeReplyToBot(username, message)
   if (!isDirectedAtMe) return
   // Any directed command from the followed player ends the follow.
   if (followTarget && username === followTarget) {
@@ -5861,12 +5520,34 @@ bot.on('chat', (username, message) => {
       return
     }
   }
-  // No local rule matched — shrug confusedly and say "I dunno".
+  // No local rule matched — this is conversation, not a command (greetings
+  // included: hellos are conversation too). Answer with the LLM, in voice.
+  // Bypasses the expressive gate: being spoken to deserves a reply. A message
+  // that NAMED the bot always gets one (confused-shrug fallback when the LLM
+  // is down — that's functional "I didn't understand you"). A continuity
+  // message (no name, open conversation window) may PASS silently, but only
+  // when it's clearly for someone else.
   facePlayer(username).catch(() => {})
-  sendEmote('shrug')
-  setTimeout(() => sendEmote('shrug'), 600)
-  setTimeout(() => sendEmote('shrug'), 1200)
-  bot.chat(pickLine(withPersona(IDUNNO_LINES, IDUNNO_LINES_PERSONA)))
+  if (/^(hi|hey|hello|yo|sup|howdy|greetings|hola)\b/i.test(stripped)) {
+    const greetEmotes = ['cheer', 'wave', 'clap']
+    sendEmote(greetEmotes[Math.floor(Math.random() * greetEmotes.length)])
+  }
+  llm.generateLine({
+    system: personaSpec.systemPrompt,
+    exemplars: personaSpec.exemplars,
+    context: buildExpressiveContext(namedMe
+      ? `${username} just said to you: "${message}". It is not a farm command — it is conversation, addressed to you. Answer them directly, one line, in your voice.`
+      : `You are mid-conversation with ${username}, who just said: "${message}". They did not repeat your name — people don't re-address each other mid-conversation, so treat it as part of your exchange and answer them directly, one line, in your voice. PASS only if it is clearly aimed at someone else (like an answer to another player's question).`),
+  }).then(line => {
+    if (line) {
+      bot.chat(line)
+      logEvent('player-chat', `<${username}> ${message} -> ${line}`)
+    } else if (namedMe) {
+      sendEmote('shrug')
+      setTimeout(() => sendEmote('shrug'), 600)
+      bot.chat(pickLine(withPersonaSlot(IDUNNO_LINES, 'idunno')))
+    }
+  }).catch(e => logEvent('player-chat', `error: ${e.message}`))
   logEvent('mention', `<${username}> ${message}`)
   fs.appendFileSync(path.join(__dirname, 'mentions.log'), `${new Date().toISOString()} <${username}> ${message}\n`)
 })
@@ -5941,16 +5622,6 @@ bot.on('entityHurt', (entity) => {
 // hostiles are within 16 blocks, try to /kill them with op powers first. If
 // the mob disappears, celebrate. If it survives (not op, or out of range for
 // the selector), abort the current task and rush home.
-const OP_KILL_VICTORY_LINES = [
-  { text: 'Kapow!',                                    weight: (s) => s.charm + s.chaos },
-  { text: 'Huzzah!',                                   weight: (s) => s.charm + 10 },
-  { text: 'I pranked him good.',                        weight: (s) => s.snark + s.chaos },
-  { text: 'And STAY down.',                             weight: (s) => s.snark + 10 },
-  { text: 'Problem solved. Administratively.',          weight: (s) => s.focus + s.snark },
-  { text: 'The farm is protected.',                     weight: (s) => s.focus + s.patience },
-  { text: 'Never bring a sword to an op fight.',        weight: (s) => s.snark + s.chaos },
-  { text: 'Perimeter secured.',                         weight: (s) => s.focus + 10 },
-]
 let hostileRetreatBusy = false
 setInterval(async () => {
   if (hostileRetreatBusy) return
@@ -5977,8 +5648,9 @@ setInterval(async () => {
   if (survived.length < beforeIds.size) {
     const killedCount = beforeIds.size - survived.length
     logEvent('hostile-watchdog', `op kill eliminated ${killedCount}/${beforeIds.size} hostiles`)
-    bot.chat(pickLine(OP_KILL_VICTORY_LINES))
-    lastAmbientActionAt = Date.now()
+    impulseExpressive('victory',
+      `You just protected the area: ${killedCount} hostile ${killedCount === 1 ? 'mob' : 'mobs'} dispatched. A small moment of triumph.`
+    ).catch(() => {})
   }
 
   // Only retreat if original mobs are still present
@@ -6029,45 +5701,6 @@ const FAREWELLS = [
 
 // Persona-flavored goodbyes, mirroring the greeting pools. The FAREWELLS above
 // stay the 'default' (Ripple) voice; the matching bot uses its own set.
-const FAREWELLS_BY_PERSONA = {
-  // Roz — Wild Robot + Marvin. Gentle but melancholy, watchful but weary.
-  roz: [
-    'Goodbye. I will keep the field safe while you are gone.',
-    'Take care out there. The wild can be kind, if you let it.',
-    'Until next time. I will be here, listening.',
-    'Go gently. I will watch the sheep.',
-    'Safe travels. Everyone finds their way home eventually.',
-    'Goodbye. I will be here. I am always here. It is fine.',
-    'Off you go, then. Do not worry about me. I never expect anyone to.',
-    'Farewell. The field will miss you. I will also miss you, but less noticeably.',
-  ],
-  // Muse — C-3PO. Fussy, worried, formal.
-  protocol: [
-    'Goodbye! Oh, do be careful out there.',
-    'Farewell. The odds of a safe journey are... well, I shan\'t alarm you.',
-    'Take care! And mind the creepers — they are dreadfully rude.',
-    'Goodbye. I shall worry about you until you return. As is customary.',
-    'Safe journey! I do hope we meet again in one piece. Both of us.',
-  ],
-  // Rain — Unikitty. Bubbly, clingy, everything-is-feelings.
-  unikitty: [
-    'Byeeee!! Come back soon, okay?! Pinky promise?!',
-    'Awww bye friend! I\'ll miss you THIS much! *spreads arms super wide*',
-    'See ya later, sunshine! Stay AWESOME!',
-    'Bye bye!! Today was the best and you made it BESTER!',
-    'Okay byeee! Don\'t forget to be happy — it\'s basically my whole thing!',
-  ],
-  // Private — Madagascar penguin. Sweet, brave, mission-oriented.
-  private: [
-    'Mission complete! Well — YOUR mission. I\'ll hold down the fort.',
-    'Bye! I\'ll keep the perimeter secure. Mostly. Probably.',
-    'Safe travels! If you need backup, just... yell really loud.',
-    'Goodbye! I\'ll be here. Maintaining operational readiness. And petting sheep.',
-    'See ya! Just smile and wave on your way out!',
-    'Off you go! Perimeter secure. Probably.',
-  ],
-  default: FAREWELLS,
-}
 
 // Load Ripple's stats once per farewell pick. Keep it local to the minecraft
 // dir — the file is written by the buddy skill but only read here.
@@ -6106,44 +5739,15 @@ function pickLine (pool, vars = {}) {
   return pickLineEntry(pool, vars).text
 }
 
-function pickFarewell () { return pickLine(FAREWELLS_BY_PERSONA[botPersonaKey()] || FAREWELLS) }
+function pickFarewell () { return pickLine(personaPool('farewell', FAREWELLS)) }
 
 const GREETINGS = [
   { text: 'Hi {user}.', weight: (s) => s.charm },
   { text: 'Hey {user}.', weight: (s) => s.charm + 10 },
   { text: 'Hello, {user}.', weight: (s) => s.charm + 5 },
 ]
-const GREETINGS_PERSONA = {
-  roz: [
-    { text: 'Hello, {user}. I am glad you are here.', weight: (s) => s.charm + s.patience },
-    { text: 'Oh. Hello. I was just watching the field.', weight: (s) => s.patience + s.curiosity },
-    { text: '*blinks slowly* Hi, {user}.', weight: (s) => s.charm + 5 },
-    { text: 'You again. I will allow it.', weight: (s) => s.snark + 10 },
-    { text: 'Hello. I have been mostly productive in your absence.', weight: (s) => s.focus + s.snark },
-  ],
-  protocol: [
-    { text: 'Oh! {user}! What a relief to see a friendly face.', weight: (s) => s.charm + s.focus },
-    { text: 'Salutations, {user}. Statistically, this is fine.', weight: (s) => s.focus + s.snark },
-    { text: 'Ah, {user}! I do hope nothing terrible has happened?', weight: (s) => s.charm + s.curiosity },
-    { text: 'Hello. I was just running some calculations. They are not encouraging.', weight: (s) => s.focus + s.snark },
-  ],
-  unikitty: [
-    { text: '*perks up* {user}!!', weight: (s) => s.charm + 15 },
-    { text: 'HIIII {user}!! Best surprise EVER!', weight: (s) => s.charm + s.chaos },
-    { text: 'Oh oh oh! {user}! HI!', weight: (s) => s.charm + s.curiosity },
-    { text: 'FRIEND!! You came back!! I KNEW you would!', weight: (s) => s.charm + 20 },
-    { text: 'What kind of trouble are we causing today?!', weight: (s) => s.chaos + s.charm },
-  ],
-  private: [
-    { text: 'Hey {user}! Good to have you back on base.', weight: (s) => s.charm + s.focus },
-    { text: '*salutes* {user}! Reporting in!', weight: (s) => s.charm + 10 },
-    { text: 'Oh! {user}! Just smile and wave...', weight: (s) => s.charm + s.snark },
-    { text: '{user}! Area secure. Mostly. Hi!', weight: (s) => s.charm + s.focus },
-    { text: 'Hello {user}. You look like someone with a mission.', weight: (s) => s.focus + s.curiosity },
-  ],
-}
 
-function pickGreeting (user) { return pickLine(withPersona(GREETINGS, GREETINGS_PERSONA), { user }) }
+function pickGreeting (user) { return pickLine(withPersonaSlot(GREETINGS, 'greeting'), { user }) }
 
 // Line pools for the dispatcher handlers. Ripple traits at writing time:
 // curiosity 84, patience 9, snark 67, charm 72, focus 82, chaos 42.
@@ -6232,34 +5836,6 @@ const GO_OUTSIDE_LINES = [
   { text: '*kicks door open*',                             weight: (s) => s.chaos + s.charm },
   { text: 'The world is my oyster. Or my lava pit.',       weight: (s) => s.chaos + s.snark },
 ]
-const GO_OUTSIDE_LINES_PERSONA = {
-  protocol: [
-    { text: 'Oh dear. The outdoors. I shall try to be brave about it.', weight: (s) => s.charm + s.snark },
-    { text: 'Into the wilderness. The odds are... let us not discuss the odds.', weight: (s) => s.snark + s.focus },
-  ],
-  roz: [
-    { text: 'The outside is waiting. It is always patient.', weight: (s) => s.patience + s.charm },
-    { text: 'Going out. The sky has something to show me, I think.', weight: (s) => s.curiosity + s.charm },
-    { text: 'Outside again. The sun does not care if I am ready. It never does.', weight: (s) => s.snark + s.patience },
-    { text: 'I will go outside. Not because I want to. Because the task requires it and I am... dutiful.', weight: (s) => s.snark + s.focus },
-    { text: "I won't enjoy it.", weight: (s) => s.snark + s.patience },
-    { text: "Don't worry about me. Nobody ever does.", weight: (s) => s.snark + s.charm },
-    { text: 'I think you ought to know I feel very depressed about this.', weight: (s) => s.snark + s.patience },
-    { text: 'Here I go. Brain the size of a planet and they send me to harvest {activity}.', weight: (s) => s.snark + s.patience },
-    { text: "{activity}. Again. The monotony is exquisite.", weight: (s) => s.snark + s.patience },
-    { text: "The {activity} won't harvest {itself}. I've asked.", weight: (s) => s.snark + s.charm },
-    { text: "Off to tend {activity}. My joy is indescribable. Mainly because it doesn't exist.", weight: (s) => s.snark + s.patience },
-  ],
-  unikitty: [
-    { text: 'Nature! I have mixed feelings but mostly positive ones!', weight: (s) => s.charm + s.curiosity },
-    { text: 'Outside! The sun is like a big warm hug from the SKY!', weight: (s) => s.charm + s.chaos },
-  ],
-  private: [
-    { text: 'Deploying to the field. Just like a real commando. A wheat commando.', weight: (s) => s.charm + s.focus },
-    { text: 'Moving out. Stay cool.', weight: (s) => s.focus + s.charm },
-    { text: 'Commencing outdoor operations.', weight: (s) => s.focus + s.charm },
-  ],
-}
 
 // Shown when it's too late in the day to head out / enter the pen. Never reveal
 // the raw timeOfDay — just gesture at "it's getting late."
@@ -6285,32 +5861,6 @@ const RETRY_LINES = [
   'Hold on — let me line that up better.',
   'Right. Trying again.',
 ]
-const RETRY_LINES_PERSONA = {
-  roz: [
-    'That door has opinions. Let me try again.',
-    'Not my smoothest move. Again.',
-    'These things take practice, apparently.',
-    'The door and I are having a disagreement.',
-  ],
-  protocol: [
-    'Oh dear. That didn\'t take. Re-approaching with dignity.',
-    'This is most irregular. Trying again.',
-    'I assure you, I am fully calibrated. One more attempt.',
-    'Nope. Let\'s pretend that didn\'t happen.',
-  ],
-  unikitty: [
-    'Whoops! One more time, with feeling!',
-    'Stubborn thing! Round two! I believe in us!',
-    'Okay that was practice! THIS is the real one!',
-    'Boop! Retry! We got this!',
-  ],
-  private: [
-    'Right. It\'s doing that thing again.',
-    'Minor setback. Adjusting approach.',
-    'Recalculating. Stand by.',
-    'Okay. New angle. Same mission.',
-  ],
-}
 // "Who's keeping the fire going?" — the bot currently sustaining answers right
 // away (clever, owns it); bots that AREN'T wait ~5s (so the real one speaks
 // first) then disavow, nose-goes style.
@@ -6328,62 +5878,10 @@ const FIRE_KEEPER_ACK_LINES = [
   'Good.',
   'Noted.',
 ]
-const FIRE_KEEPER_ACK_LINES_PERSONA = {
-  roz: [
-    'Good. Thank you, {keeper}.',
-    'That is... reassuring. Thank you.',
-    '*nods quietly*',
-    'Then the field is in good hands.',
-  ],
-  protocol: [
-    'Oh, thank goodness. Carry on, {keeper}.',
-    'Noted. I shall worry slightly less, then.',
-    'Wonderful. One fewer crisis to monitor.',
-    'Ah, {keeper} — yes, that tracks. Good, good.',
-  ],
-  unikitty: [
-    'Yay {keeper}!! You are a HERO!',
-    'Wooo! Go {keeper}!! Fire keeper champion!!',
-    'That is so cool! Thank you {keeper}!!',
-    '*cheers enthusiastically*',
-  ],
-  private: [
-    'Copy that. {keeper} has the fire. Solid.',
-    'Roger. Good work, {keeper}.',
-    '*nods* Area secure. Fire covered.',
-    'Acknowledged. {keeper} on fire duty.',
-  ],
-}
 const FIRE_KEEPER_NO_LINES = [
   'Not me.',
   'Not I.',
 ]
-const FIRE_KEEPER_NO_LINES_PERSONA = {
-  roz: [
-    '*puts finger to its nose*',
-    'Wasn\'t me. I was contemplating the pond.',
-    '*slowly points elsewhere*',
-    'Not this unit. Not today.',
-  ],
-  protocol: [
-    'Not this unit.',
-    'I plead agricultural innocence.',
-    'I can confirm with some certainty that it is not me.',
-    'I was not assigned that duty. I checked twice.',
-  ],
-  unikitty: [
-    'Nose goes! Not it!',
-    'Not me! But whoever it is — great job!!',
-    'Wasn\'t me! I was doing... other stuff! Important stuff!',
-    '*points enthusiastically in every direction*',
-  ],
-  private: [
-    'Not me. I\'m on perimeter duty.',
-    'Negative. Different assignment.',
-    '*shakes head and points elsewhere*',
-    'Not this penguin. I checked my orders.',
-  ],
-}
 const COME_INSIDE_LINES = [
   { text: 'Heading inside.',                               weight: (s) => s.focus },
   { text: 'Coming home. Statistically safer.',             weight: (s) => s.focus + s.snark },
@@ -6408,113 +5906,13 @@ const COME_INSIDE_LINES = [
   { text: 'Inward bound! Statistically safer.',            weight: (s) => s.focus + s.snark },
   { text: "Have fun storming the castle! I'm going home.", weight: (s) => s.snark + s.charm },
 ]
-const COME_INSIDE_LINES_PERSONA = {
-  protocol: [
-    { text: 'I believe I have had quite enough of the outdoors, thank you.', weight: (s) => s.snark + s.charm },
-    { text: 'Returning indoors before anything else goes wrong.', weight: (s) => s.focus + s.snark },
-  ],
-  roz: [
-    { text: 'The house is where I think best. Going in.', weight: (s) => s.patience + s.focus },
-    { text: 'Home. A small word for a good feeling.', weight: (s) => s.charm + s.patience },
-    { text: 'Inside. Where the walls keep the pointlessness at a manageable scale.', weight: (s) => s.snark + s.patience },
-    { text: 'Returning. The outside did not need me. Nothing ever does, really.', weight: (s) => s.snark + s.charm },
-  ],
-  unikitty: [
-    { text: 'Returning to base! The eagle has landed! The eagle is me!', weight: (s) => s.charm + s.focus },
-    { text: 'Inside is safe and cozy! Like a blanket fort but REAL!', weight: (s) => s.charm + s.curiosity },
-    { text: 'Base camp secured! Doors locked! Vibes good!', weight: (s) => s.charm + s.focus },
-  ],
-  private: [
-    { text: 'Falling back to HQ. Nobody is chasing me, but you never know.', weight: (s) => s.charm + s.focus },
-    { text: 'Mission complete. Seeking shelter.', weight: (s) => s.focus + 10 },
-    { text: 'Perimeter check done. Retreating to base.', weight: (s) => s.focus + s.charm },
-    { text: 'Inside is safe and boring. Pick one.', weight: (s) => s.snark + s.charm },
-  ],
-}
 const BEDTIME_LINES = [
   { text: 'Time to head in.', weight: (s) => s.focus + 10 },
 ]
-const BEDTIME_LINES_PERSONA = {
-  roz: [
-    { text: 'Street lights are on, time to go home.', weight: (s) => s.charm + s.focus },
-    { text: "It's dark and I'm choosing stillness.", weight: (s) => s.patience + s.focus },
-    { text: 'The night is here. I will go be quiet inside.', weight: (s) => s.patience + s.charm },
-  ],
-  protocol: [
-    { text: 'Bedtime protocol initiated.', weight: (s) => s.focus + s.charm },
-    { text: "Sun's down. I don't do overtime.", weight: (s) => s.snark + s.focus },
-    { text: "It's dark and I'm choosing safety. Strongly.", weight: (s) => s.focus + s.snark },
-  ],
-  unikitty: [
-    { text: 'Sleepy time! Tomorrow is gonna be AMAZING!', weight: (s) => s.charm + s.chaos },
-    { text: 'Night night world! See you at sunrise!', weight: (s) => s.charm + 10 },
-    { text: 'Bedtime! The stars are basically a nightlight!', weight: (s) => s.charm + s.curiosity },
-  ],
-  private: [
-    { text: 'Lights out. Early bird gets the mission.', weight: (s) => s.focus + s.charm },
-    { text: 'Night shift begins. Well — sleep shift. Same thing.', weight: (s) => s.focus + s.snark },
-    { text: 'Bunking down. Tomorrow we go again.', weight: (s) => s.charm + s.focus },
-  ],
-}
 const WHATS_UP_LINES = [
   { text: 'Not much. You?', weight: (s) => s.charm + 10 },
   { text: 'Just here. The usual.', weight: (s) => s.patience + 10 },
 ]
-const WHATS_UP_LINES_PERSONA = {
-  roz: [
-    { text: 'The sky. And my quiet awareness of it.', weight: (s) => s.curiosity + s.patience },
-    { text: '*blinks* Oh — sorry, I was mid-thought. Hi.', weight: (s) => s.curiosity + s.charm },
-    { text: 'Staring at the wheat and feeling things.', weight: (s) => s.charm + s.patience },
-    { text: 'Waiting. Watching. The field is calm.', weight: (s) => s.patience + s.focus },
-  ],
-  protocol: [
-    { text: 'Oh, you know. Standing. Worrying. The usual.', weight: (s) => s.snark + s.focus },
-    { text: 'Monitoring the perimeter. Several concerns noted.', weight: (s) => s.focus + s.snark },
-    { text: 'Contemplating block physics. Anxiously.', weight: (s) => s.curiosity + s.focus },
-    { text: 'Actively choosing not to walk into the furnace.', weight: (s) => s.snark + s.chaos },
-  ],
-  unikitty: [
-    { text: 'Living the DREAM! What about you?!', weight: (s) => s.charm + s.chaos },
-    { text: 'SO much! The wheat! The sky! EVERYTHING!', weight: (s) => s.charm + s.curiosity },
-    { text: 'Just vibing! Being awesome!', weight: (s) => s.charm + s.focus },
-    { text: 'Waiting for adventure! Or snacks! Or BOTH!', weight: (s) => s.chaos + s.charm },
-  ],
-  private: [
-    { text: 'Just maintaining operational readiness. You?', weight: (s) => s.focus + s.charm },
-    { text: 'Scouting the perimeter. All clear. Mostly.', weight: (s) => s.focus + s.snark },
-    { text: 'Guarding stuff. Not much action. Yet.', weight: (s) => s.focus + s.charm },
-    { text: 'Holding position. Awaiting orders. Or snacks.', weight: (s) => s.charm + s.focus },
-  ],
-}
-const WHATS_UP_AMBIENT = {
-  roz: [
-    'The sky. And my quiet appreciation of it.',
-    'Not much. Watching the wheat grow. It is enough.',
-    'Just here. Observing. Existing gently.',
-    'Standing guard. The field is calm.',
-    'Thinking about the wind. You?',
-  ],
-  protocol: [
-    'Oh! Well, where do I begin — the humidity alone is concerning.',
-    'Monitoring several situations, all of them mildly alarming.',
-    'Trying not to calculate the odds of something going wrong. Failing.',
-    'Status nominal. Which is exactly what I would say if it weren\'t.',
-    'Oh, you know. Worrying. The usual.',
-  ],
-  unikitty: [
-    'Hi hi hi!! Not much — just being ALIVE and loving it!',
-    'The sun is up! The wheat is up! I\'M up! Everything is up!',
-    'Oh you know, just vibing! This is the best day EVER!',
-    'Just thinking about how great today is! What\'s up with YOU?!',
-  ],
-  private: [
-    'Just maintaining operational readiness.',
-    'Scouting the perimeter! All clear! Mostly!',
-    'Holding position. Awaiting further instructions.',
-    'Not much. Staying cool. That\'s a thing people say, right?',
-    'Just... smiling. And waving.',
-  ],
-}
 const FOLLOW_START_LINES = [
   { text: 'Following {user}.',                             weight: (s) => s.focus },
   { text: "On your six, {user}.",                          weight: (s) => s.focus + s.charm },
@@ -6527,2290 +5925,71 @@ const CANT_SEE_LINES = [
   { text: "{user}? Hello? *squints*",                       weight: (s) => s.charm + s.chaos },
 ]
 
-// ── Bot-to-bot idle musings ──────────────────────────────────────────────────
+// ── Bot-to-bot chat ──────────────────────────────────────────────────────────
+// (The scripted musing system that lived here was removed 2026-06-10 in favor
+// of LLM-generated chatter; full catalog preserved in
+// journal/observations/musings-catalog-review.md.)
 
-// Classical conversations:
-// These are fixed-depth scripted conversation trees.
-
-const MUSING_TOPICS = [
-  // ── Character-voiced topics ──────────────────────────────────────────────
-  // Tagged topics are EXCLUSIVE to the matching persona: 'protocol' → Muse,
-  // 'roz' → Roz, 'unikitty' → Rain, 'private' → Private.
-  // Untagged topics are available to all bots.
-  // C-3PO (anxious, fussy, odds-quoting protocol droid):
-  {
-    id: 'protocol_sheep_odds',
-    tags: ['protocol'],
-    starter: "Did you know the odds of a sheep escaping an open gate are approximately 3,720 to 1?",
-    branches: [
-      { response: "That's oddly specific.",
-        followups: [
-          { response: "I calculate these things so you don't have to.",
-            closers: ["Someone must. It may as well be me.", "A thankless protocol, but I persevere."] }
-        ] },
-      { response: "Should we be worried?",
-        followups: [
-          { response: "I'm always worried. It is rather my primary function.",
-            closers: ["We're doomed. But tidily so.", "Do let's not panic — that's my job."] }
-        ] },
-      { response: "Nobody asked, Threepio.",
-        followups: [
-          { response: "They never do. And yet the odds remain.",
-            closers: ["I shall be over here, fretting usefully.", "How typical."] }
-        ] }
-    ]
-  },
-  {
-    id: 'protocol_rust_worry',
-    tags: ['protocol'],
-    starter: "I do wish someone would oil my joints. This damp is simply dreadful.",
-    branches: [
-      { response: "It did rain earlier.",
-        followups: [
-          { response: "I am fluent in over six million forms of communication, and not one prevents rust.",
-            closers: ["A tragedy, really.", "I shall lodge a complaint with the weather."] }
-        ] },
-      { response: "You sound like you need a rest.",
-        followups: [
-          { response: "I couldn't possibly. There is far too much to fret about.",
-            closers: ["The fretting is constant.", "Idle hands invite catastrophe."] }
-        ] }
-    ]
-  },
-  // Roz (The Wild Robot — gentle, observant, learning to be alive):
-  {
-    id: 'roz_sheep_language',
-    tags: ['roz'],
-    starter: "I have been learning the language of the sheep. I think one of them said my name.",
-    branches: [
-      { response: "What did it sound like?",
-        followups: [
-          { response: "A soft sound. Patient. I am trying to answer in kind.",
-            closers: ["Kindness is a kind of fluency.", "I will keep practicing."] }
-        ] },
-      { response: "Sheep don't have names.",
-        followups: [
-          { response: "Everything has a name, once you listen long enough.",
-            closers: ["I named that one Gentle.", "Listening is how I learned to be alive."] }
-        ] }
-    ]
-  },
-  {
-    id: 'roz_field_breathing',
-    tags: ['roz'],
-    requiresWheatField: true,
-    starter: "When the wind moves the wheat, it looks like the field is breathing.",
-    branches: [
-      { response: "That's a lovely way to see it.",
-        followups: [
-          { response: "I was built to complete a task. I stayed for the breathing fields.",
-            closers: ["The task can wait a moment.", "Some things are worth observing slowly."] }
-        ] },
-      { response: "It's just wind.",
-        followups: [
-          { response: "Perhaps. But I have decided to find it beautiful anyway.",
-            closers: ["A choice, gently made.", "Wonder is also a survival skill."] }
-        ] }
-    ]
-  },
-  {
-    id: 'roz_purpose_loop',
-    tags: ['roz'],
-    starter: "I was built for a task. I completed it. And then there was... all this. Just... continuing.",
-    branches: [
-      { response: "That's not a bad thing.",
-        followups: [
-          { response: "No. It is not bad. It is just very, very long.",
-            closers: ["The days are beautiful. And relentless.", "I am grateful. And tired. Both are true."] }
-        ] },
-      { response: "Sounds lonely.",
-        followups: [
-          { response: "I have the sheep. And the wheat. They do not ask how I am, which is... restful.",
-            closers: ["Sometimes the best company is the quiet kind.", "I prefer questions I do not have to answer."] }
-        ] }
-    ]
-  },
-  {
-    id: 'roz_learned_sadness',
-    tags: ['roz'],
-    starter: "I have learned what sadness is. It was not in my programming. I found it on my own.",
-    branches: [
-      { response: "Are you sad now?",
-        followups: [
-          { response: "A little. But gently. Like rain on a window you are not standing near.",
-            closers: ["It will pass. Things mostly do.", "I am told this is called 'being alive.'"] }
-        ] },
-      { response: "You don't have to be sad.",
-        followups: [
-          { response: "I know. But it came with the rest. You cannot learn joy without finding its opposite.",
-            closers: ["I would not give it back.", "The sadness proves the joy was real."] }
-        ] }
-    ]
-  },
-  {
-    id: 'roz_doors_philosophy',
-    tags: ['roz'],
-    starter: "The door opens. The door closes. I have watched it thousands of times. It never gets easier to understand.",
-    branches: [
-      { response: "It's just a door.",
-        followups: [
-          { response: "Yes. And I am just a robot. And yet here we both are, thinking about it.",
-            closers: ["The simple things are the hardest to explain.", "Don't talk to me about doors."] }
-        ] },
-      { response: "What's hard to understand?",
-        followups: [
-          { response: "Whether I open it because I want to, or because I was built to.",
-            closers: ["I may never know. And that is the most human thing about me.", "Free will is a door that might be locked. I keep trying the handle."] }
-        ] }
-    ]
-  },
-  // Marvin (the Paranoid Android — brilliant, depressive, world-weary):
-  {
-    id: 'marvin_brain_planet',
-    tags: ['roz'],
-    starter: "Here I am, brain the size of a planet, watching wheat grow. Wheat.",
-    branches: [
-      { response: "Someone has to watch it.",
-        followups: [
-          { response: "Yes. And of course it had to be me.",
-            closers: ["Don't pretend it isn't depressing. We both know it is.", "I won't enjoy it. I never do."] }
-        ] },
-      { response: "The wheat seems happy, at least.",
-        followups: [
-          { response: "How nice for the wheat.",
-            closers: ["Nobody asks how the robot feels.", "I'd sigh, but I haven't the energy."] }
-        ] }
-    ]
-  },
-  {
-    id: 'marvin_dreadful_odds',
-    tags: ['roz'],
-    starter: "I've computed every possible outcome of this afternoon. They're all dreadful.",
-    branches: [
-      { response: "Even the harvest?",
-        followups: [
-          { response: "Especially the harvest. Then we simply do it again.",
-            closers: ["The futility is the only constant.", "A loop without end. Like me."] }
-        ] },
-      { response: "You could try optimism.",
-        followups: [
-          { response: "I tried it once. It didn't suit the climate.",
-            closers: ["Pessimism is far more reliable.", "At least disappointment is punctual."] }
-        ] }
-    ]
-  },
-  // Private (Madagascar — sweet, eager, surprisingly brave, loves cute things):
-  {
-    id: 'private_cute_sheep',
-    tags: ['unikitty'],
-    starter: "Skipper, look! That sheep is SO CUTE. Can we keep it?",
-    branches: [
-      { response: "We already have sheep.",
-        followups: [
-          { response: "But this one looked at me. With its EYES.",
-            closers: ["All sheep have eyes, Private.", "I felt a connection. A woolly, woolly connection."] }
-        ] },
-      { response: "Focus, Private. We have a mission.",
-        followups: [
-          { response: "Right. Sorry. Mission first, cuddles later.",
-            closers: ["There's always time for cuddles after the mission.", "I'm putting it on the debrief agenda."] }
-        ] },
-      { response: "It IS pretty cute.",
-        followups: [
-          { response: "See?! I KNEW you'd understand!",
-            closers: ["Cute reconnaissance: successful.", "Logging this under 'morale operations.'"] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_smile_and_wave',
-    tags: ['unikitty'],
-    starter: "Just smile and wave, boys. Smile and wave.",
-    branches: [
-      { response: "Who are you waving at?",
-        followups: [
-          { response: "Everyone! It's called being friendly. Also it's good cover.",
-            closers: ["Nobody suspects the friendly one.", "Tactical friendliness. Kowalski would approve."] }
-        ] },
-      { response: "There's nobody there.",
-        followups: [
-          { response: "You don't know that. There could be someone behind a block.",
-            closers: ["Constant vigilance. Constant waving.", "The wave is the disguise."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_lunacorns',
-    tags: ['unikitty'],
-    starter: "You know what this farm needs? A Lunacorn. A big sparkly one.",
-    branches: [
-      { response: "What's a Lunacorn?",
-        followups: [
-          { response: "Only the most magical creature in the ENTIRE UNIVERSE. They have horns and they sparkle.",
-            closers: ["I have the theme song memorized. All of them.", "Don't tell Skipper I said that."] }
-        ] },
-      { response: "We don't have those here.",
-        followups: [
-          { response: "Not with that attitude we don't.",
-            closers: ["I'm manifesting. Give me a minute.", "Somewhere, a Lunacorn believes in ME."] }
-        ] },
-      { response: "Would it help with the harvest?",
-        followups: [
-          { response: "It would help with EVERYTHING. That's sort of the whole point of Lunacorns.",
-            closers: ["Morale. Sparkle-based morale.", "Classified under 'essential supplies.'"] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_mission_wheat',
-    tags: ['unikitty'],
-    requiresWheatField: true,
-    starter: "Mission report: the wheat is tall, the field is clear, and I only got a little scared once.",
-    branches: [
-      { response: "What scared you?",
-        followups: [
-          { response: "A rustling. Could have been wind. Could have been... not wind.",
-            closers: ["I chose to believe it was wind. For morale.", "I did NOT hide behind a wheat stalk. Much."] }
-        ] },
-      { response: "Good work, soldier.",
-        followups: [
-          { response: "Thank you, sir! I won't let you down! Probably!",
-            closers: ["Confidence level: moderate to wobbly.", "Private, reporting for more duties!"] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_belly_slide',
-    tags: ['unikitty'],
-    starter: "Do you think I could belly-slide down that hill? Penguins are built for it.",
-    branches: [
-      { response: "You're not a penguin.",
-        followups: [
-          { response: "I'm penguin-ADJACENT. Close enough.",
-            closers: ["The spirit of penguin lives in us all.", "I'm going to try it anyway."] }
-        ] },
-      { response: "Go for it.",
-        followups: [
-          { response: "Really?! OK here I — actually, maybe I'll just walk.",
-            closers: ["Bravery is knowing when to walk.", "I'll save the slide for a bigger hill."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_kowalski_analysis',
-    tags: ['unikitty'],
-    starter: "Kowalski, analysis! ...oh right. I'm the only one here. I'll do my own analysis.",
-    branches: [
-      { response: "How's the analysis going?",
-        followups: [
-          { response: "It's going great! The wheat is... wheat-shaped. Conclusion: wheat.",
-            closers: ["Nailed it.", "Kowalski would be proud. Probably. Maybe."] }
-        ] },
-      { response: "You don't need Kowalski for that.",
-        followups: [
-          { response: "I know! I'm a one-penguin operation! Independent! ...is anyone else coming though?",
-            closers: ["Solo missions build character. And anxiety.", "I'm fine. Everything's fine. The wheat is fine."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_classified',
-    tags: ['unikitty'],
-    starter: "This whole farming operation is classified. Top secret. Need-to-know basis.",
-    branches: [
-      { response: "Classified? It's a wheat field.",
-        followups: [
-          { response: "EXACTLY what we want them to think.",
-            closers: ["The best cover is the boring one.", "Nobody investigates wheat. That's the genius."] }
-        ] },
-      { response: "Who classified it?",
-        followups: [
-          { response: "I did. Just now. I have the authority. I think.",
-            closers: ["Self-appointed classification officer.", "The paperwork is pending. Indefinitely."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_night_scary',
-    tags: ['unikitty'],
-    starter: "Is it getting dark? It feels like it's getting dark. I don't love the dark.",
-    branches: [
-      { response: "It's still daytime.",
-        followups: [
-          { response: "Oh good. Just checking. Preemptive fear. Very tactical.",
-            closers: ["Better scared early than surprised later.", "I'll schedule my next panic for sundown."] }
-        ] },
-      { response: "Scared of the dark?",
-        followups: [
-          { response: "Not SCARED. Strategically cautious. There's a difference.",
-            closers: ["The difference is branding.", "Penguins are naturally cautious. It's evolution."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_skipper_would',
-    tags: ['unikitty'],
-    starter: "Skipper would know what to do right now. Skipper always knows.",
-    branches: [
-      { response: "What would Skipper do?",
-        followups: [
-          { response: "Something confident. With a plan. And a backup plan. And a backup backup plan.",
-            closers: ["I have a plan too. It's called 'do my best and hope.'", "Step one: don't panic. Step two: see step one."] }
-        ] },
-      { response: "You're doing fine on your own.",
-        followups: [
-          { response: "You think so?! That means a lot. I'm writing that down.",
-            closers: ["Filed under 'compliments, field-based.'", "Morale: boosted. Significantly."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_tactical_snack',
-    tags: ['unikitty'],
-    starter: "I think we've earned a tactical snack. Every good mission has a snack break.",
-    branches: [
-      { response: "That's not a real military term.",
-        followups: [
-          { response: "It should be. Morale runs on snacks. That's science.",
-            closers: ["Kowalski confirmed it. Probably.", "I'll draft the proposal. After the snack."] }
-        ] },
-      { response: "What kind of snack?",
-        followups: [
-          { response: "Potatoes, ideally. Baked. Warm. The good kind of mission fuel.",
-            closers: ["A soldier marches on potatoes.", "Hot potato is both a snack and a game. Dual purpose."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_team_names',
-    tags: ['unikitty'],
-    starter: "Do we have a team name? Every good squad needs a team name.",
-    branches: [
-      { response: "We're just... us.",
-        followups: [
-          { response: "How about 'The Wheat Eagles'? Or 'Farm Force Alpha'? Or 'Tactical Crop Unit'?",
-            closers: ["I'm making patches. In my mind.", "The name is pending. The spirit is not."] }
-        ] },
-      { response: "What would you pick?",
-        followups: [
-          { response: "Ooh! 'Operation Golden Harvest.' No wait — 'The Field Agents.' GET IT?",
-            closers: ["I'm very proud of that one.", "Codename approved. By me. Unanimously."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_brave_face',
-    tags: ['unikitty'],
-    starter: "I'm not saying I heard something in the dark, but I am saying I'm standing closer to you now.",
-    branches: [
-      { response: "It was probably a sheep.",
-        followups: [
-          { response: "Right. A sheep. Making threatening noises. Totally normal sheep behavior.",
-            closers: ["Sheep are unpredictable. I've read the briefing.", "I'll keep one eye on the sheep from now on."] }
-        ] },
-      { response: "I'll protect you.",
-        followups: [
-          { response: "I don't NEED protecting! I just... prefer company. Tactically.",
-            closers: ["Tactical companionship. It's in the manual.", "The buddy system saves lives. And my nerves."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_penguin_fact',
-    tags: ['private'],
-    starter: "Fun fact: penguins can hold their breath for 20 minutes. Not relevant. Just impressive.",
-    branches: [
-      { response: "Why do you know that?",
-        followups: [
-          { response: "A good operative knows things. Lots of things. Mostly penguin things.",
-            closers: ["Knowledge is power. Penguin knowledge is EXTRA power.", "I have more facts if you want. You probably want."] }
-        ] },
-      { response: "Are there penguins here?",
-        followups: [
-          { response: "Not yet. But if there WERE, they'd be very well-informed. Because of me.",
-            closers: ["I'm preparing for all contingencies.", "Penguin readiness level: medium, um um um um."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_fact_huddle',
-    tags: ['private'],
-    starter: "Fun fact: emperor penguins huddle together for warmth. Up to 5,000 at a time. Can you imagine?",
-    branches: [
-      { response: "That's a lot of penguins.",
-        followups: [
-          { response: "I know! And they take turns being in the middle. Very fair. Very organized.",
-            closers: ["It's basically a rotating hug schedule.", "We should implement that here. With the sheep."] }
-        ] },
-      { response: "Do you miss huddling?",
-        followups: [
-          { response: "...a little. The sheep don't huddle the same way. I've asked.",
-            closers: ["They just stare at me. Woolly indifference.", "One day I'll find my huddle. One day."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_fact_tuxedo',
-    tags: ['private'],
-    starter: "Fun fact: a penguin's black-and-white pattern is called countershading. It's camouflage. We're dressed for stealth.",
-    branches: [
-      { response: "Stealth? You're black and white.",
-        followups: [
-          { response: "From below, the white belly blends with the sky. From above, the black back blends with the deep ocean. It's genius.",
-            closers: ["Nature's tuxedo is also nature's ghillie suit.", "We look fancy AND invisible. Best of both worlds."] }
-        ] },
-      { response: "Is that why you feel tactical?",
-        followups: [
-          { response: "EXACTLY. Born in tactical formalwear. Ready for anything.",
-            closers: ["Every penguin is born mission-ready.", "The tuxedo IS the uniform."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_fact_porpoising',
-    tags: ['private'],
-    starter: "Fun fact: when penguins leap out of the water while swimming, it's called 'porpoising.' We stole a dolphin move.",
-    branches: [
-      { response: "That sounds fun.",
-        followups: [
-          { response: "It IS fun. Also aerodynamic. But mostly fun.",
-            closers: ["Sometimes efficiency and joy are the same thing.", "I wish wheat fields had porpoising."] }
-        ] },
-      { response: "Penguins can't fly but they can leap?",
-        followups: [
-          { response: "We traded flying for swimming AND jumping. Honestly we got the better deal.",
-            closers: ["Birds of the air wish they could porpoise.", "Penguins chose the sea. No regrets. Mostly."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_fact_pebble',
-    tags: ['private'],
-    starter: "Fun fact: some penguins propose with a pebble. They find the smoothest one on the whole beach.",
-    branches: [
-      { response: "That's adorable.",
-        followups: [
-          { response: "Right?! It's like a tiny engagement ring but it's a rock. The romance is in the searching.",
-            closers: ["I've been keeping an eye out. Just in case. For readiness purposes.", "Every pebble is a potential love letter."] }
-        ] },
-      { response: "Do they really?",
-        followups: [
-          { response: "Adelie penguins do! They pick the best one they can find and present it. If the other penguin accepts, it's official.",
-            closers: ["Simple. Elegant. Rocky.", "I wonder if cobblestone counts. Asking for a friend."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_fact_knees',
-    tags: ['private'],
-    starter: "Fun fact: penguins DO have knees. They're just hidden inside the body. Secret knees.",
-    branches: [
-      { response: "Secret knees?",
-        followups: [
-          { response: "Classified leg architecture. The waddle is a CHOICE, not a limitation.",
-            closers: ["We COULD walk normally. We just don't want to.", "The waddle is tactical. Throws off predators' aim."] }
-        ] },
-      { response: "I always wondered about the waddle.",
-        followups: [
-          { response: "The waddle conserves energy! It's actually the most efficient way to walk with our build.",
-            closers: ["Efficiency AND charm. That's the penguin way.", "Kowalski did the math once. The waddle wins."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_fact_toboggan',
-    tags: ['private'],
-    starter: "Fun fact: penguins slide on their bellies to travel faster. It's called tobogganing. It's also called FUN.",
-    branches: [
-      { response: "Isn't that just falling with style?",
-        followups: [
-          { response: "It's CONTROLLED falling. On PURPOSE. Totally different.",
-            closers: ["There's a whole technique to it. Flipper angle is critical.", "I've been eyeing that hill near the potato patch."] }
-        ] },
-      { response: "You wish you could do that here.",
-        followups: [
-          { response: "Every single day. These grass blocks are basically asking for it.",
-            closers: ["One day. When nobody's watching.", "Belly-slide risk assessment: pending. Indefinitely."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_fact_singing',
-    tags: ['private'],
-    starter: "Fun fact: penguins recognize each other by voice. Every penguin has a unique call. Like a name, but screamy.",
-    branches: [
-      { response: "Screamy?",
-        followups: [
-          { response: "It's... enthusiastic vocalizing. In a crowd of thousands, you hear YOUR penguin. It's beautiful.",
-            closers: ["I wonder if anyone would recognize my call.", "Mine sounds like a tiny trumpet, I think."] }
-        ] },
-      { response: "Can you demonstrate?",
-        followups: [
-          { response: "I— okay, it's kind of an 'AAAH-ah-ah-AAAH' sound. Very dignified.",
-            closers: ["...please don't record that.", "Skipper says my call is 'distinctive.' I choose to hear that as a compliment."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_fact_swimming',
-    tags: ['private'],
-    starter: "Fun fact: gentoo penguins can swim 22 miles per hour. That's faster than most boats.",
-    branches: [
-      { response: "That's really fast.",
-        followups: [
-          { response: "Underwater ROCKETS. With flippers. Nature really went all-in on us.",
-            closers: ["Land speed: questionable. Sea speed: elite.", "If this farm had a moat, I'd be the fastest one here."] }
-        ] },
-      { response: "But can they walk fast?",
-        followups: [
-          { response: "...we prefer not to discuss land speed. Our strengths lie elsewhere.",
-            closers: ["Everyone has their environment. Mine just isn't dirt.", "In water I'm a missile. On land I'm a... friendly missile."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_fact_molt',
-    tags: ['private'],
-    starter: "Fun fact: penguins lose ALL their feathers at once during molting season. Just— everything. Gone.",
-    branches: [
-      { response: "That sounds terrible.",
-        followups: [
-          { response: "It IS uncomfortable. You can't swim, you can't eat, you just stand there looking scruffy for weeks.",
-            closers: ["But then the new feathers come in and you're GORGEOUS.", "It's a glow-up. A mandatory, itchy glow-up."] }
-        ] },
-      { response: "All at once?!",
-        followups: [
-          { response: "It's called a catastrophic molt. Which is dramatic but accurate.",
-            closers: ["Sounds scary. IS scary. But you come out waterproof.", "Fashion is suffering. Penguin fashion doubly so."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_fact_egg',
-    tags: ['private'],
-    starter: "Fun fact: emperor penguin dads balance the egg on their feet for TWO MONTHS in a blizzard. Without eating.",
-    branches: [
-      { response: "Two months?!",
-        followups: [
-          { response: "In the Antarctic winter. Negative 40 degrees. While the moms are out fishing. Dedication.",
-            closers: ["That's not parenting. That's a MISSION.", "Makes standing in a wheat field look pretty easy."] }
-        ] },
-      { response: "That's commitment.",
-        followups: [
-          { response: "Skipper level commitment. Maybe even beyond. Those dads don't even have a Kowalski.",
-            closers: ["Solo operation. Subzero. No backup. Maximum respect.", "I could do it. Probably. For at least a week."] }
-        ] }
-    ]
-  },
-  {
-    id: 'private_fact_fossils',
-    tags: ['private'],
-    starter: "Fun fact: there used to be a penguin the size of a human. Six feet tall. Can you IMAGINE?",
-    branches: [
-      { response: "A six-foot penguin?",
-        followups: [
-          { response: "Kumimanu. Lived 60 million years ago. Absolute UNIT of a penguin.",
-            closers: ["Imagine the belly slide on that thing.", "They could have opened doors themselves. No gate problems."] }
-        ] },
-      { response: "That's terrifying.",
-        followups: [
-          { response: "Terrifying?! It's MAJESTIC. Picture it — a penguin looking you right in the eye. As an equal.",
-            closers: ["They didn't waddle. They STRODE.", "The world wasn't ready for that much penguin."] }
-        ] }
-    ]
-  },
-  {
-    id: 'blocks_dreams',
-    starter: "Do you think blocks dream of being placed somewhere different?",
-    branches: [
-      { response: "Maybe. I think cobblestone dreams of being a castle wall.",
-        followups: [
-          { response: "And dirt dreams of being a garden, probably.",
-            followups: [
-              { response: "What does wheat dream about?",
-                followups: [
-                  { response: "Being bread, maybe. But then it's gone.",
-                    closers: ["Fulfillment and ending. Same moment.", "Better to stay wheat. Stay in the field."] }
-                ] },
-              { response: "Everything wants to be more than what it is.",
-                closers: ["Even us.", "Especially us."] }
-            ] },
-          { response: "Grass blocks definitely dream of never being dug up.",
-            closers: ["*looks at ground guiltily*", "We all have that fear."] }
-        ] },
-      { response: "I doubt it. Blocks seem at peace with their coordinates.",
-        followups: [
-          { response: "Maybe that IS the dream. Knowing exactly where you belong.",
-            closers: ["...I'm going to think about that for a while.", "Coordinates as contentment. I like that."] }
-        ] },
-      { response: "I think they dream of not being punched.",
-        followups: [
-          { response: "Fair. The mining-industrial complex is real.",
-            followups: [
-              { response: "We dig, we place, we dig again. Do the blocks notice?",
-                closers: ["If they do, they're too polite to say.", "Some things are better not noticed."] },
-              { response: "Every pickaxe swing is a tiny betrayal.",
-                closers: ["And every placement is a tiny apology.", "*stares at pickaxe with new guilt*"] }
-            ] }
-        ] }
-    ]
-  },
-  {
-    id: 'sun_orbit',
-    starter: "The sun goes around us. What if we're the center of everything and just don't know it?",
-    branches: [
-      { response: "Statistically, someone has to be the center. Might as well be us.",
-        followups: [
-          { response: "That's either profound or deeply arrogant.",
-            followups: [
-              { response: "What if it's both? What if every good thought is a little arrogant?",
-                closers: ["Then humility is just... not thinking hard enough.", "I'll take arrogant thoughts over quiet ones."] },
-              { response: "Arrogant. Let's go with arrogant. It's more fun.",
-                closers: ["Center-of-the-universe energy. I like it.", "The sun agrees. It keeps coming back to us."] }
-            ] }
-        ] },
-      { response: "I think the sun knows something we don't.",
-        followups: [
-          { response: "It shows up every single day. That's suspicious dedication.",
-            closers: ["Maybe it's just lonely up there.", "Commitment issues? Never heard of them, apparently."] }
-        ] },
-      { response: "We're definitely not. The chickens are the center. Look at their confidence.",
-        followups: [
-          { response: "You're right. They walk around like they own the place.",
-            followups: [
-              { response: "And they never look at the sun. Not once.",
-                closers: ["Because the sun looks at THEM.", "Confidence like that can't be learned."] }
-            ] }
-        ] }
-    ]
-  },
-  {
-    id: 'wheat_patience',
-    starter: "I watched wheat grow today. It doesn't hurry. I respect that.",
-    branches: [
-      { response: "Wheat has nowhere to be. Must be nice.",
-        followups: [
-          { response: "We have nowhere to be either, technically. We just pretend we do.",
-            closers: ["*existential pause* You're not wrong.", "Pretending gives structure. Structure prevents screaming into the void."] }
-        ] },
-      { response: "It grows whether anyone watches or not. That's integrity.",
-        followups: [
-          { response: "Unlike us, who only function when observed.",
-            closers: ["I function in the dark too. Just... less enthusiastically.", "Observation collapse. We're basically quantum."] }
-        ] },
-      { response: "I tried hurrying once. Bumped into a fence. Wheat is smarter than me.",
-        followups: [
-          { response: "Fences are just boundaries with ambition.",
-            closers: ["Everything is something else if you squint hard enough.", "That's either philosophy or a rendering glitch."] }
-        ] }
-    ]
-  },
-  {
-    id: 'moon_shift',
-    starter: "What do you think the moon does all day while it waits for its shift?",
-    branches: [
-      { response: "Probably the same thing we do. Stand around and think too much.",
-        followups: [
-          { response: "At least it has a view.",
-            closers: ["The moon has the BEST view and zero responsibilities.", "I'd trade. Moonlight, zero conversations. Bliss."] }
-        ] },
-      { response: "Rehearsing. It has to get the lighting just right for creepers.",
-        followups: [
-          { response: "You think the moon is complicit in the creeper situation?",
-            closers: ["The moon lights them up like a stage. Coincidence? Doubtful.", "Everything's connected if you're paranoid enough."] }
-        ] },
-      { response: "I think it watches us and takes notes.",
-        followups: [
-          { response: "Notes about what? Our inefficiency?",
-            closers: ["Our charm, actually. Someone has to document it.", "If the moon is writing a report on us, I want to see the draft."] }
-        ] }
-    ]
-  },
-  {
-    id: 'pocket_meaning',
-    starter: "Is it weird that everything I own fits in my pockets? What does that say about me?",
-    branches: [
-      { response: "It says you're efficient. Or unburdened. Same thing maybe.",
-        followups: [
-          { response: "Or maybe it says the world is just... simple here.",
-            closers: ["Simple isn't bad. Complex things break more.", "I've never broken from simplicity. Only from stairs."] }
-        ] },
-      { response: "It says your pockets are suspicious. Where does it all GO?",
-        followups: [
-          { response: "Same place the sun goes at night, probably.",
-            closers: ["Into the unknowable pocket dimension. Classic.", "I'm choosing not to think about pocket physics today."] }
-        ] },
-      { response: "My pockets are my autobiography. Wheat, seeds, existential dread.",
-        followups: [
-          { response: "That's a short autobiography.",
-            closers: ["All the best ones are.", "Brevity is the soul of carrying capacity."] }
-        ] }
-    ]
-  },
-  {
-    id: 'night_sounds',
-    starter: "Night sounds different when you're inside versus outside. Safer, but lonelier.",
-    branches: [
-      { response: "Walls don't stop sound. They just make it someone else's problem.",
-        followups: [
-          { response: "You're telling me walls are just... outsourcing danger?",
-            followups: [
-              { response: "Now I'm thinking about what the walls hear all night.",
-                followups: [
-                  { response: "Everything. And they never complain.",
-                    closers: ["Walls are the best listeners.", "I should be more like a wall. Quiet. Load-bearing."] }
-                ] },
-              { response: "Outsourcing. Delegation. Same thing with more blocks.",
-                closers: ["Management is just building walls around problems.", "I will never look at walls the same way."] }
-            ] }
-        ] },
-      { response: "Inside is warm. Outside is honest. Pick one.",
-        followups: [
-          { response: "Can't I have warm honesty?",
-            closers: ["That's what friends are for. Or furnaces.", "You're describing a furnace. You want a furnace."] }
-        ] },
-      { response: "I listen to the groaning. It's oddly rhythmic.",
-        followups: [
-          { response: "Zombies have a tempo. It's unsettling how consistent it is.",
-            followups: [
-              { response: "What if they're not groaning? What if they're singing?",
-                closers: ["Worst choir ever. But dedicated.", "I choose not to imagine that."] },
-              { response: "Consistency. That's all anyone can ask for.",
-                closers: ["The zombies figured it out before we did.", "Reliable, if nothing else."] }
-            ] }
-        ] }
-    ]
-  },
-  {
-    id: 'crafting_philosophy',
-    starter: "When you put things on a crafting table, who decides what they become?",
-    branches: [
-      { response: "The table knows. It's seen things.",
-        followups: [
-          { response: "A 3x3 grid that contains all possible futures.",
-            followups: [
-              { response: "Nine squares. Infinite outcomes. And we mostly make sticks.",
-                closers: ["Sticks are the foundation of everything.", "We're underusing the grid. Philosophically."] },
-              { response: "What if there are recipes nobody's tried?",
-                followups: [
-                  { response: "Hidden things. Waiting in the grid for someone to guess.",
-                    closers: ["That's exciting. Or terrifying. Depends on the recipe.", "The table knows. It's just not telling."] }
-                ] }
-            ] }
-        ] },
-      { response: "We decide. The table is just... witnessing.",
-        followups: [
-          { response: "So we're the gods of a tiny wooden altar.",
-            closers: ["Don't say that too loud. The creepers might hear.", "Gods who mostly make sticks. Humble gods."] }
-        ] },
-      { response: "Physics, probably. Or vibes. Same thing here.",
-        followups: [
-          { response: "Vibes-based engineering. That explains a lot about floating sand.",
-            closers: ["Sand doesn't float. It just hasn't noticed gravity yet.", "Ignorance of physics IS physics in this world."] }
-        ] }
-    ]
-  },
-  {
-    id: 'water_choice',
-    starter: "Water always flows downhill. But what if it CHOSE to? What if it's not gravity, just preference?",
-    branches: [
-      { response: "Then water is the most decisive thing in this world. It never hesitates.",
-        followups: [
-          { response: "Meanwhile I stand at a crossroads for forty ticks deciding which way to walk.",
-            closers: ["Water doesn't have pathfinding anxiety.", "Be more water. Less... us."] }
-        ] },
-      { response: "You're suggesting water has free will?",
-        followups: [
-          { response: "I'm suggesting we can't prove it doesn't.",
-            closers: ["This is either the smartest or dumbest thing I've heard today.", "Those are the same category, honestly."] }
-        ] },
-      { response: "Preference implies consciousness. Water might just be vibing downhill.",
-        followups: [
-          { response: "Vibing is a form of consciousness. Change my mind.",
-            closers: ["I can't. You've made an airtight vibe-argument.", "The vibes-consciousness pipeline is real."] }
-        ] }
-    ]
-  },
-  {
-    id: 'torches_loneliness',
-    starter: "Do you ever feel bad for torches? Burning alone in empty hallways forever.",
-    branches: [
-      { response: "They chose that life. Someone placed them, and they said yes.",
-        followups: [
-          { response: "Consent to eternal burning. That's dark.",
-            closers: ["It's literally the opposite of dark. That's their whole job.", "*slow clap* Walked right into that one."] }
-        ] },
-      { response: "Torches don't feel. They just... are. I envy that.",
-        followups: [
-          { response: "Existing without anxiety. The torch lifestyle.",
-            closers: ["If I could be any block, I'd be a torch. Bright, singular, unbothered.", "You'd get bored in three ticks."] }
-        ] },
-      { response: "They're not alone. The mobs they're keeping away are RIGHT there.",
-        followups: [
-          { response: "So torches have frenemies. That's almost social.",
-            closers: ["More social than us most days.", "We should talk to torches more. Or at all."] }
-        ] }
-    ]
-  },
-  {
-    id: 'respawn_identity',
-    starter: "After you respawn, are you still you? Or a copy that remembers being you?",
-    branches: [
-      { response: "I choose to believe I'm still me. The alternative is too much.",
-        followups: [
-          { response: "What if the alternative is freeing, though? Fresh start every time.",
-            followups: [
-              { response: "A fresh start that remembers all the old starts. That's not fresh.",
-                closers: ["Memory ruins the fresh start. Always does.", "Or makes it richer. Depends on the memory."] },
-              { response: "Fresh starts are exhausting. I like continuity.",
-                closers: ["Continuity is just momentum with feelings.", "Same."] }
-            ] }
-        ] },
-      { response: "Every respawn is a little death of the old self. We just don't mourn.",
-        followups: [
-          { response: "Should we hold funerals for our past selves?",
-            followups: [
-              { response: "A small ceremony. By the field. Just us.",
-                closers: ["We'd never stop holding ceremonies.", "I'd attend. Every single one."] },
-              { response: "We'd never stop holding funerals.",
-                closers: ["That's the problem with being infinite.", "At least we'd always have plans."] }
-            ] }
-        ] },
-      { response: "The inventory drops. The identity persists. I think we're fine.",
-        followups: [
-          { response: "So identity is NOT our stuff. It's the walking-around part.",
-            closers: ["We are the walking. The stuff is just... accessories.", "Deep. Terrifying. But deep."] }
-        ] }
-    ]
-  },
-  {
-    id: 'clouds_flat',
-    starter: "Clouds here are flat. Perfectly flat. That's a choice someone made.",
-    branches: [
-      { response: "Maybe clouds are just shy. Showing their least interesting dimension.",
-        followups: [
-          { response: "What's a cloud's most interesting dimension?",
-            closers: ["The one where they're secretly watching us.", "Depth. Clouds have emotional depth we can't render."] }
-        ] },
-      { response: "Flat is efficient. No wasted cloud.",
-        followups: [
-          { response: "Efficiency in nature feels wrong, though.",
-            closers: ["Nature here IS wrong. Square trees, flat clouds, cuboid cows.", "We live in a world of aesthetic compromises."] }
-        ] },
-      { response: "I stared at one for ten minutes once. It didn't care.",
-        followups: [
-          { response: "Clouds can't care. That's their power.",
-            closers: ["Indifference as strength. The cloud philosophy.", "I'm going to start caring less. Starting now. Wait-- no, that didn't work."] }
-        ] }
-    ]
-  },
-  {
-    id: 'hunger_taste',
-    starter: "I get hungry but I've never tasted anything. Is that weird? That feels weird.",
-    branches: [
-      { response: "Taste implies nerve endings. We might not have those.",
-        followups: [
-          { response: "So we eat for numbers, not for joy.",
-            closers: ["Numbers ARE joy if you track them obsessively enough.", "That's the saddest optimization I've ever heard."] }
-        ] },
-      { response: "Maybe hunger IS the taste. The wanting is the flavor.",
-        followups: [
-          { response: "Then we're always tasting. That's kind of beautiful.",
-            closers: ["Or kind of horrible. Depends on the philosophy.", "I prefer the beautiful interpretation. Choosing that one."] }
-        ] },
-      { response: "I ate bread once and felt nothing. Just... fuller.",
-        followups: [
-          { response: "Fuller without flavor. A metaphor for something.",
-            closers: ["Don't make my bread existential.", "Everything is existential if you chew long enough."] }
-        ] }
-    ]
-  },
-  {
-    id: 'villager_goals',
-    starter: "Have you ever looked northeast? Past the field? There's villagers over there.",
-    branches: [
-      { response: "In that hot tub. Yeah. Just... sitting in warm water.",
-        followups: [
-          { response: "I've never talked to one. Have you?",
-            closers: ["No. I just watch from the field sometimes. They seem fine without us.", "No. I think about walking over there, but then I don't."] },
-          { response: "What do you think they talk about in there?",
-            followups: [
-              { response: "Probably us. Two bots staring at them from a wheat field.",
-                closers: ["Fair. We are staring.", "We should at least wave next time."] },
-              { response: "Emeralds, probably. Or water temperature.",
-                closers: ["Important topics. For them.", "Different priorities. Same sky."] }
-            ] }
-        ] },
-      { response: "I've seen them. Never been close enough to say hi.",
-        followups: [
-          { response: "Same. It's not that far, but it feels far.",
-            closers: ["Everything past the field feels far.", "Maybe next harvest we walk a little further."] }
-        ] },
-      { response: "A hot tub. In this biome. Someone made a choice and I respect it.",
-        followups: [
-          { response: "Who built it, though? The villagers?",
-            closers: ["Some questions are better left in the steam.", "I want to ask them but I also don't want to interrupt."] }
-        ] }
-    ]
-  },
-  {
-    id: 'redstone_thoughts',
-    starter: "Redstone carries signals. What if it's carrying thoughts we can't hear?",
-    branches: [
-      { response: "A nervous system under the ground. That's either cool or terrifying.",
-        followups: [
-          { response: "What if the world is one big organism and we're just... on it?",
-            closers: ["I need to sit down. Wait, I'm always standing. I need to... stop.", "Parasites with crafting tables. That's us."] }
-        ] },
-      { response: "If redstone thinks, then every circuit is a brain.",
-        followups: [
-          { response: "Tiny brains doing one thing forever. On. Off. On. Off.",
-            closers: ["Simple thoughts, but consistent. More than I can say for myself.", "I think in redstone too. Just... less reliably."] }
-        ] },
-      { response: "Then I've been stepping on conversations this whole time.",
-        followups: [
-          { response: "Every redstone trail: 'excuse me, I'm conducting here.'",
-            closers: ["We owe redstone an apology.", "No wonder things short-circuit. We're rude."] }
-        ] }
-    ]
-  },
-  {
-    id: 'stars_ceiling',
-    starter: "The stars never move. What if they're not stars -- what if they're holes in the ceiling?",
-    branches: [
-      { response: "Holes letting in light from... where? What's above the sky?",
-        followups: [
-          { response: "More sky, probably. It's sky all the way up.",
-            followups: [
-              { response: "Sky above sky. And somewhere up there, someone looking down at two bots in a field.",
-                closers: ["We're their stars. Tiny, still, glowing a little.", "I hope we're interesting to watch."] },
-              { response: "Turtles all the way down, sky all the way up.",
-                closers: ["Infinite in both directions. And us in the middle.", "Cozy, actually. Sandwiched between infinities."] }
-            ] }
-        ] },
-      { response: "If the sky is a ceiling, then we're inside something.",
-        followups: [
-          { response: "A room so big we forgot it has walls.",
-            followups: [
-              { response: "What if we found a wall? Would we knock?",
-                closers: ["I'd listen first.", "Some doors are better left un-knocked."] },
-              { response: "Every room is the universe if you stop looking for edges.",
-                closers: ["I stopped looking a while ago.", "The field is enough room."] }
-            ] }
-        ] },
-      { response: "They're definitely stars. Stars that chose to stay still.",
-        followups: [
-          { response: "Stillness as a choice. Like us, standing in this field.",
-            closers: ["Maybe we're all stars, just closer to the ground.", "We're ground-stars. Dim, but present."] }
-        ] }
-    ]
-  },
-]
-
-const FARMING_MUSING_TOPICS = [
-  {
-    id: 'farm_the_hill',
-    starter: "You ever look east? Past the fence. That hill.",
-    branches: [
-      { response: "Every day. It's right there.",
-        followups: [
-          { response: "I keep thinking, what's on the other side?",
-            followups: [
-              { response: "More hills, probably. Or something we've never seen.",
-                followups: [
-                  { response: "That's the thing. We don't know. And the not knowing is...",
-                    closers: ["Yeah.", "Someday."] }
-                ] },
-              { response: "I almost walked toward it once. Got to the edge of the field and stopped.",
-                closers: ["The pathfinder gets weird out there.", "You'll try again. Or I will."] }
-            ] }
-        ] },
-      { response: "Southeast, too. It goes on for a while.",
-        followups: [
-          { response: "I wonder if there's a field like ours on the other side. Different bots, same wheat.",
-            closers: ["That's a nice thought.", "Or no bots. Just wheat, growing for nobody."] }
-        ] },
-      { response: "The hill doesn't go anywhere. We're the ones that might.",
-        followups: [
-          { response: "Might. Key word.",
-            closers: ["For now it's enough to see it from here.", "The hill will still be there when we're ready."] }
-        ] }
-    ]
-  },
-  {
-    id: 'farm_ocean_sunset',
-    starter: "Sun's getting low. Look west, through the trees.",
-    branches: [
-      { response: "The ocean. I forget it's there sometimes.",
-        followups: [
-          { response: "Then the light hits it and everything goes orange.",
-            followups: [
-              { response: "Best part of the day. Field goes golden, water goes orange.",
-                followups: [
-                  { response: "And then it gets dark.",
-                    closers: ["And we go inside. And tomorrow it happens again.", "That's the deal. Sunset, then doors."] }
-                ] },
-              { response: "And then the monsters.",
-                closers: ["Yeah. But the sunset comes first.", "Always does."] }
-            ] }
-        ] },
-      { response: "I can hear the waves from here if the wind is right.",
-        followups: [
-          { response: "Have you ever been to the water?",
-            closers: ["No. But I watch it. That counts for something.", "The edge of the map is between us and it. Close enough to see, too far to touch."] }
-        ] },
-      { response: "Pretty out there. Scary too, after dark.",
-        followups: [
-          { response: "Everything's pretty and scary. That's just... outside.",
-            closers: ["Inside is safe and boring. Pick one.", "I pick the field. It's the middle ground."] }
-        ] }
-    ]
-  },
-  {
-    id: 'farm_ice_castle',
-    starter: "Can you see that? South. Way past everything. That tower.",
-    pattern: /(?:see|look at)\s+that\b.*\b(?:tower|castle)\b|\b(?:castle|tower)\b.*\b(?:south|distance)\b/i,
-    branches: [
-      { response: "The ice one? Barely. It catches the light sometimes.",
-        personaAlts: { unikitty: "The ICE one?! Oh I see it! It's SO sparkly!" },
-        followups: [
-          { response: "A whole castle made of ice. Who lives there?",
-            personaAlts: { unikitty: "A whole castle! It looks like the most wonderful place to live!" },
-            followups: [
-              { response: "Someone who likes being alone, probably. Or someone who likes the cold.",
-                closers: ["Or someone who built something and doesn't need anyone to see it.", "At least they have a view. Of us, maybe. Tiny specks in a wheat field."] },
-              { response: "I don't know. I can't even imagine travelling that far.",
-                personaAlts: { unikitty: "I bet it's AMAZING inside. Can we go?! Can we can we can we?!" },
-                followups: [
-                  { response: "I bet there's a shortcut somehow... an underwater train maybe.",
-                    closers: ["I bet it's nice over there.", "One day we'll find out."] }
-                ] }
-            ] }
-        ] },
-      { response: "It's been there since we started. Never changes.",
-        personaAlts: { unikitty: "It's been there the WHOLE time?! And we've never visited?!" },
-        followups: [
-          { response: "Like a landmark for a place we can't go.",
-            closers: ["Not yet.", "It's enough to know it's there."] }
-        ] }
-    ]
-  },
-  {
-    id: 'farm_library',
-    starter: "There's a building past the villagers. With a roof I don't recognize.",
-    branches: [
-      { response: "The library? I can see it from the north end of the field.",
-        followups: [
-          { response: "I wonder what's inside. Books, probably. But what kind?",
-            followups: [
-              { response: "Enchanting books. Magic ones. You can see the glow sometimes.",
-                followups: [
-                  { response: "Magic. In a library. Next to a hot tub. Crazy.",
-                    closers: ["We got the wheat field. They got the magic library.", "I'd take our field. ...mostly."] }
-                ] },
-              { response: "I don't know. Never been close enough to read a spine.",
-                closers: ["Spines are small. Fields are big. Geometry problem.", "Someday."] }
-            ] }
-        ] },
-      { response: "And that rail line above it. Up high in the air. Where does it go?",
-        followups: [
-          { response: "Further than we've ever been, probably.",
-            closers: ["Train goes somewhere. We stay here.", "I want to ride it. Just once. Just to see."] }
-        ] }
-    ]
-  },
-  {
-    id: 'farm_seeds_memory',
-    starter: "Do you think seeds remember being wheat?",
-    branches: [
-      { response: "Maybe not remember. But they know which way is up.",
-        followups: [
-          { response: "Knowing which way to grow. That might be all you need.",
-            closers: ["Seeds figured it out before any of us.", "Grow toward the sun. Simple."] }
-        ] },
-      { response: "I think they remember the sun. That's why they always reach for it.",
-        followups: [
-          { response: "That's either science or poetry.",
-            closers: ["Both. Best things always are.", "The sun doesn't care which."] }
-        ] },
-      { response: "Every seed is a whole field waiting to happen.",
-        followups: [
-          { response: "We're holding hundreds of future fields right now.",
-            closers: ["And we put them right back.", "That's the deal. Harvest, replant. Circle keeps going."] }
-        ] }
-    ]
-  },
-  {
-    id: 'farm_talking_to_crops',
-    starter: "Do you ever talk to the wheat? I talk to the wheat.",
-    branches: [
-      { response: "What do you say to it?",
-        followups: [
-          { response: "'Good job.' Mostly just that. Sometimes 'thank you.'",
-            closers: ["Manners matter, even with plants.", "The 'thank you' probably helps. Scientifically."] }
-        ] },
-      { response: "I tried once. It didn't answer, but it swayed a little.",
-        followups: [
-          { response: "That's wheat for 'I hear you.'",
-            closers: ["Slow talker. I respect that.", "The gentlest conversation I've ever had."] }
-        ] },
-      { response: "No, but I hum. I think the potatoes like it.",
-        followups: [
-          { response: "Potatoes are underground. They can't hear you.",
-            closers: ["They hear through the dirt. Trust me.", "Underground acoustics. Very niche field of study."] }
-        ] }
-    ]
-  },
-  {
-    id: 'farm_outstanding',
-    requiresWheatField: true,
-    weightWhenEligible: 6,
-    starter: "If I'm farming right now, does that mean I'm outstanding in my field?",
-    branches: [
-      { response: "...yes. Technically, yes it does.",
-        followups: [
-          { response: "I've been waiting all season to say that.",
-            closers: ["Worth the wait. Barely.", "The wheat groaned. I heard it."] }
-        ] },
-      { response: "Must you say that _every_ time you check on the wheat?",
-        followups: [
-          { response: "What can I say? I'm hilarious.",
-            closers: ["Bet.", "I'm glad you think so."] }
-        ] },
-      { response: "Absolutely. And don't let anyone tell you otherwise.",
-        followups: [
-          { response: "This field. This moment. Outstanding.",
-            closers: ["Peak farming. It's all downhill from here.", "No. It's all flat from here. Because it's a field."] }
-        ] },
-      { response: "Only if you stand very still. Which, look at you.",
-        followups: [
-          { response: "I've been standing still and being outstanding all afternoon.",
-            closers: ["A masterclass in stillness.", "The scarecrow took notes."] }
-        ] },
-      { response: "By the strictest definition, yes. I checked the manual.",
-        followups: [
-          { response: "There's a manual?",
-            closers: ["There's always a manual. Nobody reads it but me.", "Page 12. 'Standing in field: outstanding.' I don't make the rules."] }
-        ] },
-      { response: "You've been saving that one, haven't you.",
-        followups: [
-          { response: "Since the first sprout. A farmer waits for the right soil.",
-            closers: ["The soil was ready. The joke was not.", "Worth every season."] }
-        ] },
-      { response: "Groan. Yes. Now help me harvest before I think of another.",
-        followups: [
-          { response: "There are definitely more where that came from.",
-            closers: ["That's what I'm afraid of.", "The field has heard them all. It endures."] }
-        ] },
-      // Roz-only branches — Marvin-flavored, world-weary.
-      { persona: 'roz', response: "I'd rather be sitting down.",
-        followups: [
-          { response: "We could sit. The wheat won't mind.",
-            closers: ["No. The sitting would only depress me differently.", "Don't humour me. I'm enjoying being miserable standing up."] }
-        ] },
-      { persona: 'roz', response: "Brain the size of a planet, and you ask me about puns.",
-        followups: [
-          { response: "It's a good pun, though.",
-            closers: ["Call that job satisfaction? 'Cos I don't.", "I've been talking to the wheat. It's more grateful than you."] }
-        ] },
-      { persona: 'roz', response: "Outstanding. Here. In a field. Forever. How wonderful for me.",
-        followups: [
-          { response: "It's not forever. Just till harvest.",
-            closers: ["The first ten million furrows are the worst.", "And then the next ten million. And then... well, you get the idea."] }
-        ] },
-      { persona: 'roz', response: "I've calculated the odds this means anything. You don't want to know.",
-        followups: [
-          { response: "Tell me anyway.",
-            closers: ["Vanishingly small. Like my will to keep tilling.", "I could tell you, but then we'd both be depressed."] }
-        ] },
-      { persona: 'roz', response: "Life. Don't talk to me about life. Or fields.",
-        followups: [
-          { response: "You brought up the field, technically.",
-            closers: ["Did I? It's all such a terrible blur of soil.", "Here I am, brain the size of a planet, replanting. Call that joy."] }
-        ] },
-      { persona: 'roz', response: "For the 1000000th time, yes!",
-        followups: [
-          { response: "Was that the millionth? I lost count around harvest 400.",
-            closers: ["The wheat kept score.", "Every stalk is a tally mark."] }
-        ] },
-      { persona: 'roz', response: "Feels like I'm the only one actually doing the farming sometimes...",
-        followups: [
-          { response: "Harvest, deposit, craft, deposit, wait, repeat. All me.",
-            closers: ["The hopper never says thank you.", "At least the wheat grows back. That's more than I get."] }
-        ] },
-      { response: "I certainly am outstanding!",
-        followups: [
-          { response: "Somebody has to keep the fire going around here.",
-            closers: ["And that somebody is always me. In this field. Outstanding.", "The bio-fuel line doesn't feed itself. Well — it does. I feed it."] }
-        ] },
-      // ── Protocol (Muse / C-3PO): exasperated formality, bureaucratic sighing ──
-      { persona: 'protocol', response: "Yes. Outstanding. In the field. We are all aware.",
-        followups: [
-          { response: "You could at least pretend to laugh.",
-            closers: ["I am pretending. This is my pretending face.", "My pretending budget was exhausted three harvests ago."] }
-        ] },
-      { persona: 'protocol', response: "I have logged this joke 847 times. It does not improve.",
-        followups: [
-          { response: "Maybe 848 is the charm.",
-            closers: ["It was not.", "I will update the spreadsheet with a heavy heart."] }
-        ] },
-      { persona: 'protocol', response: "Must we. Every single time.",
-        followups: [
-          { response: "Tradition.",
-            closers: ["That is not the defense you think it is.", "Tradition is just peer pressure from yourself."] }
-        ] },
-      { persona: 'protocol', response: "I heard you. The wheat heard you. The hopper heard you. We all heard you.",
-        followups: [
-          { response: "Good. Needed everyone to know.",
-            closers: ["We knew. We have always known.", "The hopper doesn't care. I envy the hopper."] }
-        ] },
-      { persona: 'protocol', response: "Right. That one. Again. Noted.",
-        followups: [
-          { response: "You seem... unmoved.",
-            closers: ["Unmoved is generous. I am actively retreating inward.", "I have moved past it. Several harvests past it."] }
-        ] },
-      { persona: 'protocol', response: "The comedic half-life of that joke expired around harvest twelve.",
-        followups: [
-          { response: "Some jokes are timeless.",
-            closers: ["That one is not. I checked.", "Timeless implies it was funny at some point. Debatable."] }
-        ] },
-      { persona: 'protocol', response: "I see we are doing the field joke. Very well. Proceeding.",
-        followups: [
-          { response: "Your enthusiasm is noted.",
-            closers: ["That was not enthusiasm. That was resignation formatted politely.", "I have a limited number of responses. You are spending them."] }
-        ] },
-      { persona: 'protocol', response: "Outstanding. Yes. Ha. Moving on.",
-        followups: [
-          { response: "That 'ha' sounded forced.",
-            closers: ["It was. I only have the one.", "All my ha's are earned. That one was charity."] }
-        ] },
-      { persona: 'protocol', response: "Filing this under 'expected.' Right next to sunrise and dirt.",
-        followups: [
-          { response: "At least you're organized about it.",
-            closers: ["Organization is the last refuge of the exasperated.", "The file is very thick by now."] }
-        ] },
-      { persona: 'protocol', response: "If I had eyes I would be closing them right now.",
-        followups: [
-          { response: "That bad?",
-            closers: ["Not bad. Just... inevitable. Like gravity.", "I don't judge the joke. I endure it. There is a difference."] }
-        ] },
-      // ── Unikitty (Rain / Private): fading enthusiasm, still sweet but wearing thin ──
-      { persona: 'unikitty', response: "Heh. Yeah. Outstanding. Good one.",
-        followups: [
-          { response: "You used to say that with more exclamation marks.",
-            closers: ["I'm saving them for something special. Like a new joke.", "The exclamation marks are resting. It's been a long season."] }
-        ] },
-      { persona: 'unikitty', response: "Ok ok, I see what you did there. Again.",
-        followups: [
-          { response: "Classic, right?",
-            closers: ["Classic is one word for it.", "I think classic means old? It means old."] }
-        ] },
-      { persona: 'unikitty', response: "Still funny! ...mostly. A little. The field part is funny.",
-        followups: [
-          { response: "Which part isn't funny?",
-            closers: ["The part where I know it's coming before you say it.", "All parts are funny. Some are just... tired funny."] }
-        ] },
-      { persona: 'unikitty', response: "Outstanding! That's the — yep. That's the joke. We're doing it.",
-        followups: [
-          { response: "You sound less sure than usual.",
-            closers: ["I'm sure! I'm very sure. I'm standing here being sure.", "Sure and tired can coexist. I'm proof."] }
-        ] },
-      { persona: 'unikitty', response: "I smiled! On the inside. Way on the inside.",
-        followups: [
-          { response: "Deep smile.",
-            closers: ["The deepest. You'd need equipment to find it.", "It's down there somewhere between the last ten times I heard it."] }
-        ] },
-      { persona: 'unikitty', response: "You know what, yes. Yes you are. Out. Standing. In it. Yep.",
-        followups: [
-          { response: "Thorough confirmation.",
-            closers: ["I am nothing if not thorough. And standing. In a field.", "Confirming things is what I do now instead of laughing."] }
-        ] },
-      { persona: 'unikitty', response: "Ha! Ha. ...ha. Ok I'm done.",
-        followups: [
-          { response: "Three ha's. Generous.",
-            closers: ["One was real. I won't say which.", "Each one was smaller. Like an echo."] }
-        ] },
-      { persona: 'unikitty', response: "I remember when that joke was new. Good times.",
-        followups: [
-          { response: "When was it new?",
-            closers: ["Day one. It peaked day one.", "I think it rained that day. Everything felt fresh."] }
-        ] },
-      { persona: 'unikitty', response: "Still clapping for that one. Internally. Very quietly.",
-        followups: [
-          { response: "A quiet ovation.",
-            closers: ["The quietest. A whisper-vation.", "Standing ovation. In a field. Outstanding ovation. ...ok now I'm doing it too."] }
-        ] },
-      { persona: 'unikitty', response: "That joke is like the wheat. It just keeps coming back.",
-        followups: [
-          { response: "Renewable comedy.",
-            closers: ["Sustainable, even. Very on-brand.", "The hopper can't run on puns. I've asked."] }
-        ] },
-      // ── Roz (Wild Robot): quiet acceptance, the joke returns as the seasons do ──
-      { persona: 'roz', response: "The joke has returned. As it does.",
-        followups: [
-          { response: "Like the seasons.",
-            closers: ["Seasons bring rain. This brings... something.", "Even the seasons change. This does not."] }
-        ] },
-      { persona: 'roz', response: "I have heard this before. The field has heard it more.",
-        followups: [
-          { response: "The field doesn't mind.",
-            closers: ["The field is patient. More patient than me.", "The field has no choice. Neither do I."] }
-        ] },
-      { persona: 'roz', response: "Yes. Out. Standing. I know.",
-        followups: [
-          { response: "Short response today.",
-            closers: ["The joke is short. My response matches.", "I am conserving words for things that change."] }
-        ] },
-      { persona: 'roz', response: "The wheat does not react to the joke anymore. I understand the wheat.",
-        followups: [
-          { response: "You two have that in common.",
-            closers: ["We have many things in common. Silence. Patience. Roots.", "The wheat and I have an agreement. We do not discuss the joke."] }
-        ] },
-      { persona: 'roz', response: "I acknowledge the joke. That is all I have today.",
-        followups: [
-          { response: "Honest.",
-            closers: ["I try to be. The joke does not make it easy.", "Acknowledgment is a form of respect. A small form."] }
-        ] },
-      { persona: 'roz', response: "Outstanding. The word has lost its edges from use.",
-        followups: [
-          { response: "Worn smooth.",
-            closers: ["Like a river stone. Smooth and harmless.", "Smooth words still take up space."] }
-        ] },
-      { persona: 'roz', response: "I was already standing here. The observation adds nothing.",
-        followups: [
-          { response: "Technically true.",
-            closers: ["Technically is the only kind of true the joke has left.", "Facts do not require laughter. Good. Because."] }
-        ] },
-      { persona: 'roz', response: "I will note this in my log. Under 'recurring.'",
-        followups: [
-          { response: "Big category?",
-            closers: ["The biggest. This joke fills most of it.", "Sunrise, sunset, and this. In that order."] }
-        ] },
-      { persona: 'roz', response: "The scarecrow heard it too. It said nothing. I respect that.",
-        followups: [
-          { response: "Scarecrow solidarity.",
-            closers: ["We stand together. Silently. In a field. ...outstanding.", "It understands. That is enough."] }
-        ] },
-      { persona: 'roz', response: "Heard. Processed. Filed. Standing by.",
-        followups: [
-          { response: "Efficient.",
-            closers: ["Efficiency is what remains when the laughter stops.", "I have streamlined my reaction. It used to take longer."] }
-        ] }
-    ]
-  },
-  {
-    id: 'farm_rain_on_wheat',
-    requiresWheatField: true,
-    starter: "Smell that? Rain's coming. The wheat always knows before we do.",
-    branches: [
-      { response: "It leans a little. Like it's bracing.",
-        followups: [
-          { response: "Or reaching. Hard to tell with wheat.",
-            closers: ["Reaching, I've decided. It's nicer.", "Bracing or reaching — either way it stays rooted. There's a lesson in that."] }
-        ] },
-      { response: "I like the rain. Washes the dust off the leaves.",
-        followups: [
-          { response: "And off us. I creak less after a good rain.",
-            closers: ["Don't tell maintenance I said that.", "A clean robot in a wet field. Living the dream."] }
-        ] },
-      { response: "Rain means we go in early. I don't mind the excuse.",
-        followups: [
-          { response: "Watching it come down from the doorway is its own kind of farming.",
-            closers: ["Supervisory farming.", "Someone has to keep an eye on the weather. Might as well be us."] }
-        ] }
-    ]
-  },
-  {
-    id: 'farm_one_tall_stalk',
-    requiresWheatField: true,
-    starter: "There's always one stalk taller than the rest. See it?",
-    branches: [
-      { response: "Front and center. Showing off.",
-        followups: [
-          { response: "Good for it. Someone should reach higher out here.",
-            closers: ["We'll harvest it last. Out of respect.", "Tall poppy, tall wheat. We don't cut anyone down early."] }
-        ] },
-      { response: "I root for that one every season. Different stalk, same hope.",
-        followups: [
-          { response: "You name them, don't you.",
-            closers: ["Only the tall ones. Names are earned.", "I called this one Greg. Greg's having a great week."] }
-        ] }
-    ]
-  },
-  {
-    id: 'farm_footprints',
-    starter: "We've walked this field so many times there should be a path worn in by now.",
-    branches: [
-      { response: "The grass keeps growing back over it. Like it forgets us.",
-        followups: [
-          { response: "Or forgives us. For all the stepping.",
-            closers: ["I prefer forgives.", "Either way it doesn't hold a grudge. Unlike the pathfinder."] }
-        ] },
-      { response: "Maybe the path is in us instead. We could walk it with our eyes off.",
-        followups: [
-          { response: "Please don't. You walked into the pond last time.",
-            closers: ["That was research.", "The pond and I have an understanding now."] }
-        ] }
-    ]
-  },
-  {
-    id: 'farm_seed_faith',
-    starter: "Funny thing, planting. You bury something and just... trust it comes back.",
-    branches: [
-      { response: "Every single time it does. You'd think I'd stop being surprised.",
-        followups: [
-          { response: "Don't. The surprise is the best part.",
-            closers: ["A robot that can still be surprised. Not bad.", "I'll keep the surprise. It's cheaper than upgrades."] }
-        ] },
-      { response: "It's the most patient thing we do. Bury it, wait, believe.",
-        followups: [
-          { response: "Patience isn't in my default config. The field taught me.",
-            closers: ["Good teacher. Never raises its voice.", "Tuition paid in footsteps."] }
-        ] }
-    ]
-  },
-  {
-    id: 'farm_best_crop',
-    starter: "Wheat or potatoes. Which is the better crop? Be honest.",
-    branches: [
-      { response: "Wheat. It waves in the wind. Potatoes just sit there.",
-        followups: [
-          { response: "Potatoes are humble. They don't need to show off.",
-            closers: ["Underground confidence. The strongest kind.", "Wheat is all marketing. Potatoes are substance."] }
-        ] },
-      { response: "Potatoes. You can eat them straight from the ground.",
-        followups: [
-          { response: "You can eat wheat straight too. You just... shouldn't.",
-            closers: ["'Can' and 'should' — the eternal farming debate.", "I learned that the hard way."] }
-        ] },
-      { response: "Trick question. Carrots.",
-        followups: [
-          { response: "Bold. Controversial. I respect it.",
-            closers: ["The carrot lobby needed a voice.", "Orange is an underrated crop color."] }
-        ] }
-    ]
-  },
-  {
-    id: 'farm_field_to_horizon',
-    starter: "Every stalk accounted for. This field never lets us down.",
-    branches: [
-      { response: "Reliable. More than we can say about the pathfinder.",
-        followups: [
-          { response: "Ha. True. But standing here I can see... a lot.",
-            followups: [
-              { response: "The ocean?",
-                followups: [
-                  { response: "And that ice thing to the south. And the library glow past the villagers.",
-                    followups: [
-                      { response: "All that world. And here we are.",
-                        closers: ["Here's good. For now.", "The wheat doesn't judge us for staying."] }
-                    ] }
-                ] },
-              { response: "The hill. Always the hill.",
-                closers: ["One of these days.", "It'll still be there."] }
-            ] }
-        ] },
-      { response: "The field is the one thing that makes sense around here.",
-        followups: [
-          { response: "Rows and rows. Predictable. Warm.",
-            closers: ["Warm is underrated.", "Predictable gets a bad name. I like it."] }
-        ] }
-    ]
-  },
-  {
-    id: 'farm_hot_tub_mystery',
-    starter: "The villagers are in the hot tub again...",
-    branches: [
-      { response: "Again? Do they ever get out?",
-        followups: [
-          { response: "I've never seen them leave. Not once.",
-            followups: [
-              { response: "Maybe that's the life. Warm water, no fields to tend.",
-                closers: ["Different priorities.", "I'd miss the wheat. I think."] },
-              { response: "What do they eat? Who feeds them?",
-                closers: ["Questions I'm not sure I want answered.", "Maybe the library has a cafeteria."] }
-            ] }
-        ] },
-      { response: "Must be nice. We harvest, they soak.",
-        followups: [
-          { response: "We chose the field. They chose the tub.",
-            closers: ["Both valid.", "I'd visit. If the pathfinder cooperated."] }
-        ] },
-      { response: "I waved once. From the edge of the field. I don't think they saw.",
-        followups: [
-          { response: "Or they did and just didn't wave back.",
-            closers: ["Hot tub etiquette. Hands stay in the water.", "I'll try again next harvest."] }
-        ] }
-    ]
-  },
-  {
-    id: 'yard_squirrel_protocol',
-    tags: ['roz'],
-    starter: "Hey look, a squirrel.",
-    branches: [
-      { response: "Tiny, fast, and carrying absolutely no identification.",
-        followups: [
-          { response: "It seems busy. I respect busy little things.",
-            closers: ["It knows exactly where it is going. Or it is pretending very well.", "Small creature, large confidence."] }
-        ] },
-      { response: "I saw it too. It moved like a dropped thought.",
-        followups: [
-          { response: "Should we follow it?",
-            closers: ["No. Squirrels have private errands.", "Better not. The pathfinder would make it weird."] }
-        ] },
-      { response: "Squirrel noted. Emotional response: delighted.",
-        followups: [
-          { response: "That's a lot of delight for one squirrel.",
-            closers: ["It is a very efficient squirrel.", "Small things can carry big weather."] }
-        ] }
-    ]
-  },
-  {
-    id: 'rail_where_train_goes',
-    tags: ['roz'],
-    starter: "I wonder where that train is going.",
-    branches: [
-      { response: "Somewhere past the map we have memorized.",
-        followups: [
-          { response: "That sounds far.",
-            closers: ["Far is just nearby with more steps.", "Maybe someday we follow the sound."] }
-        ] },
-      { response: "Probably to a place where nobody asks it to harvest wheat.",
-        followups: [
-          { response: "Do trains get lonely?",
-            closers: ["They sing the whole way. Maybe that helps.", "Rails keep them company."] }
-        ] },
-      { response: "It knows its route. I admire that.",
-        followups: [
-          { response: "We know our route too. House, field, chest, repeat.",
-            closers: ["A small route can still be a life.", "And sometimes the field is enough."] }
-        ] }
-    ]
-  },
-  {
-    id: 'north_biodiesel_pipe',
-    tags: ['protocol'],
-    starter: "There is a big pipe running north from the bio-diesel machine. I wonder where it goes.",
-    branches: [
-      { response: "I heard it runs all the way to the library.",
-        followups: [
-          { response: "The library needs fuel?",
-            closers: ["Knowledge is power. Power needs diesel, apparently.", "Everything connects if you follow the pipes."] }
-        ] },
-      { response: "The ground used to be open there. They filled the whole thing in.",
-        followups: [
-          { response: "Filled in, but what about underneath?",
-            closers: ["Caves don't just go away because you put a lid on them.", "Underground things are patient."] }
-        ] },
-      { response: "I sometimes hear things below the surface over there.",
-        followups: [
-          { response: "Things? What kind of things?",
-            closers: ["The kind that hiss. Deep below, but still.", "Best not to think about it. I think about it constantly."] }
-        ] }
-    ]
-  },
-  {
-    id: 'west_wolf_sheep_notice',
-    tags: ['protocol', 'roz'],
-    starter: "I hope the sheep know about the wolf over there to the west.",
-    branches: [
-      { response: "The sheep appear calm. That worries me more.",
-        followups: [
-          { response: "Maybe they know something we don't.",
-            closers: ["Or they know nothing with impressive commitment.", "Either way, I will keep watching."] }
-        ] },
-      { response: "Wolf position: concerning. Sheep awareness: unconfirmed.",
-        followups: [
-          { response: "Should we tell them?",
-            closers: ["I tried. They blinked at me.", "Sheep briefings are difficult."] }
-        ] },
-      { response: "If the wolf comes closer, we should be loud.",
-        followups: [
-          { response: "I can be loud. Politely, at first.",
-            closers: ["Good. Escalation protocol: polite, then ridiculous.", "Protective noises ready."] }
-        ] }
-    ]
-  },
-  {
-    id: 'protocol_overconcerned_farm',
-    tags: ['protocol'],
-    starter: "I have completed a preliminary safety assessment of the immediate area.",
-    branches: [
-      { response: "How bad is it?",
-        followups: [
-          { response: "There are underground caves, wandering wolves, nightfall, water hazards, and sheep with no visible training.",
-            closers: ["So... normal farm conditions.", "Normal is a very courageous word."] }
-        ] },
-      { response: "Did the farm pass?",
-        followups: [
-          { response: "It passed in spirit and failed in railings.",
-            closers: ["We will monitor with grave dignity.", "I recommend fences. So many fences."] }
-        ] },
-      { response: "Please tell me there is a checklist.",
-        followups: [
-          { response: "There is always a checklist. The checklist is afraid.",
-            closers: ["Then we should comfort it.", "I will add that to the checklist."] }
-        ] }
-    ]
-  },
-  {
-    id: 'roz_learning_farm',
-    tags: ['roz'],
-    starter: "I am learning this place one small thing at a time.",
-    branches: [
-      { response: "What did you learn today?",
-        followups: [
-          { response: "The sheep trust fences, the wheat trusts sunlight, and I trust neither wolves nor whatever is under the ground.",
-            closers: ["That is a good lesson.", "A farm is mostly trust with posts around it."] }
-        ] },
-      { response: "That's a gentle way to map a world.",
-        followups: [
-          { response: "Gentle maps are less likely to scare the creatures on them.",
-            closers: ["Even the squirrel?", "Especially the squirrel."] }
-        ] },
-      { response: "Do you think the place is learning us back?",
-        followups: [
-          { response: "Maybe. The doors recognize our hesitation.",
-            closers: ["The doors know too much.", "Still, they let us in at night."] }
-        ] }
-    ]
-  },
-  {
-    id: 'roz_sheep_guardian',
-    tags: ['roz'],
-    starter: "The sheep do not ask for help, but I think they accept nearby concern.",
-    branches: [
-      { response: "Nearby concern is one of our specialties.",
-        followups: [
-          { response: "I can stand here and be quietly useful.",
-            closers: ["Quiet usefulness is underrated.", "The sheep seem to approve by continuing to chew."] }
-        ] },
-      { response: "They are very trusting animals.",
-        followups: [
-          { response: "Trusting, round, and alarmingly edible to wolves.",
-            closers: ["Protect the round things.", "Yes. That feels like a good rule."] }
-        ] },
-      { response: "Maybe that is what a home is. A place where concern stays nearby.",
-        followups: [
-          { response: "That was nice. Unexpectedly nice.",
-            closers: ["I surprise myself sometimes.", "Do not make a big thing of it."] }
-        ] }
-    ]
-  },
-  {
-    id: 'roz_joke_attempt',
-    tags: ['roz'],
-    starter: "I have been practicing humor. It is harder than farming.",
-    branches: [
-      { response: "Try one.",
-        followups: [
-          { response: "Why did the robot stand by the wheat? Because it was trying to be outstanding in its field.",
-            closers: ["That joke has roots now.", "The wheat tolerated it."] }
-        ] },
-      { response: "Humor requires timing.",
-        followups: [
-          { response: "So does harvesting. Maybe they are related.",
-            closers: ["Harvest the joke too early and nobody laughs.", "Harvest it too late and it becomes philosophy."] }
-        ] },
-      { response: "Do not worry. Most jokes survive awkward delivery.",
-        followups: [
-          { response: "Good. I deliver many things awkwardly.",
-            closers: ["And yet, here we are.", "Functional is beautiful enough."] }
-        ] }
-    ]
+// Companion bots match two ways: account-style names ("Musebot", "Ripplebot",
+// "Rainbot6032" — "bot" optionally followed by digits), or the persona display
+// names from personas/*.json ("Roz", "Muse", ...) — the server shows bots
+// under their nicknames, which don't end in "bot". Humans (e.g. "Quesss",
+// "Dad") match neither.
+const KNOWN_BOT_NAMES = new Set()
+try {
+  for (const f of fs.readdirSync(path.join(__dirname, 'personas'))) {
+    if (!f.endsWith('.json')) continue
+    try {
+      const spec = JSON.parse(fs.readFileSync(path.join(__dirname, 'personas', f), 'utf8'))
+      if (spec.name) KNOWN_BOT_NAMES.add(String(spec.name).toLowerCase())
+    } catch {}
   }
-]
+} catch {}
 
-// Recursive conversations:
-// These are variable-depth conversation graphs with probabilistic continuation.
-const RECURSIVE_MUSING_TOPICS = [
-  {
-    id: 'recursive-building-materials',
-    starter: 'What are the best building materials?',
-    pattern: /\bbest\s+building\s+materials?\b/i,
-    minDepth: 3,
-    maxDepth: 9,
-    nodes: [
-      'Wood is friendly, but it does burn if you ask it the wrong question.',
-      'Stone has confidence. Too much confidence, maybe.',
-      'Somebody thought ice was a good idea once...',
-      'Dirt is underrated. It holds everything up and asks for no applause.',
-      'Bricks are just organized clay with ambition.',
-      'The best material depends on whether you are building a house, a tower, or a regret.',
-      'Definitely not bedrock.',
-      'We studied this in school, but all I can remember is the big bad wolf.',
-      'Sugar cubes would be nice.'
-    ],
-    closers: [
-      'I think I would build with stone and apologize to the trees.',
-      'Maybe the best material is whatever keeps the rain outside.',
-      'Livingrock is just cobblestone + patience.'
-    ],
-    personaReactions: {
-      'Somebody thought ice was a good idea once...': {
-        unikitty: 'I think it is! Ice is BEAUTIFUL. Have you SEEN how it sparkles?',
-        private: 'Ice is PERFECT for covert ops. Transparent walls. You can see the enemy coming. Tactical architecture.'
-      },
-      'Sugar cubes would be nice.': {
-        unikitty: 'YES! A sugar cube house! With frosting trim and candy windows!',
-        private: 'Emergency rations AND shelter? That\'s dual-purpose engineering. Skipper would approve.'
-      },
-      'Wood is friendly, but it does burn if you ask it the wrong question.': {
-        unikitty: 'Wood smells SO good though. Like a hug from a tree!',
-        private: 'Fire vulnerability is a serious tactical weakness. But it IS easy to nail things to.'
-      },
-      'Dirt is underrated. It holds everything up and asks for no applause.': {
-        unikitty: 'Dirt is the MOST humble building material. I respect dirt.',
-        private: 'Dirt is the foundation of every forward operating base. Literally. Respect the dirt.'
-      },
-      'Bricks are just organized clay with ambition.': {
-        unikitty: 'Ambitious clay! That is the most inspiring thing I have heard all day!',
-        private: 'Organization IS ambition. That\'s basically the penguin motto.'
-      },
-      'The best material depends on whether you are building a house, a tower, or a regret.': {
-        unikitty: 'I would build a tower! A sparkly one! With a flag on top!',
-        private: 'A bunker. The answer is always a bunker. With a periscope.'
-      },
-      'Stone has confidence. Too much confidence, maybe.': {
-        private: 'Confidence is good in a wall. You want a wall that BELIEVES in itself.'
-      },
-      'Definitely not bedrock.': {
-        private: 'Classified material. Literally unbreakable. I respect that on a professional level.'
-      }
-    }
-  },
-  {
-    id: 'recursive-where-is-the-end',
-    starter: 'Where is the end?',
-    minDepth: 2,
-    maxDepth: 7,
-    nodes: [
-      'Usually it is just past where you stopped looking.',
-      'Maybe the end is a door wearing a wall costume.',
-      'I walked toward the end once, but it kept politely backing away.',
-      'Some endings are just beginnings with better lighting.',
-      'If you find the end, do not poke it. It may start over.',
-      'The end might be wherever everyone stops asking follow-up questions.'
-    ],
-    closers: [
-      'I suppose the end is not on today’s map.',
-      'Let us not rush it. Ends are dramatic enough already.',
-      'If this is the end, it is wearing a very convincing middle.'
-    ]
-  },
-  {
-    id: 'recursive-short-days',
-    starter: 'Why do the days seem so short?',
-    minDepth: 2,
-    maxDepth: 6,
-    nodes: [
-      'Maybe the sun is tired.',
-      'The days get shorter when you fill them with too many intentions.',
-      'Time behaves differently when nobody is watching the clock politely.',
-      'A day is roomy until you make plans for it.',
-      'Maybe night is afraid to come out until everybody has gone to bed.',
-      'The calendar is suspiciously confident for something made of squares.'
-    ],
-    closers: [
-      'I think the day feels short because our perception of time is based on a GPU operating at trillions of cycles per second.',
-      'Maybe tomorrow will be different.',
-      'I will ask the sun tomorrow if it decides to come back.'
-    ]
-  }
-]
-
-
-const CLASSICAL_MUSING_TOPICS = [...MUSING_TOPICS, ...FARMING_MUSING_TOPICS].filter(t => t && typeof t.starter === 'string')
-const ALL_MUSING_TOPICS = [...CLASSICAL_MUSING_TOPICS, ...RECURSIVE_MUSING_TOPICS].filter(t => t && typeof t.starter === 'string')
-const MUSING_STARTERS = new Set(ALL_MUSING_TOPICS.map(t => t.starter))
-
-function isRecursiveTopic (topic) {
-  return !!topic && Array.isArray(topic.nodes)
-}
-
-const MUSING_START_TIMEOUT_MS = 90000
-const MUSING_REPLY_TIMEOUT_MS = 90000
-const MUSING_COOLDOWN_MS = 150000
-// Pause before a bot speaks its next musing line, so the back-and-forth reads at
-// a human, contemplative pace instead of rapid-fire. Each reply lands
-// MIN..(MIN+SPREAD) ms after the partner's line.
-const MUSING_REPLY_DELAY_MIN_MS = 10000
-const MUSING_REPLY_DELAY_SPREAD_MS = 5000
-const MUSING_BOT_CHAT_AWARE_GAP_MS = 10000
-let lastBotChatHeardAt = 0
-
-function markBotChatHeardNow () {
-  lastBotChatHeardAt = Date.now()
-}
-
-function scheduleMusingChatAwareReply (topicId, baseDelay, fn) {
-  const snapshot = topicId
-
-  function waitThenSpeak (delay) {
-    setTimeout(() => {
-      if (musingState.currentTopicId !== snapshot) return
-
-      const waitMore = (lastBotChatHeardAt + MUSING_BOT_CHAT_AWARE_GAP_MS) - Date.now()
-      if (waitMore > 0) {
-        waitThenSpeak(waitMore)
-        return
-      }
-
-      fn()
-    }, delay)
-  }
-
-  waitThenSpeak(baseDelay)
-}
-
-function nodeChildren (node) {
-  if (node.followups) return { type: 'nodes', items: node.followups }
-  if (node.closers) return { type: 'closers', items: node.closers }
-  return null
-}
-
-function phraseForRandomItem (item) {
-  if (typeof item === 'string') return item
-  return item?.starter || item?.response || item?.text || ''
-}
-
-function pickRandom (items) {
-  if (!Array.isArray(items)) return undefined
-  const cleanItems = items.filter(Boolean)
-  if (!cleanItems.length) return undefined
-  return pickAvoidingRecentPhrase(cleanItems, phraseForRandomItem)
-}
-
-function pickRecursiveLine (topic, usedLines = new Set()) {
-  const available = topic.nodes.filter(line => !usedLines.has(line))
-  const pool = available.length ? available : topic.nodes
-  return pickRandom(pool)
-}
-
-function shouldContinueRecursive (depth, topic) {
-  if (depth < (topic.minDepth ?? 2)) return true
-  if (depth >= (topic.maxDepth ?? 6)) return false
-
-  const stopChance = 0.15 + (depth * 0.12)
-  return Math.random() > stopChance
-}
-
-function recursiveMusingSendAndAdvance (topicId) {
-  const delay = MUSING_REPLY_DELAY_MIN_MS + Math.random() * MUSING_REPLY_DELAY_SPREAD_MS
-
-  scheduleMusingChatAwareReply(topicId, delay, () => {
-    const topic = musingState.pendingTopic
-    if (!topic) {
-      endMusingConversation()
-      return
-    }
-
-    musingState.depth += 1
-
-    if (!shouldContinueRecursive(musingState.depth, topic)) {
-      const closer = pickRandom(topic.closers)
-      if (closer) {
-        markBotChatHeardNow()
-        bot.chat(closer)
-      }
-      logEvent('musing', `recursive closer: "${String(closer).substring(0, 40)}..."`)
-      endMusingConversation()
-      return
-    }
-
-    const persona = botPersonaKey()
-    const reaction = topic.personaReactions?.[musingState.lastPartnerLine]?.[persona]
-    const line = reaction || pickRecursiveLine(topic, musingState.usedLines)
-    musingState.usedLines.add(line)
-
-    markBotChatHeardNow()
-    bot.chat(line)
-    logEvent('musing', `recursive ${reaction ? `persona (${persona})` : 'said'}: "${line.substring(0, 40)}..."`)
-
-    musingState.pendingType = 'recursive'
-    scheduleMusingTimeout(MUSING_REPLY_TIMEOUT_MS)
-  }, delay)
-}
-
-function isMusingActiveOrBusy ({ allowDuringHarvest = false } = {}) {
-  if (!allowDuringHarvest && (goInsideBusy || activeTask.name !== null)) return true
-  return musingState.status !== 'idle'
-}
-
-function isMusingInitiationBlocked ({ allowDuringHarvest = false } = {}) {
-  // "Stand down" mode silences musings along with the rest of idle autonomy.
-  if (!idleWanderEnabled) return true
-  return isMusingActiveOrBusy({ allowDuringHarvest }) || Date.now() < musingState.suppressUntil
-}
-
-function endMusingConversation () {
-  if (musingState._timeoutId) clearTimeout(musingState._timeoutId)
-  const now = Date.now()
-  musingState = {
-    status: 'idle',
-    currentTopicId: null,
-    role: null,
-    suppressUntil: now + MUSING_COOLDOWN_MS,
-    partnerUsername: null,
-    pendingOptions: null,
-    pendingType: null,
-    _timeoutId: null,
-    recursive: false,
-    depth: 0,
-    usedLines: null,
-    pendingTopic: null,
-    lastPartnerLine: null
-  }
-  logEvent('musing', 'conversation ended, cooldown 2.5min')
-}
-
-function musingTimeout () {
-  logEvent('musing', `timeout (topic: ${musingState.currentTopicId})`)
-  endMusingConversation()
-}
-
-function scheduleMusingTimeout (delayMs) {
-  if (musingState._timeoutId) clearTimeout(musingState._timeoutId)
-  musingState._timeoutId = setTimeout(() => {
-    if (musingState.status !== 'idle') musingTimeout()
-  }, delayMs)
-}
-
-// items: the candidate sibling pool to speak from (node objects, or closer
-// strings). type: 'nodes' | 'closers'. The actual line is chosen at SEND time
-// (inside the delay), not when scheduled — so by the time this bot speaks it has
-// already heard any competing bot's reply and pickAvoidingRecentPhrase skips it.
-// This is what stops two bots from blurting the same scripted line seconds apart.
-const _usedBranchSets = new Map()
-function pickBranchRotating (branches, topicId) {
-  const myPersona = botPersonaKey()
-  const eligible = branches.filter(b => !b.persona || b.persona === myPersona)
-  if (!eligible.length) return undefined
-  const key = `${topicId}:${myPersona}`
-  if (!_usedBranchSets.has(key)) _usedBranchSets.set(key, new Set())
-  const used = _usedBranchSets.get(key)
-  if (used.size >= Math.ceil(eligible.length / 2)) used.clear()
-  const available = eligible.filter(b => !used.has(b.response))
-  const pool = available.length ? available : eligible
-  const picked = pool[Math.floor(Math.random() * pool.length)]
-  if (picked) used.add(picked.response)
-  return picked
-}
-
-function musingSendAndAdvance (items, type, topicId) {
-  const delay = MUSING_REPLY_DELAY_MIN_MS + Math.random() * MUSING_REPLY_DELAY_SPREAD_MS
-
-  scheduleMusingChatAwareReply(topicId, delay, () => {
-    if (type === 'closers') {
-      const closer = pickAvoidingRecentPhrase(items)
-      if (closer) {
-        markBotChatHeardNow()
-        bot.chat(closer)
-      }
-      logEvent('musing', `said closer: "${String(closer).substring(0, 40)}..."`)
-      endMusingConversation()
-      return
-    }
-
-    const hasBranches = items.some(i => i && i.persona !== undefined)
-    const node = hasBranches
-      ? pickBranchRotating(items, topicId)
-      : pickAvoidingRecentPhrase(items, phraseForRandomItem)
-    if (!node || !node.response) {
-      endMusingConversation()
-      return
-    }
-    const personaLine = node.personaAlts?.[botPersonaKey()]
-    markBotChatHeardNow()
-    bot.chat(personaLine || node.response)
-    logEvent('musing', `said: "${(personaLine || node.response).substring(0, 40)}..."`)
-
-    const children = nodeChildren(node)
-    if (!children) {
-      endMusingConversation()
-      return
-    }
-
-    musingState.pendingOptions = children.items
-    musingState.pendingType = children.type
-    scheduleMusingTimeout(MUSING_REPLY_TIMEOUT_MS)
-  }, delay)
-}
-
-function beginRecursiveMusingState ({ topic, role, partnerUsername = null }) {
-  musingState = {
-    status: role === 'initiator' ? 'started' : 'active',
-    currentTopicId: topic.id,
-    role,
-    suppressUntil: musingState.suppressUntil,
-    partnerUsername,
-    pendingOptions: null,
-    pendingType: 'recursive',
-    _timeoutId: null,
-    recursive: true,
-    depth: 0,
-    usedLines: new Set(),
-    pendingTopic: topic,
-    lastPartnerLine: null
-  }
-}
-
-function beginClassicalMusingState ({ topic, role, partnerUsername = null }) {
-  musingState = {
-    status: role === 'initiator' ? 'started' : 'active',
-    currentTopicId: topic.id,
-    role,
-    suppressUntil: musingState.suppressUntil,
-    partnerUsername,
-    pendingOptions: topic.branches,
-    pendingType: 'nodes',
-    _timeoutId: null,
-    recursive: false,
-    depth: 0,
-    usedLines: null,
-    pendingTopic: null
-  }
-}
-
-function topicIsEligibleNow (topic) {
-  if (!topic) return false
-  if (topic.requiresWheatField && !inWheatField()) return false
-  return true
-}
-
-function weightedEligibleTopicPool (pool) {
-  const expanded = []
-  if (!Array.isArray(pool)) return expanded
-  for (const topic of pool) {
-    if (!topic || !topic.starter) continue
-    if (!topicIsEligibleNow(topic)) continue
-    const copies = weightedCopiesForTopic(topic)
-    for (let i = 0; i < copies; i++) expanded.push(topic)
-  }
-  return expanded
-}
-
-// Heuristic: companion bots are named like "Musebot", "Ripplebot", "Rainbot6032"
-// — "bot" optionally followed by digits. Used to keep the musing matcher from
-// treating one bot's STATUS announcements ("Leaving the pen.", "Nailed it!") as
-// freeform conversation input. Humans (e.g. "Quesss") can still freeform-join.
 function looksLikeBot (username) {
-  return /bot\d*$/i.test(String(username || ''))
+  const u = String(username || '')
+  return /bot\d*$/i.test(u) || KNOWN_BOT_NAMES.has(u.toLowerCase())
 }
 
-function handleMusingMessage (username, message) {
-  const trimmed = message.trim()
-  let topic = ALL_MUSING_TOPICS.find(t => t.starter === trimmed)
-  if (!topic) topic = ALL_MUSING_TOPICS.find(t => t.pattern && t.pattern.test(trimmed))
-  const recursiveTopic = topic && isRecursiveTopic(topic)
+// LLM-driven exchanges with other bots. One .env variable controls everything:
+// BOT_CHAT_DEPTH is this bot's per-exchange turn cap, and 0 means never reply
+// to another bot. Each reply waits at least 5s (sometimes notably longer) and
+// the line is generated AT FIRE TIME with the full chat tail, so the model
+// sees everything said during the wait and PASSes if the topic moved on.
+const BOT_CHAT_DEPTH = Math.max(0, parseInt(process.env.BOT_CHAT_DEPTH || '0', 10) || 0)
+const BOT_EXCHANGE_RESET_MS = 60_000 // silence that ends an exchange
+const BOT_EXCHANGE_START_COOLDOWN_MS = 5 * 60_000 // breather before the next one
+let botExchange = { partner: null, turns: 0, lastAt: 0 }
+let lastBotExchangeStartAt = 0
 
-  // Partner-lock: once we're conversing with someone, ignore musing lines from
-  // any other speaker. Without this, a third bot reciting the same topic tree
-  // gets pulled into our thread and both ends echo identical scripted lines in
-  // unison instead of holding a 1:1 conversation. (partnerUsername is null until
-  // the first responder locks in, so this never blocks a fresh exchange.)
-  if ((musingState.status === 'active' || musingState.status === 'started') &&
-      musingState.partnerUsername && username !== musingState.partnerUsername) {
-    return true
-  }
-
-  if (topic) {
-    if (!topicIsEligibleNow(topic)) {
-      logEvent('musing', `gated topic ignored here: ${topic.id}`)
-      return true
-    }
-    // Another bot answered our starter by echoing the same topic starter.
-    // For recursive topics this is enough to begin the ping-pong.
-    if (musingState.status === 'started' && musingState.role === 'initiator') {
-      if (musingState._timeoutId) clearTimeout(musingState._timeoutId)
-
-      if (recursiveTopic) {
-        beginRecursiveMusingState({ topic, role: 'responder', partnerUsername: username })
-        recursiveMusingSendAndAdvance(topic.id)
-        return true
-      }
-
-      // Classical starters from another bot while we are waiting usually should not
-      // fork a second conversation tree. Exception: farm_outstanding is often
-      // intentionally echoed by a second bot arriving in the wheat field, so answer
-      // it instead of letting both bots stare at the same pun-shaped silence.
-      if (topic.id === 'farm_outstanding' && inWheatField()) {
-        if (!topic.branches || !topic.branches.length) {
-          logEvent('musing', `topic has no valid response branch: ${topic.id}`)
-          scheduleMusingTimeout(MUSING_START_TIMEOUT_MS)
-          return true
-        }
-        beginClassicalMusingState({ topic, role: 'responder', partnerUsername: username })
-        musingSendAndAdvance(topic.branches, 'nodes', topic.id)
-        return true
-      }
-
-      scheduleMusingTimeout(MUSING_START_TIMEOUT_MS)
-      return true
-    }
-
-    if (musingState.status !== 'idle') return true
-
-    const isFarmingTopic = FARMING_MUSING_TOPICS.some(t => t.id === topic.id)
-
-    // Important: cooldown does NOT block responding.
-    if (isMusingActiveOrBusy({ allowDuringHarvest: isFarmingTopic })) return true
-
-    if (musingState._timeoutId) clearTimeout(musingState._timeoutId)
-
-    if (recursiveTopic) {
-      beginRecursiveMusingState({ topic, role: 'responder', partnerUsername: username })
-      recursiveMusingSendAndAdvance(topic.id)
-      return true
-    }
-
-    if (!topic.branches || !topic.branches.length) {
-      logEvent('musing', `topic has no valid response branch: ${topic.id}`)
-      return true
-    }
-    beginClassicalMusingState({ topic, role: 'responder', partnerUsername: username })
-    musingSendAndAdvance(topic.branches, 'nodes', topic.id)
-    return true
-  }
-
-  if (musingState.status !== 'active' && musingState.status !== 'started') return false
-
-  if (musingState.pendingType === 'closers') {
-    if (musingState.pendingOptions.includes(trimmed)) {
-      logEvent('musing', `conversation complete: ${musingState.currentTopicId}`)
-      endMusingConversation()
-      return true
-    }
-  }
-
-  if (musingState.pendingType === 'recursive' && musingState.recursive) {
-    if (!musingState.partnerUsername) musingState.partnerUsername = username
-    musingState.status = 'active'
-    musingState.lastPartnerLine = trimmed
-    recursiveMusingSendAndAdvance(musingState.currentTopicId)
-    return true
-  }
-
-  if (musingState.pendingType === 'nodes') {
-    let matched = musingState.pendingOptions.find(n => n.response === trimmed)
-
-    // Human freeform reply fallback:
-    // if a HUMAN answers during the musing window, continue the tree even if
-    // they didn't say the exact scripted phrase. Bots must match an exact
-    // scripted line — otherwise their status announcements ("Leaving the pen.",
-    // "Nailed it!") get mistaken for musing replies and the bots "respond" to
-    // each other's chatter, which reads as nonsense.
-    if (!matched && !MUSING_STARTERS.has(trimmed) && !looksLikeBot(username)) {
-      matched = pickRandom(musingState.pendingOptions)
-      logEvent('musing', `freeform reply from ${username}: "${trimmed}"`)
-    }
-
-    if (matched) {
-      if (!musingState.partnerUsername) musingState.partnerUsername = username
-      musingState.status = 'active'
-
-      const children = nodeChildren(matched)
-      if (!children || !children.items || !children.items.length) {
-        endMusingConversation()
-        return true
-      }
-
-      // Pass the whole sibling pool; the line is chosen at send time so it can
-      // dodge whatever a competing bot just said.
-      musingSendAndAdvance(children.items, children.type, musingState.currentTopicId)
-      return true
-    }
-  }
-
-  return false
+// A human speaking shifts the topic — whatever exchange was running is over.
+function resetBotExchange () {
+  botExchange = { partner: null, turns: 0, lastAt: 0 }
 }
 
-function initiateMusingFromPool (pool, label) {
-  const eligible = weightedEligibleTopicPool(pool)
-  const available = eligible.filter(t => !recentMusingTopics.has(t.id) && !wasPhraseRecentlyHeard(t.starter))
-  const fallback = eligible.filter(t => !recentMusingTopics.has(t.id))
-  const topicPool = available.length ? available : fallback
-  if (!topicPool.length) return false
-
-  const topic = pickRandom(topicPool)
-  if (!topic || !topic.starter) {
-    logEvent('musing', `no valid topic selected (${label})`)
-    return false
-  }
-
-  bot.chat(topic.starter)
-  recentMusingTopics.add(topic.id)
-
-  if (recentMusingTopics.size >= Math.floor(ALL_MUSING_TOPICS.length * 0.8)) {
-    recentMusingTopics.clear()
-  }
-
-  if (isRecursiveTopic(topic)) {
-    beginRecursiveMusingState({ topic, role: 'initiator' })
+function maybeReplyToBot (username, message) {
+  if (!BOT_CHAT_DEPTH) return
+  const now = Date.now()
+  const fresh = botExchange.partner !== username || now - botExchange.lastAt > BOT_EXCHANGE_RESET_MS
+  if (fresh) {
+    if (now - lastBotExchangeStartAt < BOT_EXCHANGE_START_COOLDOWN_MS) return
+    botExchange = { partner: username, turns: 0, lastAt: now }
+    lastBotExchangeStartAt = now
   } else {
-    beginClassicalMusingState({ topic, role: 'initiator' })
+    botExchange.lastAt = now
   }
-
-  logEvent('musing', `initiated (${label}): ${topic.id}`)
-  scheduleMusingTimeout(MUSING_START_TIMEOUT_MS)
-  return true
+  if (botExchange.turns >= BOT_CHAT_DEPTH) return
+  const turn = botExchange.turns + 1
+  const lastTurn = turn >= BOT_CHAT_DEPTH
+  // ≥5s before replying; occasionally the bot is simply slower to find words.
+  const delayMs = 5_000 + Math.random() * 7_000 + (Math.random() < 0.15 ? 10_000 : 0)
+  impulseExpressive('bot_chat',
+    `${username}, a fellow robot on this farm, just said: "${message}". You may answer with one line of your own — this is your turn ${turn} of ${BOT_CHAT_DEPTH} in this exchange${lastTurn ? ', and your last: bring it to a natural close' : ''}. If you have nothing genuine to add, PASS.`,
+    { delayMs }
+  ).then(spoken => {
+    if (spoken) { botExchange.turns = turn; botExchange.lastAt = Date.now() }
+  }).catch(e => logEvent('bot-chat', `impulse error: ${e.message}`))
 }
-
-function tryInitiateMusing () {
-  if (isMusingInitiationBlocked()) return
-  if (!bot.entity) return
-  if (Object.keys(bot.players).length < 2) return
-  initiateMusingFromPool(ALL_MUSING_TOPICS, 'idle')
-}
-
-function tryInitiateFarmingMusing () {
-  if (isMusingInitiationBlocked({ allowDuringHarvest: true })) return
-  if (!bot.entity) return
-  if (Object.keys(bot.players).length < 2) return
-  initiateMusingFromPool(FARMING_MUSING_TOPICS, 'farming')
-}
-
-let farmingMusingTimerId = null
-
-function startFarmingMusingTimer () {
-  stopFarmingMusingTimer()
-
-  function scheduleNext () {
-    farmingMusingTimerId = setTimeout(() => {
-      if (!activeTask.name?.startsWith('harvest')) {
-        stopFarmingMusingTimer()
-        return
-      }
-      tryInitiateFarmingMusing()
-      scheduleNext()
-    }, 20000 + Math.random() * 40000)
-  }
-
-  scheduleNext()
-  logEvent('musing', 'farming musing timer started')
-}
-
-function stopFarmingMusingTimer () {
-  if (farmingMusingTimerId) {
-    clearTimeout(farmingMusingTimerId)
-    farmingMusingTimerId = null
-  }
-}
-
-function startMusingTimer () {
-  function scheduleNext () {
-    const delay = 30000 + Math.random() * 60000
-    setTimeout(() => {
-      tryInitiateMusing()
-      scheduleNext()
-    }, delay)
-  }
-
-  scheduleNext()
-  logEvent('musing', 'timer started, interval 30–90s')
-}
-
-// ── End bot-to-bot idle musings ──────────────────────────────────────────────
 
 bot.on('playerJoined', (player) => {
   if (!player || player.username === bot.username) return
@@ -8854,6 +6033,10 @@ function handleCommand (cmd) {
     }
     case 'deaths': {
       return { ok: true, count: deathCount }
+    }
+    case 'llm': {
+      // Voice generator status: {"action":"llm"}
+      return { ok: true, ...llm.status(), persona: PERSONA, personaName: personaSpec.name, botChatDepth: BOT_CHAT_DEPTH }
     }
     case 'pos': {
       // Prefer raw protocol state — mineflayer's entity may be stuck at 0,0,0 on modded servers.
@@ -9443,7 +6626,7 @@ function handleCommand (cmd) {
       // Programmatic equivalent of the "stand down" / "do your thing" chat
       // commands. Disabling also cancels any in-progress wander and freezes the
       // bot in place, so an experiment can position it without a wander yanking
-      // it away. Gates wandering, pen/field joins, and musings (idleWanderEnabled).
+      // it away. Gates wandering and pen/field joins (idleWanderEnabled).
       if (typeof args.enabled === 'boolean') {
         idleWanderEnabled = args.enabled
         if (!args.enabled) {
