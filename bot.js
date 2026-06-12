@@ -5285,8 +5285,11 @@ function buildRouterSystemPrompt () {
     catalog,
     'args: arguments for that intent, {} when none.',
     'relevance: 0-10 — how strongly this line invites THIS robot to respond (10 = a question only it can answer, 0 = nothing to do with it).',
+    personaSpec.interests && personaSpec.interests.length
+      ? `This robot is especially interested in: ${personaSpec.interests.join(', ')}. Boost relevance by 3-4 when the line touches one of these topics — the robot would WANT to chime in.`
+      : null,
     'No prose, no markdown — the JSON object only.',
-  ].join('\n')
+  ].filter(Boolean).join('\n')
 }
 
 async function routeChat (username, message, { namedMe, fromBot }) {
@@ -5326,7 +5329,7 @@ async function routeChat (username, message, { namedMe, fromBot }) {
 
   // Conversation. A line addressed to the bot always earns a reply attempt;
   // anything else must clear the chime-in bar. The LLM may still PASS.
-  const addressed = audience === 'me' || namedMe
+  const addressed = audience === 'me' || audience === 'everyone' || namedMe
   if (!addressed && relevance < CHAT_RELEVANCE_MIN) return
   if (fromBot) return replyToBotTurn(username, message)
   facePlayer(username).catch(() => {})
