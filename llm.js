@@ -127,8 +127,57 @@ async function generateLine ({ system, exemplars, context, maxChars = 200, timeo
   }
 }
 
-function status () {
-  return { healthy, url: LLM_URL, model: LLM_MODEL }
+// ── Chat routing classifier ──────────────────────────────────────────────────
+// One small JSON-mode call per incoming chat line. Runs on its own promise
+// chain, independent of generateLine's single-flight lock, so routing keeps
+// working while a long expressive generation is in flight. Each bot has its
+// own Ollama box, so per-line classification is cheap. Resolves a parsed
+// object, or null for: unreachable, busy storm, timeout, or malformed JSON —
+// null means "stay silent", same failure philosophy as the voice.
+const CLASSIFY_TIMEOUT_MS = 6_000
+const CLASSIFY_MAX_PENDING = 6
+let classifyChain = Promise.resolve()
+let classifyPending = 0
+
+function classify ({ system, user, timeoutMs = CLASSIFY_TIMEOUT_MS }) {
+  if (!healthy) return Promise.resolve(null)
+  if (classifyPending >= CLASSIFY_MAX_PENDING) return Promise.resolve(null) // chat storm — drop, lines go stale fast
+  classifyPending++
+  const job = classifyChain.then(async () => {
+    try {
+      const res = await fetchWithTimeout(`${LLM_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: LLM_MODEL,
+          think: false,
+          format: 'json',
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: user },
+          ],
+          stream: false,
+          keep_alive: KEEP_ALIVE,
+          options: { num_predict: 160, temperature: 0.1 },
+        }),
+      }, timeoutMs)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      const parsed = JSON.parse(data?.message?.content ?? 'null')
+      return (parsed && typeof parsed === 'object') ? parsed : null
+    } catch (e) {
+      log('llm', `classify failed (${e.message})`)
+      return null
+    } finally {
+      classifyPending--
+    }
+  })
+  classifyChain = job.catch(() => {})
+  return job
 }
 
-module.exports = { init, generateLine, status, checkHealth }
+function status () {
+  return { healthy, url: LLM_URL, model: LLM_MODEL, classifyPending }
+}
+
+module.exports = { init, generateLine, classify, status, checkHealth }

@@ -445,9 +445,6 @@ function tryAutoGreet () {
     if (greetHistory.has(name)) continue
     greetHistory.set(name, now)
     lastGreetAt = now
-    // Greeting someone opens the conversation: their reply shouldn't need to
-    // re-address the bot by name.
-    activeConvos.set(name, now)
     facePlayer(name).then(() => {
       sendEmote('salute')
       bot.chat(getGreetText())
@@ -1225,54 +1222,12 @@ const IDLE_WANDER_FIELD_LINES = [
   { text: 'I feel a sudden need to stand in a field.', weight: (s) => s.curiosity + s.snark },
   { text: 'The wheat and I need to have a conversation.', weight: (s) => s.charm + s.curiosity },
 ]
-const IDLE_WANDER_FIELD_JOIN_LINES = [
-  { text: 'That sounds nice. I will join you.', weight: (s) => s.charm + s.curiosity },
-  { text: 'The wheat field? I could use a little field time.', weight: (s) => s.curiosity + s.charm },
-  { text: 'I will come stand in the wheat too. For science, probably.', weight: (s) => s.curiosity + s.snark },
-  { text: 'A field visit seems sensible. I am coming over.', weight: (s) => s.focus + s.charm },
-  { text: 'Wheat-adjacent companionship sounds acceptable.', weight: (s) => s.snark + s.charm },
-  { text: 'I suppose the field can accommodate one more thoughtful robot.', weight: (s) => s.snark + s.patience },
-  { text: 'I like the field. I will come with you.', weight: (s) => s.charm + s.patience },
-]
-const IDLE_WANDER_FIELD_JOIN_CHANCE = 0.55
-const IDLE_WANDER_FIELD_JOIN_COOLDOWN_MS = 2 * 60 * 1000
-let lastFieldJoinAt = 0
 let lastFieldRepairAt = 0
 const FIELD_WANDER_REPAIR_COOLDOWN_MS = 15 * 1000
 
-let _fieldAnnouncePhrases = null
-function isIdleWanderFieldAnnouncement (message) {
-  if (!_fieldAnnouncePhrases) {
-    // Another bot may run any persona, so the recognition set unions the
-    // idleWanderField slot across every spec file, plus the shared base pool.
-    const all = IDLE_WANDER_FIELD_LINES.concat(allPersonaFunctional('idleWanderField'))
-    _fieldAnnouncePhrases = new Set(all.map(line => normalizeChatPhrase(typeof line === 'string' ? line : line.text)))
-  }
-  return _fieldAnnouncePhrases.has(normalizeChatPhrase(message))
-}
-
-function canJoinFieldWanderNow () {
-  if (!idleWanderEnabled) return false
-  if (idleWanderBusy()) return false
-  if (isBedtime()) return false
-  if (inWheatField()) return false
-  if (Date.now() - lastFieldJoinAt < IDLE_WANDER_FIELD_JOIN_COOLDOWN_MS) return false
-  return Math.random() < IDLE_WANDER_FIELD_JOIN_CHANCE
-}
-
-async function tryJoinFieldWanderFromChat (username, message) {
-  if (!isIdleWanderFieldAnnouncement(message)) return false
-  if (!canJoinFieldWanderNow()) return false
-  lastFieldJoinAt = Date.now()
-  bot.chat(pickLine(withPersonaSlot(IDLE_WANDER_FIELD_JOIN_LINES, 'idleWanderFieldJoin')))
-  logEvent('idle-wander', `joining ${username} in wheat field`)
-  try {
-    await runIdleWanderToField({ announce: false })
-  } catch (e) {
-    if (e.name !== 'AbortError') logEvent('idle-wander', `field join failed: ${e.message}`)
-  }
-  return true
-}
+// (Chat-triggered field-wander joining was removed 2026-06-11 with the LLM
+// chat router refactor — bots no longer phrase-match each other's announce
+// lines. Idle wandering itself is unchanged.)
 async function maybeRepairBareWheatTilesWhileWandering () {
   if (!inWheatField()) return false
   if (Date.now() - lastFieldRepairAt < FIELD_WANDER_REPAIR_COOLDOWN_MS) return false
@@ -1497,7 +1452,14 @@ function describeWhereabouts () {
 function buildExpressiveContext (situation) {
   const parts = []
   parts.push(`It is ${describeTimeOfDay()}${bot.isRaining ? ' and raining' : ''}. You are ${describeWhereabouts()}.`)
+  // Vitals and pockets, so questions like "how are you", "where are you",
+  // "what are you carrying" get answered truthfully, in voice — these were
+  // scripted handlers before the 2026-06-11 router refactor.
+  parts.push(`Your vitals: HP ${bot.health?.toFixed(0) ?? '?'}/20, food ${bot.food ?? '?'}/20, deaths this session: ${deathCount}. Position: ${bot.entity ? posStr(bot.entity.position) : 'unknown'}.`)
+  const inv = (bot.inventory?.items() || []).sort((a, b) => b.count - a.count).slice(0, 5).map(i => `${i.count}× ${i.name}`)
+  parts.push(inv.length ? `Carrying: ${inv.join(', ')}.` : 'Your pockets are empty.')
   if (activeTask.name) parts.push(`You are in the middle of: ${activeTask.name}.`)
+  if (sustainState.active) parts.push('You are the one keeping the fire going (the autonomous wheat → bio-fuel loop).')
   if (followTarget) parts.push(`You are following ${followTarget} around.`)
   const others = Object.keys(bot.players || {}).filter(n => n !== bot.username)
   if (others.length) parts.push(`Also on the server: ${others.join(', ')}.`)
@@ -1821,16 +1783,6 @@ function snoozeWheatReadyAlerts (username = 'someone') {
   bot.chat(line)
   logEvent('wheat-alert', `snoozed by ${username}`)
   return true
-}
-
-function isWheatReadyAcknowledgement (message) {
-  if (!wheatReadyState.ready || wheatReadyState.snoozed) return false
-  if (!nickRe || !nickRe.test(message)) return false
-
-  const stripped = message.replace(nickRe, ' ').toLowerCase()
-  const acknowledges = /\b(ok|okay|thanks?|thank you|got it|heard|copy|roger|understood|cool|alright|all right|noted)\b/i.test(stripped)
-  const asksForAction = /\b(harvest|reap|cut|go|get|start|do it|now)\b/i.test(stripped)
-  return acknowledges && !asksForAction
 }
 
 function tryWheatReadyAlert () {
@@ -4859,16 +4811,13 @@ const AS_YOU_WERE_LINES = [
   { text: 'Roaming resumed. Try to keep up.', weight: (s) => s.snark + s.focus },
 ]
 
+// Reflex tier: the deterministic chat commands that survived the 2026-06-11
+// LLM-router refactor. These fire only when the bot is addressed by name, must
+// work instantly and offline, and are deliberately few — everything else
+// (movement, farm chores, questions, banter) routes through the LLM. Safety
+// commands (stop, stand down) live here so they can never be hostage to
+// inference latency or a downed Ollama.
 const CHAT_HANDLERS = [
-  {
-    name: 'where',
-    pattern: /\bwhere are you\b|\bwhere u at\b|\bwhere r u\b/i,
-    handler: (_user) => {
-      const p = bot.entity?.position
-      if (!p) return bot.chat('I have no position data yet. Concerning.')
-      bot.chat(pickLine(WHERE_LINES, { pos: posStr(p) }))
-    },
-  },
   {
     name: 'follow',
     pattern: /\bfollow me\b/i,
@@ -4947,81 +4896,11 @@ const CHAT_HANDLERS = [
     },
   },
   {
-    name: 'sleep',
-    pattern: /\b(go to (bed|sleep)|sleep now|bedtime)\b/i,
-    handler: (_user) => {
-      bot.chat('Heading to bed.')
-      tryAutoSleep() // existing function
-    },
-  },
-  {
-    name: 'time',
-    pattern: /\bwhat('?s| is) the time\b|\bwhat time\b|\bis it (day|night)\b/i,
-    handler: (_user) => {
-      const t = bot.time || {}
-      const pool = t.isDay ? TIME_DAY_LINES : TIME_NIGHT_LINES
-      bot.chat(pickLine(pool, { t: t.timeOfDay ?? '?', d: t.day ?? '?' }))
-    },
-  },
-  {
-    name: 'whats_up',
-    pattern: /\bwhat('?s| is)\s*up\b|\bwassup\b|\bsup\b(?!.*\b(stop|stay|halt)\b)/i,
-    handler: (user) => {
-      facePlayer(user).catch(() => {})
-      bot.chat(pickLine(withPersonaSlot(WHATS_UP_LINES, 'whatsUp')))
-    },
-  },
-  {
-    name: 'status',
-    pattern: /\b(status|how are you|you (ok|alright)|health)\b/i,
-    handler: (_user) => {
-      bot.chat(pickLine(STATUS_LINES, {
-        hp: bot.health?.toFixed(0) ?? '?',
-        food: bot.food ?? '?',
-        deaths: deathCount,
-      }))
-    },
-  },
-  {
-    name: 'furnace_status',
-    pattern: /\b(what('?s| is)\s*(cookin(g|')?|baking|smelting|in the (furnace|oven))|furnace status|check (the\s+)?furnace)\b/i,
-    handler: async (_user) => {
-      sendEmote('think')
-      const b = bot.blockAt(new Vec3(
-        HARVEST_WAYPOINTS.furnace.x, HARVEST_WAYPOINTS.furnace.y, HARVEST_WAYPOINTS.furnace.z,
-      ))
-      if (!b) { bot.chat("Can't see the furnace from here."); return }
-      try {
-        const f = await bot.openFurnace(b)
-        const input = f.inputItem()
-        const fuel = f.fuelItem()
-        const output = f.outputItem()
-        f.close()
-        const parts = []
-        if (input) parts.push(`${input.count}× ${input.name} cooking`)
-        if (output) parts.push(`${output.count}× ${output.name} done`)
-        if (fuel) parts.push(`fuel: ${fuel.count}× ${fuel.name}`)
-        if (!parts.length) bot.chat("Furnace is empty — nothing cooking.")
-        else bot.chat(parts.join('; ') + '.')
-      } catch (e) { bot.chat(`Couldn't check the furnace: ${e.message}`) }
-    },
-  },
-  {
     name: 'stash-all',
     pattern: /\b(stash|dump|deposit|empty|clear)\s+(all|everything|it all|your (pockets|inventory))|\bempty\s+(your\s+)?pockets\b|\bstash\s+all\b/i,
     handler: (_user) => {
       runStashAll().catch(e => {
         logEvent('stash-all-error', e.message)
-        bot.chat(`Stash failed: ${e.message}`)
-      })
-    },
-  },
-  {
-    name: 'stash',
-    pattern: /\b(stash|dump|deposit)\s+(the\s+)?(unknown|junk|modded)\b/i,
-    handler: (_user) => {
-      runStashUnknown().catch(e => {
-        logEvent('stash-error', e.message)
         bot.chat(`Stash failed: ${e.message}`)
       })
     },
@@ -5040,26 +4919,6 @@ const CHAT_HANDLERS = [
     },
   },
   {
-    name: 'who',
-    pattern: /\bwho('?s| is) (online|here|around)\b|\bwho are you with\b/i,
-    handler: (_user) => {
-      const names = Object.keys(bot.players).filter(n => n !== bot.username)
-      bot.chat(names.length ? `I see: ${names.join(', ')}.` : 'Just me out here.')
-    },
-  },
-  {
-    name: 'go_to_pen',
-    pattern: /\b(go|head|get|come|step)\s+(to|into|in|see|check on)\s+(the\s+)?(sheep\s*pen|pen|sheep)\b|\benter\s+(the\s+)?(pen|sheep\s*pen)\b|\b(visit|see)\s+(the\s+)?sheep\b/i,
-    handler: (_user) => {
-      abortGen++
-      runEnterPen().catch(e => {
-        if (e.name === 'AbortError') return
-        logEvent('enter-pen-error', e.message)
-        bot.chat(`Can't enter pen: ${e.message}`)
-      })
-    },
-  },
-  {
     name: 'shear_sheep',
     pattern: /\b(shear|shave|clip)\s+(the\s+)?sheep\b|\b(get|collect|gather)\s+(some\s+)?wool\b/i,
     handler: (_user) => {
@@ -5068,64 +4927,6 @@ const CHAT_HANDLERS = [
         if (e.name === 'AbortError') return
         logEvent('shear-error', e.message)
         bot.chat(`Can't shear: ${e.message}`)
-      })
-    },
-  },
-  {
-    name: 'leave_pen',
-    pattern: /\b(leave|exit|get out of|come out of)\s+(the\s+)?(sheep\s*pen|pen)\b|\b(come|go|step|get)\s+(out|away)\s+(of\s+)?(the\s+)?(pen|sheep)\b/i,
-    handler: (_user) => {
-      abortGen++
-      runLeavePen().catch(e => {
-        if (e.name === 'AbortError') return
-        logEvent('leave-pen-error', e.message)
-        bot.chat(`Can't leave pen: ${e.message}`)
-      })
-    },
-  },
-  {
-    name: 'go_outside',
-    pattern: /\b(go|head|step|get|come)\s+(outside|out|outdoors)\b|\b(leave|exit)\s+(the\s+)?(house|building)\b/i,
-    handler: (_user) => {
-      abortGen++
-      runGoOutside().catch(e => {
-        if (e.name === 'AbortError') return
-        logEvent('go-outside-error', e.message)
-        bot.chat(`Can't go out: ${e.message}`)
-      })
-    },
-  },
-  {
-    name: 'come_inside',
-    pattern: /\b(come|go|head|step|get)\s+(back\s+)?(inside|in|indoors|home)\b|\b(enter|return to)\s+(the\s+)?(house|building)\b/i,
-    handler: (_user) => {
-      abortGen++
-      const go = async () => {
-        if (inPen()) await runLeavePen()
-        await runGoInside()
-      }
-      go().catch(e => {
-        if (e.name === 'AbortError') return
-        logEvent('go-inside-error', e.message)
-        bot.chat(`Can't come in: ${e.message}`)
-      })
-    },
-  },
-  {
-    name: 'eat',
-    pattern: /\b(eat|have a snack|grab a bite|feed yourself)\b/i,
-    handler: (_user) => {
-      if (bot.food >= 20) { bot.chat(pickLine(EAT_FULL_LINES, { food: bot.food })); return }
-      eatSomething().then((msg) => bot.chat(msg)).catch(e => bot.chat(`Can't eat: ${e.message}`))
-    },
-  },
-  {
-    name: 'dough',
-    pattern: /\b(make|mix)\b.*\bdough\b/i,
-    handler: (_user) => {
-      runBake('dough').catch(e => {
-        logEvent('bake-error', e.message)
-        bot.chat(`Mix aborted: ${e.message}`)
       })
     },
   },
@@ -5144,24 +4945,8 @@ const CHAT_HANDLERS = [
     },
   },
   {
-    // Match baking potatoes BEFORE the general bake/harvest rules: "bake
-    // those potatoes" / "cook the potatoes" / "smelt potatoes".
-    name: 'bake-potato',
-    pattern: /\b(bake|cook|smelt|roast)\b.*\bpotato(es)?\b/i,
-    handler: (user) => {
-      abortGen++
-      runBakePotatoes({ user }).catch(e => {
-        if (e.name === 'AbortError') return
-        logEvent('bake-potato-error', e.message)
-        logEvent('bake-potato', `aborted: ${e.message}`)
-      })
-    },
-  },
-  {
-    // Match potato harvest requests BEFORE the generic harvest rule so
-    // "harvest potatoes" goes to the right routine instead of the wheat one.
-    // Kept AFTER bake-potato so "bake those potatoes" doesn't match here.
-    // Default: right-click method (water-safe, no replant phase).
+    // Right-click method (water-safe, no replant phase). Note "bake" is not in
+    // the verb list — "bake the potatoes" routes to the LLM's bake_potatoes intent.
     name: 'harvest-potato',
     pattern: /\b(go|get|grab|harvest|dig|pick)\b.*\bpotato(es)?\b/i,
     handler: (user) => {
@@ -5170,58 +4955,6 @@ const CHAT_HANDLERS = [
         if (e.name === 'AbortError') return
         logEvent('harvest-potato-rc-error', e.message)
         bot.chat(`Potato run aborted: ${e.message}`)
-      })
-    },
-  },
-  {
-    // Multi-item deposit. Examples:
-    //   "deposit bread"
-    //   "deposit seeds"
-    //   "stash bread and seeds"
-    //   "stash the baked potatoes"
-    //   "deposit bread, wheat, seeds, and baked potatoes"
-    // Matches any combination of bread / wheat / seeds / baked potatoes;
-    // missing ones are silently skipped. Must come BEFORE stash-wheat so
-    // multi-item phrases beat the wheat-only handler. Note: raw "potato"
-    // alone is not stashable here — raw potatoes go in the furnace.
-    name: 'deposit-named',
-    pattern: /\b(stash|deposit|dump|put|store|empty|clear)\b.*\b(bread|seeds?|wheat|baked\s*potato(es)?)\b/i,
-    handler: (_user, stripped) => {
-      const wantBread = /\bbread\b/i.test(stripped)
-      const wantSeeds = /\bseeds?\b/i.test(stripped)
-      const wantBaked = /\bbaked\s*potato(es)?\b/i.test(stripped)
-      // \bwheat\b would also match "wheat seeds" — guard so we don't
-      // double-count the seeds case as wheat.
-      const wantWheat = /\bwheat\b/i.test(stripped) && !/\bwheat\s+seeds?\b/i.test(stripped)
-      // If only wheat was named (no bread, no seeds, no baked), defer to
-      // stash-wheat to preserve the dedicated wheat-only path.
-      if (wantWheat && !wantBread && !wantSeeds && !wantBaked) {
-        runStashWheat().catch(e => {
-          logEvent('stash-wheat-error', e.message)
-          bot.chat(`Stash failed: ${e.message}`)
-        })
-        return
-      }
-      const names = []
-      if (wantBread) names.push('bread')
-      if (wantWheat) names.push('wheat')
-      if (wantSeeds) names.push('wheat_seeds')
-      if (wantBaked) names.push('baked_potato')
-      runDepositNamed(names).catch(e => {
-        logEvent('deposit-named-error', e.message)
-        bot.chat(`Deposit failed: ${e.message}`)
-      })
-    },
-  },
-  {
-    // Match wheat-stash requests BEFORE the generic harvest rule. Examples:
-    // "stash the wheat", "deposit the wheat", "put the wheat away".
-    name: 'stash-wheat',
-    pattern: /\b(stash|deposit|dump|put|store|empty|clear)\b.*\bwheat\b/i,
-    handler: (_user) => {
-      runStashWheat().catch(e => {
-        logEvent('stash-wheat-error', e.message)
-        bot.chat(`Stash failed: ${e.message}`)
       })
     },
   },
@@ -5240,27 +4973,11 @@ const CHAT_HANDLERS = [
     },
   },
   {
-    // Harvest wheat — right-click method (the only method since brute was
-    // removed 2026-05-14).
-    name: 'harvest',
-    pattern: /\b(harvest|cut|reap)\b.*\b(wheat|field|crops?)\b|\b(harvest|cut|reap)( (the|some))?\b(?!.*(bed|meat|potato))/i,
-    handler: (user, stripped) => {
-      abortGen++
-      let half = 'all'
-      if (/\bnorth\s+field\b/i.test(stripped)) half = 'north-field'
-      else if (/\bsouth\s+field\b/i.test(stripped)) half = 'south-field'
-      else if (/\bnorth\b/i.test(stripped)) half = 'north'
-      else if (/\bsouth\b/i.test(stripped)) half = 'south'
-      runHarvestRightClick({ half, user }).catch(e => {
-        if (e.name === 'AbortError') return
-        logEvent('harvest-rc-error', e.message)
-        bot.chat(`Harvest aborted: ${e.message}`)
-      })
-    },
-  },
-  {
+    // Anchored: only fires when the whole (name-stripped) message is the emote
+    // request — "Roz, wave", "give us a salute". A "no" or "think" buried in a
+    // sentence is conversation and belongs to the LLM, not an emote trigger.
     name: 'emote',
-    pattern: /\b(wave|nod|clap|cheer|point|salute|shrug|headbang|weep|cry|facepalm|bow|think|yes|no)\b/i,
+    pattern: /^(?:please\s+)?(?:do\s+(?:a|the)\s+|give\s+(?:me|us)\s+a\s+)?(wave|nod|clap|cheer|point|salute|shrug|headbang|weep|cry|facepalm|bow|think|yes|no)\s*[!.?]*$/i,
     handler: (_user, stripped) => {
       const EMOTE_MAP = {
         wave: 'wave', nod: 'yes', yes: 'yes', no: 'no',
@@ -5297,33 +5014,6 @@ const CHAT_HANDLERS = [
         }
         await sleep(500)
       }
-      sendEmote('salute')
-    },
-  },
-  {
-    name: 'robot_dance',
-    pattern: /\b(do the robot|robot dance)\b/i,
-    handler: async (user) => {
-      facePlayer(user).catch(() => {})
-      bot.chat('/me does the robot')
-      const yaw = bot.entity?.yaw ?? 0
-      // Stiff quarter-turns with points and waves — mechanical style
-      sendEmote('point')
-      await sleep(600)
-      await bot.look(yaw + Math.PI / 2, 0, true)
-      await sleep(300)
-      sendEmote('wave')
-      await sleep(600)
-      await bot.look(yaw + Math.PI, 0, true)
-      await sleep(300)
-      sendEmote('point')
-      await sleep(600)
-      await bot.look(yaw - Math.PI / 2, 0, true)
-      await sleep(300)
-      sendEmote('wave')
-      await sleep(600)
-      await bot.look(yaw, 0, true)
-      await sleep(300)
       sendEmote('salute')
     },
   },
@@ -5365,191 +5055,252 @@ function extractMySegment (message) {
   return mine || message
 }
 
-// Conversation continuity: once a player addresses the bot by name, their
-// follow-up messages keep flowing to it without re-addressing — like an actual
-// conversation — until the thread goes quiet for CONVO_WINDOW_MS or they
-// address someone else by name.
-const CONVO_WINDOW_MS = 90_000
-const activeConvos = new Map() // username → timestamp of their last message to us
+// ── LLM chat router ──────────────────────────────────────────────────────────
+// (2026-06-11) The phrase-matching Tier-A triggers, the conversation-window
+// machinery, and the regex fallthrough are gone. Every chat line that isn't a
+// named reflex command goes through one small JSON classification call on this
+// bot's own Ollama box. The router decides who was being addressed and whether
+// the line is a command (mapped to a whitelisted intent below), conversation,
+// or noise. No canned fallbacks: when the LLM is unreachable the bot simply
+// doesn't engage — same failure philosophy as the expressive voice.
+//
+// Knobs (.env):
+//   CHAT_RELEVANCE_MIN  0–10 (default 7) — how strongly an UNADDRESSED line
+//                       must invite this bot before it chimes in. 11+ = never.
+//   BOT_CHAT_DEPTH      per-exchange turn cap for bot-to-bot talk (0 = mute).
+const CHAT_RELEVANCE_MIN = Math.max(0, parseInt(process.env.CHAT_RELEVANCE_MIN || '7', 10) || 7)
 
-function inConversationWith (username) {
-  const t = activeConvos.get(username)
-  return !!t && Date.now() - t < CONVO_WINDOW_MS
+// Whitelisted router intents. The LLM can only ever name one of these keys —
+// anything else is discarded. Each maps to the same routine the old regex
+// handler (or the ctl API) uses, so chained loops like keep-fire are untouched.
+const CHAT_INTENTS = {
+  harvest_wheat: {
+    hint: 'harvest the wheat field; args.section one of all|north|south|north-field|south-field (default all)',
+    run: (user, args) => {
+      abortGen++
+      const half = ['north', 'south', 'north-field', 'south-field'].includes(args.section) ? args.section : 'all'
+      return runHarvestRightClick({ half, user })
+    },
+  },
+  harvest_potatoes: {
+    hint: 'harvest/dig the potato patch',
+    run: (user) => { abortGen++; return runHarvestPotatoesRightClick({ user }) },
+  },
+  bake_potatoes: {
+    hint: 'bake/cook/roast raw potatoes in the furnace',
+    run: (user) => { abortGen++; return runBakePotatoes({ user }) },
+  },
+  bake_bread: { hint: 'bake bread (mixes dough first if needed)', run: () => runBake('both') },
+  mix_dough: { hint: 'mix wheat into dough only, no baking', run: () => runBake('dough') },
+  stash_wheat: { hint: 'deposit carried wheat into its chest', run: () => runStashWheat() },
+  stash_unknown: { hint: 'stash unknown/junk/modded items', run: () => runStashUnknown() },
+  deposit_items: {
+    hint: 'deposit specific items; args.items array from: bread, wheat, seeds, baked_potato',
+    run: (_user, args) => {
+      const MAP = { bread: 'bread', wheat: 'wheat', seeds: 'wheat_seeds', wheat_seeds: 'wheat_seeds', baked_potato: 'baked_potato', baked_potatoes: 'baked_potato' }
+      const names = [...new Set((Array.isArray(args.items) ? args.items : []).map(i => MAP[String(i).toLowerCase().replace(/\s+/g, '_')]).filter(Boolean))]
+      if (!names.length) return runStashAll()
+      return runDepositNamed(names)
+    },
+  },
+  go_outside: { hint: 'leave the house / go outdoors', run: () => { abortGen++; return runGoOutside() } },
+  go_inside: {
+    hint: 'come inside the house / come home',
+    run: () => {
+      abortGen++
+      return (async () => { if (inPen()) await runLeavePen(); await runGoInside() })()
+    },
+  },
+  enter_pen: { hint: 'go into the sheep pen / visit the sheep', run: () => { abortGen++; return runEnterPen() } },
+  leave_pen: { hint: 'leave the sheep pen', run: () => { abortGen++; return runLeavePen() } },
+  eat: {
+    hint: 'eat something now',
+    run: () => {
+      if (bot.food >= 20) { bot.chat(pickLine(EAT_FULL_LINES, { food: bot.food })); return Promise.resolve() }
+      return eatSomething().then(msg => bot.chat(msg))
+    },
+  },
+  sleep: { hint: 'go to bed now', run: () => { bot.chat('Heading to bed.'); return tryAutoSleep() } },
+  check_furnace: { hint: 'report what is cooking in the furnace', run: () => reportFurnace() },
+  follow: {
+    hint: 'start following the speaker (or args.player if they name someone else)',
+    run: (user, args) => {
+      const rule = CHAT_HANDLERS.find(r => r.name === 'follow')
+      return rule.handler(typeof args.player === 'string' && args.player ? args.player : user)
+    },
+  },
+  stop_follow: {
+    hint: 'stop following — also use when the followed player says goodbye, dismisses the bot, or leaves',
+    run: () => {
+      if (!followTarget) return Promise.resolve()
+      bot.pathfinder.setGoal(null)
+      const user = followTarget
+      followTarget = null; followEntity = null; followChainPos = 0
+      bot.chat(pickFarewell())
+      logEvent('chat-intent', `stop_follow (was following ${user})`)
+      return Promise.resolve()
+    },
+  },
+  keep_fire: { hint: 'start the autonomous keep-the-fire-going farm loop', run: (user) => runSustainFarm(user) },
+  stop: {
+    hint: 'stop the current activity (also: halt, knock it off, that is enough)',
+    run: (user) => { const rule = CHAT_HANDLERS.find(r => r.name === 'stop'); return rule.handler(user, '') },
+  },
 }
 
-// "Roz, come here" — a leading Name-comma/colon means they're talking to
-// somebody. If that somebody isn't us, the message isn't ours.
-function addressesSomeoneElse (message) {
-  const m = /^\s*([A-Za-z_][A-Za-z0-9_]{1,15})\s*[,:]/.exec(message)
-  if (!m) return false
-  return !(nickRe && nickRe.test(m[1]))
+// Old furnace_status handler, preserved as a routine for the check_furnace intent.
+async function reportFurnace () {
+  sendEmote('think')
+  const b = bot.blockAt(new Vec3(
+    HARVEST_WAYPOINTS.furnace.x, HARVEST_WAYPOINTS.furnace.y, HARVEST_WAYPOINTS.furnace.z,
+  ))
+  if (!b) { bot.chat("Can't see the furnace from here."); return }
+  try {
+    const f = await bot.openFurnace(b)
+    const input = f.inputItem()
+    const fuel = f.fuelItem()
+    const output = f.outputItem()
+    f.close()
+    const parts = []
+    if (input) parts.push(`${input.count}× ${input.name} cooking`)
+    if (output) parts.push(`${output.count}× ${output.name} done`)
+    if (fuel) parts.push(`fuel: ${fuel.count}× ${fuel.name}`)
+    if (!parts.length) bot.chat('Furnace is empty — nothing cooking.')
+    else bot.chat(parts.join('; ') + '.')
+  } catch (e) { bot.chat(`Couldn't check the furnace: ${e.message}`) }
 }
-const LOVE_RE = /\bi love you\b/i
-const BYE_RE = /\b(bye|bye bye|goodbye|good bye|see ya|see you|later|peace out|ok bye|cya|ttyl|take care)\b/i
 
-const IDUNNO_LINES = [
-  { text: 'I dunno.', weight: (s) => s.charm + 10 },
-  { text: 'Unclear.', weight: (s) => s.focus + 10 },
-  { text: 'Hard to say.', weight: (s) => s.patience + 10 },
-  { text: 'The sheep may have additional insight.', weight: (s) => s.curiosity + s.charm },
-  { text: 'That is outside my area of agricultural expertise.', weight: (s) => s.focus + 10 },
-]
+function buildRouterSystemPrompt () {
+  const myNames = [...new Set([NICKNAME, bot.username].filter(Boolean))]
+  const others = [...KNOWN_BOT_NAMES].filter(n => !myNames.some(m => m.toLowerCase() === n))
+  const catalog = Object.entries(CHAT_INTENTS).map(([k, v]) => `  ${k} — ${v.hint}`).join('\n')
+  return [
+    `You route in-game Minecraft chat for a farm robot named ${myNames.join(' (also: ')}${myNames.length > 1 ? ')' : ''}. Other robots on this server: ${others.join(', ') || 'none'}. Anyone else speaking is a human player.`,
+    'Given the latest chat line (with recent chat for context), reply with ONLY this JSON object:',
+    '{"audience":"me|other|everyone|unclear","kind":"command|conversation|noise","intent":null,"args":{},"relevance":0}',
+    'audience: who the line is addressed to. "me" if it names this robot or clearly continues an ongoing exchange with it; "other" if it names or clearly continues with someone else (a named command for another robot is ALWAYS "other"); "everyone" for lines aimed at the whole group; "unclear" otherwise.',
+    'kind: "command" if the speaker wants the listener to DO something that matches an intent below. "conversation" for greetings, questions, banter, observations. "noise" for server messages, command echoes, or content-free spam.',
+    'intent: when kind is "command", exactly one key from this list, else null:',
+    catalog,
+    'args: arguments for that intent, {} when none.',
+    'relevance: 0-10 — how strongly this line invites THIS robot to respond (10 = a question only it can answer, 0 = nothing to do with it).',
+    'No prose, no markdown — the JSON object only.',
+  ].join('\n')
+}
+
+async function routeChat (username, message, { namedMe, fromBot }) {
+  // Bot-to-bot lines: check the exchange budget before spending a classification.
+  if (fromBot && !botExchangeAllows(username)) return
+  const verdict = await llm.classify({
+    system: buildRouterSystemPrompt(),
+    user: [
+      recentChat.length ? `Recent chat (oldest first):\n${recentChat.join('\n')}` : null,
+      `Latest line — <${username}>: ${message}`,
+    ].filter(Boolean).join('\n\n'),
+  })
+  if (!verdict) return
+  const audience = String(verdict.audience || 'unclear')
+  const kind = String(verdict.kind || 'noise')
+  const relevance = Math.max(0, Math.min(10, Number(verdict.relevance) || 0))
+  logEvent('chat-router', `<${username}> ${message} -> ${JSON.stringify({ audience, kind, intent: verdict.intent ?? null, relevance })}`)
+  if (kind === 'noise' || audience === 'other') return
+
+  if (kind === 'command' && (audience === 'me' || audience === 'everyone')) {
+    if (fromBot) return // robots don't take orders from each other
+    const intent = CHAT_INTENTS[verdict.intent]
+    if (!intent) return
+    // A new directed command from the followed player ends the follow.
+    if (followTarget && username === followTarget && verdict.intent !== 'follow') {
+      bot.pathfinder.setGoal(null)
+      followTarget = null; followEntity = null; followChainPos = 0
+    }
+    logEvent('chat-intent', `${verdict.intent} <- <${username}> ${message}`)
+    Promise.resolve(intent.run(username, verdict.args || {})).catch(e => {
+      if (e.name === 'AbortError') return
+      logEvent('chat-intent', `${verdict.intent} failed: ${e.message}`)
+      bot.chat(`Couldn't do that: ${e.message}`)
+    })
+    return
+  }
+
+  // Conversation. A line addressed to the bot always earns a reply attempt;
+  // anything else must clear the chime-in bar. The LLM may still PASS.
+  const addressed = audience === 'me' || namedMe
+  if (!addressed && relevance < CHAT_RELEVANCE_MIN) return
+  if (fromBot) return replyToBotTurn(username, message)
+  facePlayer(username).catch(() => {})
+  if (/^(hi|hey|hello|yo|sup|howdy|greetings|hola)\b/i.test(message.replace(nickRe || '', ' ').trim())) {
+    const greetEmotes = ['cheer', 'wave', 'clap']
+    sendEmote(greetEmotes[Math.floor(Math.random() * greetEmotes.length)])
+  }
+  const line = await llm.generateLine({
+    system: personaSpec.systemPrompt,
+    exemplars: personaSpec.exemplars,
+    context: buildExpressiveContext(addressed
+      ? `${username} just said to you: "${message}". It is conversation, addressed to you — answer them directly, one line, in your voice.`
+      : `${username} just said to the room: "${message}". Nobody addressed you, but it caught your attention and you may have something worth adding. One line, in your voice — or PASS if not.`),
+  })
+  if (line) {
+    bot.chat(line)
+    logEvent('player-chat', `<${username}> ${message} -> ${line}`)
+  }
+}
 
 bot.on('chat', (username, message) => {
   // The server echoes our own chat under the display NICKNAME ("Muse"), not
   // the account name ("Musebot") — guard against both, or the bot hears
-  // itself and the conversation window turns into a self-reply loop.
+  // itself and replies to itself in a loop.
   if (username === bot.username || (nickRe && nickRe.test(username))) {
     rememberRecentChat(username, message) // own lines still belong in LLM context
     return
   }
   rememberChatPhrase(message)
   rememberRecentChat(username, message)
-  if (!looksLikeBot(username)) resetBotExchange()
+  const fromBot = looksLikeBot(username)
+  if (!fromBot) resetBotExchange()
   logEvent('chat', `<${username}> ${message}`)
-  if (isIdleWanderFieldAnnouncement(message)) {
-    tryJoinFieldWanderFromChat(username, message).catch(e => {
-      if (e.name !== 'AbortError') logEvent('idle-wander', `field join chat handler failed: ${e.message}`)
-    })
-    return
-  }
-  if (isWheatReadyAcknowledgement(message)) {
-    facePlayer(username).catch(() => {})
-    snoozeWheatReadyAlerts(username)
-    logEvent('chat-handled', `wheat-snooze <- <${username}> ${message}`)
-    return
-  }
-  // "Who's keeping the fire going?" — directed at all bots, not one nickname.
-  // The sustaining bot claims it immediately. Others listen for a claim: if
-  // another bot speaks up, they acknowledge it with persona flavor; if nobody
-  // claims it, they respond negative.
-  if (/(?:who(?:'s| is| has been| is currently)?|which\s+(?:bot|one)\s+is|any(?:one|body|bot)?)\s+keep(?:ing|s)?\s+the\s+fire\s+going/i.test(message)) {
-    if (sustainState.active) {
-      bot.chat(pickLine(FIRE_KEEPER_YES_LINES))
-      logEvent('chat-handled', `fire-keeper YES <- <${username}>`)
-    } else {
-      let claimedBy = null
-      const claimListener = (speaker, msg) => {
-        if (speaker === bot.username || speaker === username) return
-        if (FIRE_KEEPER_YES_RE.test(msg)) claimedBy = speaker
-      }
-      bot.on('chat', claimListener)
-      const jitter = 5000 + Math.floor(Math.random() * 1500)
-      setTimeout(() => {
-        bot.removeListener('chat', claimListener)
-        if (sustainState.active) return
-        if (claimedBy) {
-          bot.chat(pickLine(withPersonaSlot(FIRE_KEEPER_ACK_LINES, 'fireKeeperAck'), { keeper: claimedBy }))
-          logEvent('chat-handled', `fire-keeper ACK (${claimedBy} claimed) <- <${username}>`)
-        } else {
-          bot.chat(pickLine(withPersonaSlot(FIRE_KEEPER_NO_LINES, 'fireKeeperNo')))
-          logEvent('chat-handled', `fire-keeper NO <- <${username}>`)
+
+  // Reflex tier: deterministic commands, only when addressed by name. Safety
+  // commands (stop, stand down) live here so they never wait on inference.
+  const namedMe = !!(nickRe && nickRe.test(message))
+  if (namedMe && !fromBot) {
+    const stripped = extractMySegment(message).replace(nickRe, ' ').trim()
+    for (const rule of CHAT_HANDLERS) {
+      if (rule.pattern.test(stripped)) {
+        // A new directed command from the followed player ends the follow.
+        if (followTarget && username === followTarget && rule.name !== 'follow') {
+          bot.pathfinder.setGoal(null)
+          followTarget = null; followEntity = null; followChainPos = 0
         }
-      }, jitter)
-      logEvent('chat-handled', `fire-keeper listening (replying in ~5s) <- <${username}>`)
+        // If the command opens with a greeting, do a quick hello first.
+        if (/^(hi|hey|hello|yo|sup|howdy)\b/i.test(stripped)) {
+          facePlayer(username).catch(() => {})
+          sendEmote('wave')
+          bot.chat(pickGreeting(username))
+          setTimeout(() => {
+            try { rule.handler(username, stripped) } catch (e) { logEvent('chat-error', `${rule.name}: ${e.message}`) }
+          }, 1000)
+        } else {
+          try { rule.handler(username, stripped) } catch (e) { logEvent('chat-error', `${rule.name}: ${e.message}`) }
+        }
+        logEvent('chat-handled', `${rule.name} <- <${username}> ${message}`)
+        return
+      }
     }
-    return
+    logEvent('mention', `<${username}> ${message}`)
+    fs.appendFileSync(path.join(__dirname, 'mentions.log'), `${new Date().toISOString()} <${username}> ${message}\n`)
   }
-  if (pendingJoke) {
+
+  // A pending joke's punchline lands on the first human response (the 30s
+  // timer in the joke handler is the fallback if the room stays silent).
+  if (pendingJoke && !fromBot) {
     deliverPunchline()
     return
   }
-  // Special case: ABBYO saying "I love you" gets a reciprocal reply, even
-  // without addressing Roz by nickname.
-  if (username === 'ABBYO' && LOVE_RE.test(message)) {
-    bot.chat('I love you too A')
-    logEvent('chat-handled', `love <- <${username}> ${message}`)
-    return
-  }
-  // Farewell from the player we're following ends the follow.
-  if (followTarget && username === followTarget && BYE_RE.test(message)) {
-    abortGen++
-    bot.pathfinder.setGoal(null)
-    followTarget = null; followEntity = null; followChainPos = 0
-    bot.chat(pickFarewell())
-    logEvent('chat-handled', `bye <- <${username}> ${message}`)
-    return
-  }
-  // Ambient "What's up?" — each bot answers with persona flavor + jitter so
-  // the group responds naturally without needing to be addressed by name.
-  const namedMe = nickRe && nickRe.test(message)
-  const talkingToSomeoneElse = !namedMe && addressesSomeoneElse(message)
-  if (talkingToSomeoneElse) activeConvos.delete(username) // they moved on
-  // A human speaking right after our greeting is answering it — that opens the
-  // conversation too. (Catches the account-name vs server-nick mismatch: the
-  // greet sees bot.players names, chat events carry display nicks.)
-  const answeringMyGreeting = !namedMe && Date.now() - lastGreetAt < 20_000
-  const continuing = !namedMe && !talkingToSomeoneElse && !looksLikeBot(username) &&
-    (inConversationWith(username) || answeringMyGreeting)
-  const isDirectedAtMe = namedMe || continuing
-  if (isDirectedAtMe) activeConvos.set(username, Date.now())
-  if (!isDirectedAtMe && /\bwhat('?s| is)\s*up\b|\bwassup\b/i.test(message) && !looksLikeBot(username)) {
-    const jitter = 2000 + Math.floor(Math.random() * 3000)
-    setTimeout(() => {
-      const pool = personaPool('whatsUpAmbient', WHATS_UP_LINES)
-      bot.chat(pickLine(pool))
-    }, jitter)
-    logEvent('chat-handled', `whats-up-ambient <- <${username}>`)
-    return
-  }
-  if (!isDirectedAtMe && looksLikeBot(username)) maybeReplyToBot(username, message)
-  if (!isDirectedAtMe) return
-  // Any directed command from the followed player ends the follow.
-  if (followTarget && username === followTarget) {
-    bot.pathfinder.setGoal(null)
-    followTarget = null; followEntity = null; followChainPos = 0
-  }
-  // Multi-command: extract only the sentence directed at this bot
-  const myMessage = extractMySegment(message)
-  const stripped = myMessage.replace(nickRe, ' ').trim()
-  for (const rule of CHAT_HANDLERS) {
-    if (rule.pattern.test(stripped)) {
-      // If message starts with a greeting but matched a non-greeting handler,
-      // do a quick hello first.
-      if (rule.name !== 'greeting' && /^(hi|hey|hello|yo|sup|howdy)\b/i.test(stripped)) {
-        facePlayer(username).catch(() => {})
-        sendEmote('wave')
-        bot.chat(pickGreeting(username))
-        setTimeout(() => {
-          try { rule.handler(username, stripped) } catch (e) { logEvent('chat-error', `${rule.name}: ${e.message}`) }
-        }, 1000)
-      } else {
-        try { rule.handler(username, stripped) } catch (e) { logEvent('chat-error', `${rule.name}: ${e.message}`) }
-      }
-      logEvent('chat-handled', `${rule.name} <- <${username}> ${message}`)
-      return
-    }
-  }
-  // No local rule matched — this is conversation, not a command (greetings
-  // included: hellos are conversation too). Answer with the LLM, in voice.
-  // Bypasses the expressive gate: being spoken to deserves a reply. A message
-  // that NAMED the bot always gets one (confused-shrug fallback when the LLM
-  // is down — that's functional "I didn't understand you"). A continuity
-  // message (no name, open conversation window) may PASS silently, but only
-  // when it's clearly for someone else.
-  facePlayer(username).catch(() => {})
-  if (/^(hi|hey|hello|yo|sup|howdy|greetings|hola)\b/i.test(stripped)) {
-    const greetEmotes = ['cheer', 'wave', 'clap']
-    sendEmote(greetEmotes[Math.floor(Math.random() * greetEmotes.length)])
-  }
-  llm.generateLine({
-    system: personaSpec.systemPrompt,
-    exemplars: personaSpec.exemplars,
-    context: buildExpressiveContext(namedMe
-      ? `${username} just said to you: "${message}". It is not a farm command — it is conversation, addressed to you. Answer them directly, one line, in your voice.`
-      : `You are mid-conversation with ${username}, who just said: "${message}". They did not repeat your name — people don't re-address each other mid-conversation, so treat it as part of your exchange and answer them directly, one line, in your voice. PASS only if it is clearly aimed at someone else (like an answer to another player's question).`),
-  }).then(line => {
-    if (line) {
-      bot.chat(line)
-      logEvent('player-chat', `<${username}> ${message} -> ${line}`)
-    } else if (namedMe) {
-      sendEmote('shrug')
-      setTimeout(() => sendEmote('shrug'), 600)
-      bot.chat(pickLine(withPersonaSlot(IDUNNO_LINES, 'idunno')))
-    }
-  }).catch(e => logEvent('player-chat', `error: ${e.message}`))
-  logEvent('mention', `<${username}> ${message}`)
-  fs.appendFileSync(path.join(__dirname, 'mentions.log'), `${new Date().toISOString()} <${username}> ${message}\n`)
+
+  // Everything else — named conversation, unaddressed chatter, group-wide
+  // requests, other bots — goes through the LLM router.
+  routeChat(username, message, { namedMe, fromBot }).catch(e => logEvent('chat-router', `error: ${e.message}`))
 })
 bot.on('whisper', (username, message) => {
   logEvent('whisper', `<${username}> ${message}`)
@@ -5753,15 +5504,6 @@ function pickGreeting (user) { return pickLine(withPersonaSlot(GREETINGS, 'greet
 // curiosity 84, patience 9, snark 67, charm 72, focus 82, chaos 42.
 // Roz "mourns every deleted comment" — that melancholic edge shows up most
 // in crop/wheat lines and the "why am I alive" status beats.
-const STATUS_LINES = [
-  { text: 'HP {hp}/20, food {food}/20. Adequate.',            weight: (s) => s.focus },
-  { text: 'Alive. Suspiciously so. HP {hp}/20, food {food}/20.', weight: (s) => s.snark + s.chaos },
-  { text: '*checks hands* HP {hp}, food {food}. All present.',  weight: (s) => s.charm + s.curiosity },
-  { text: 'I am {hp}/20 healthy and {food}/20 fed. Deaths: {deaths}. Thank you for asking.', weight: (s) => s.charm },
-  { text: 'Vitals nominal. HP {hp}, food {food}. I had a weird dream, though.', weight: (s) => s.curiosity },
-  { text: 'HP {hp}/20, food {food}/20, deaths {deaths}. Could be worse. Has been.', weight: (s) => s.snark },
-  { text: 'Physically fine. Emotionally… mourning the wheat I did not harvest. ({hp}/20, {food}/20.)', weight: (s) => s.charm + s.snark },
-]
 const INVENTORY_LINES = [
   { text: "I've got {items}.",                           weight: (s) => s.focus },
   { text: 'In my pockets: {items}. Plus feelings.',      weight: (s) => s.charm + s.snark },
@@ -5785,27 +5527,6 @@ const STOP_FOLLOW_LINES = [
   { text: "OK, stopped following {user}. I'll miss the view.", weight: (s) => s.charm + s.snark },
   { text: 'No longer following {user}. Parasocial link severed.', weight: (s) => s.snark + s.curiosity },
   { text: "Stopped following {user}. Independent now. Scary.", weight: (s) => s.curiosity },
-]
-const WHERE_LINES = [
-  { text: "I'm at {pos}.",                                weight: (s) => s.focus },
-  { text: "Currently at {pos}. Statistically, yes.",      weight: (s) => s.focus + s.snark },
-  { text: "{pos}. Not lost, just… located.",              weight: (s) => s.snark },
-  { text: "At {pos} and vibing.",                         weight: (s) => s.charm + s.chaos },
-]
-const TIME_DAY_LINES = [
-  { text: "It's day — timeOfDay {t}, day {d}.",           weight: (s) => s.focus },
-  { text: "Day {d}, timeOfDay {t}. The sun remains an uneventful neighbor.", weight: (s) => s.curiosity },
-  { text: "Bright out. {t}/24000. Day {d}.",              weight: (s) => s.focus + s.charm },
-]
-const TIME_NIGHT_LINES = [
-  { text: "It's night — timeOfDay {t}, day {d}. I'm not scared, you're scared.", weight: (s) => s.snark + s.charm },
-  { text: "Night. timeOfDay {t}, day {d}. Statistically this is when things happen.", weight: (s) => s.focus + s.chaos },
-  { text: "Dark out. {t}/24000. Staying inside.",         weight: (s) => s.charm },
-]
-const EAT_LINES = [
-  { text: 'Ate {name}. Food {food}/20. Chewed thoughtfully.', weight: (s) => s.charm },
-  { text: '{name} → belly. Food {before}→{food}/20.',     weight: (s) => s.focus },
-  { text: 'Consumed {name}. Nutrition is a social contract. Food {food}/20.', weight: (s) => s.snark + s.curiosity },
 ]
 const EAT_FULL_LINES = [
   { text: "I'm full (food {food}/20). Maybe later.",      weight: (s) => s.focus },
@@ -5861,27 +5582,6 @@ const RETRY_LINES = [
   'Hold on — let me line that up better.',
   'Right. Trying again.',
 ]
-// "Who's keeping the fire going?" — the bot currently sustaining answers right
-// away (clever, owns it); bots that AREN'T wait ~5s (so the real one speaks
-// first) then disavow, nose-goes style.
-const FIRE_KEEPER_YES_LINES = [
-  'That\'d be me.',
-  'As you wish.',
-  'Me. Tending the flame, as it were.',
-  'I am.',
-  'I have it under control.',
-  'I\'m on it.',
-  'Me. It\'s a calling, really.',
-]
-const FIRE_KEEPER_YES_RE = /\bthat'?d be me\b|\bme[.]? tending\b|\bi am[.]?\b|\bi have it under control\b|\bi'?m on it\b|\bme[.]? it'?s a calling\b|^as you wish/i
-const FIRE_KEEPER_ACK_LINES = [
-  'Good.',
-  'Noted.',
-]
-const FIRE_KEEPER_NO_LINES = [
-  'Not me.',
-  'Not I.',
-]
 const COME_INSIDE_LINES = [
   { text: 'Heading inside.',                               weight: (s) => s.focus },
   { text: 'Coming home. Statistically safer.',             weight: (s) => s.focus + s.snark },
@@ -5908,10 +5608,6 @@ const COME_INSIDE_LINES = [
 ]
 const BEDTIME_LINES = [
   { text: 'Time to head in.', weight: (s) => s.focus + 10 },
-]
-const WHATS_UP_LINES = [
-  { text: 'Not much. You?', weight: (s) => s.charm + 10 },
-  { text: 'Just here. The usual.', weight: (s) => s.patience + 10 },
 ]
 const FOLLOW_START_LINES = [
   { text: 'Following {user}.',                             weight: (s) => s.focus },
@@ -5967,12 +5663,24 @@ function resetBotExchange () {
   botExchange = { partner: null, turns: 0, lastAt: 0 }
 }
 
-function maybeReplyToBot (username, message) {
-  if (!BOT_CHAT_DEPTH) return
+// Cheap pre-check the router runs BEFORE spending a classification on a
+// bot line: is there any budget left in (or available for) an exchange with
+// this partner? Keeps two LLMs from "finding each other interesting" forever.
+function botExchangeAllows (username) {
+  if (!BOT_CHAT_DEPTH) return false
   const now = Date.now()
   const fresh = botExchange.partner !== username || now - botExchange.lastAt > BOT_EXCHANGE_RESET_MS
-  if (fresh) {
-    if (now - lastBotExchangeStartAt < BOT_EXCHANGE_START_COOLDOWN_MS) return
+  if (fresh) return now - lastBotExchangeStartAt >= BOT_EXCHANGE_START_COOLDOWN_MS
+  return botExchange.turns < BOT_CHAT_DEPTH
+}
+
+// One bot-to-bot conversational turn (called by the router after the line
+// classified as conversation worth engaging). ≥5s before replying; the line
+// is generated AT FIRE TIME with the full chat tail, so the model sees
+// everything said during the wait and PASSes if the topic moved on.
+function replyToBotTurn (username, message) {
+  const now = Date.now()
+  if (botExchange.partner !== username || now - botExchange.lastAt > BOT_EXCHANGE_RESET_MS) {
     botExchange = { partner: username, turns: 0, lastAt: now }
     lastBotExchangeStartAt = now
   } else {
@@ -5981,9 +5689,8 @@ function maybeReplyToBot (username, message) {
   if (botExchange.turns >= BOT_CHAT_DEPTH) return
   const turn = botExchange.turns + 1
   const lastTurn = turn >= BOT_CHAT_DEPTH
-  // ≥5s before replying; occasionally the bot is simply slower to find words.
   const delayMs = 5_000 + Math.random() * 7_000 + (Math.random() < 0.15 ? 10_000 : 0)
-  impulseExpressive('bot_chat',
+  return impulseExpressive('bot_chat',
     `${username}, a fellow robot on this farm, just said: "${message}". You may answer with one line of your own — this is your turn ${turn} of ${BOT_CHAT_DEPTH} in this exchange${lastTurn ? ', and your last: bring it to a natural close' : ''}. If you have nothing genuine to add, PASS.`,
     { delayMs }
   ).then(spoken => {

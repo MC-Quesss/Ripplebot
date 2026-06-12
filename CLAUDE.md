@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Ripplebot ("Roz") is a single-file Mineflayer bot (`bot.js`, ~9600 lines) for a modded Minecraft 1.12.2 Forge server. It connects via Microsoft auth, runs autonomous behaviors (auto-sleep, auto-eat, auto-greet, idle wander, ambient chat/musings, hostile retreat), and exposes a TCP JSON control API on `127.0.0.1:25580` for external orchestration.
+Ripplebot ("Roz") is a Mineflayer bot (`bot.js`, ~6500 lines, plus `llm.js` for the Ollama-backed voice and chat router) for a modded Minecraft 1.12.2 Forge server. It connects via Microsoft auth, runs autonomous behaviors (auto-sleep, auto-eat, auto-greet, idle wander, ambient actions, hostile retreat), and exposes a TCP JSON control API on `127.0.0.1:25580` for external orchestration. Each bot instance pairs with its own Ollama box (`LLM_URL`/`LLM_MODEL` in `.env`); the LLM is both the bot's conversational voice and its chat router.
 
 ## Commands
 
@@ -30,9 +30,11 @@ Everything lives in `bot.js` — a single CommonJS module. Key sections (top to 
 
 5. **Farming & crafting routines** (~3000–5700) — harvest wheat/potatoes (right-click replant), shear sheep, bake bread/potatoes (raw window_click crafting for modded GUIs), deposit/stash routines, food-safety sustain loop.
 
-6. **Chat handling & musing system** (~5700–8840) — nickname regex matching, mention extraction/logging, "musing" conversations (classical multi-line pools and recursive topic trees with branching/partner awareness), farming musings.
+6. **Chat handling: reflex tier + LLM router** (~4800–5500) — two-stage pipeline (refactored 2026-06-11):
+   - **Reflex tier (`CHAT_HANDLERS`)**: 13 deterministic regex commands that fire only when the bot is addressed by nickname — follow, stop, stand_down, as_you_were, stash-all, inventory, shear_sheep, bake, harvest-potato, keep_fire, emote, dance, joke. Safety commands live here so they never wait on inference.
+   - **LLM router (`routeChat`)**: every other chat line gets one JSON classification call (`llm.classify`) returning `{audience, kind, intent, args, relevance}`. Commands map to the `CHAT_INTENTS` whitelist (harvest_wheat, go_inside, eat, sleep, deposit_items, stop_follow, …) which call the same `run*` routines as the ctl API. Conversation goes to `llm.generateLine` in persona voice; `buildExpressiveContext` injects live vitals/inventory/sustain state so questions like "how are you" are answered truthfully. Unaddressed lines only get a reply when `relevance >= CHAT_RELEVANCE_MIN` (.env, 0–10, default 7). Bot-to-bot replies are capped by `BOT_CHAT_DEPTH` per exchange. No canned fallbacks: Ollama down = the bot doesn't engage.
 
-7. **Control server** (~8841–9644) — TCP socket accepting JSON commands. Each `case` in `handleCommand` is a bot action (movement, containers, farming tasks, toggles). Commands return JSON responses; async commands return Promises.
+7. **Control server** (end of file) — TCP socket accepting JSON commands. Each `case` in `handleCommand` is a bot action (movement, containers, farming tasks, toggles). Commands return JSON responses; async commands return Promises.
 
 ## Control API
 
@@ -53,7 +55,8 @@ Commands are JSON objects: `{"action":"<name>", "args":{...}}`. Key actions:
 
 ## Key Constraints
 
-- **Single-file architecture.** All bot logic is in `bot.js`. No module splitting exists.
+- **Near-single-file architecture.** All bot logic is in `bot.js`; the only extracted module is `llm.js` (Ollama health-check, `generateLine`, `classify`).
+- **Chat requires the LLM.** Since the 2026-06-11 router refactor, only the 13 named reflex commands work without Ollama. Everything else (natural-language commands, conversation) needs the bot's Ollama box reachable.
 - **Modded 1.12.2 Forge.** Many blocks report empty names, GUIs don't fire standard mineflayer events, and protocol-level workarounds are required throughout.
 - **No combat.** The bot has no weapons/armor logic — hostile detection triggers retreat to the house.
 - **Door traversal uses `walk_until` with axis-target stopping.** Pathfinder cannot navigate through doors on this server. See `data/places.md` for the exact procedure.
