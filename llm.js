@@ -176,8 +176,58 @@ function classify ({ system, user, timeoutMs = CLASSIFY_TIMEOUT_MS }) {
   return job
 }
 
+// Generate a multi-line story/monologue. Returns an array of lines (each under
+// maxChars), or null on failure. Does NOT respect the single-flight `generating`
+// lock — stories are rare and explicitly requested, so they can overlap with
+// ambient generation timing out naturally.
+async function generateStory ({ system, exemplars, context, maxChars = 200, lines = 5, timeoutMs = 20_000 }) {
+  if (!healthy) return null
+  const storySystem = [
+    system,
+    exemplars && exemplars.length
+      ? 'Lines you have said before, in your true voice:\n' + exemplars.map(e => `- ${e}`).join('\n')
+      : null,
+    `Rules: You are telling a short story or memory in-game Minecraft chat. ` +
+    `Write ${lines} separate lines (one thought per line, under ${maxChars} characters each). ` +
+    'Plain text only — no quotation marks, no narration tags, no emoji, no numbering, ' +
+    "and never a line starting with '/'. Stay in character. Keep it wholesome. " +
+    'Each line should feel like a natural pause in speech — as if you are telling this to someone sitting beside you by a fire. ' +
+    'Separate each line with a newline character.',
+  ].filter(Boolean).join('\n\n')
+  try {
+    const res = await fetchWithTimeout(`${LLM_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: LLM_MODEL,
+        think: false,
+        messages: [
+          { role: 'system', content: storySystem },
+          { role: 'user', content: context },
+        ],
+        stream: false,
+        keep_alive: KEEP_ALIVE,
+        options: { num_predict: lines * 60, temperature: 0.85 },
+      }),
+    }, timeoutMs)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    const raw = data?.message?.content
+    if (!raw) return null
+    const result = raw.split('\n')
+      .map(l => l.replace(/[Ā-￿\u{10000}-\u{10FFFF}]/gu, '').replace(/^["'`\d.\-)]+\s*/, '').replace(/["'`]+$/g, '').replace(/\s+/g, ' ').trim())
+      .filter(l => l && !/^PASS\b/i.test(l) && !l.startsWith('/'))
+      .map(l => l.length > maxChars ? (l.slice(0, maxChars).includes(' ') ? l.slice(0, l.slice(0, maxChars).lastIndexOf(' ')) : l.slice(0, maxChars)) : l)
+      .filter(Boolean)
+    return result.length ? result : null
+  } catch (e) {
+    log('llm', `story generation failed (${e.message})`)
+    return null
+  }
+}
+
 function status () {
   return { healthy, url: LLM_URL, model: LLM_MODEL, classifyPending }
 }
 
-module.exports = { init, generateLine, classify, status, checkHealth }
+module.exports = { init, generateLine, generateStory, classify, status, checkHealth }

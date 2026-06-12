@@ -5242,11 +5242,44 @@ const CHAT_INTENTS = {
       return Promise.resolve()
     },
   },
+  tell_story: {
+    hint: 'tell a story, share a memory, or talk at length about a topic (args.topic = what to talk about)',
+    run: (user, args) => runTellStory(user, args.topic || 'something from your past'),
+  },
   keep_fire: { hint: 'start the autonomous keep-the-fire-going farm loop', run: (user) => runSustainFarm(user) },
   stop: {
     hint: 'stop the current activity (also: halt, knock it off, that is enough)',
     run: (user) => { const rule = CHAT_HANDLERS.find(r => r.name === 'stop'); return rule.handler(user, '') },
   },
+}
+
+// ── Storytelling ─────────────────────────────────────────────────────────────
+// Multi-line monologue delivered with natural pacing. The bot "tells a story"
+// using the LLM's longer generation mode, then sends each line with a delay.
+async function runTellStory (user, topic) {
+  sendEmote('think')
+  const backstory = personaSpec.backstory || ''
+  const context = buildExpressiveContext(
+    `${user} asked you to tell a story or share a memory about: "${topic}". ` +
+    (backstory ? `Your backstory for reference (draw from this if relevant):\n${backstory}\n\n` : '') +
+    'Tell a short, vivid story from your personal experience or memory. Be specific — names, places, sensory details. ' +
+    'This is YOUR story, told in YOUR voice. Make it feel like a campfire moment.'
+  )
+  const lines = await llm.generateStory({
+    system: personaSpec.systemPrompt,
+    exemplars: personaSpec.exemplars,
+    context,
+    lines: 6,
+  })
+  if (!lines || !lines.length) {
+    bot.chat("I... had something. It's gone now.")
+    return
+  }
+  for (let i = 0; i < lines.length; i++) {
+    bot.chat(lines[i])
+    if (i < lines.length - 1) await sleep(2500 + Math.random() * 1500)
+  }
+  logEvent('story', `topic="${topic}" for ${user} (${lines.length} lines)`)
 }
 
 // Old furnace_status handler, preserved as a routine for the check_furnace intent.
@@ -5366,9 +5399,11 @@ bot.on('chat', (username, message) => {
 
   // Reflex tier: deterministic commands, only when addressed by name. Safety
   // commands (stop, stand down) live here so they never wait on inference.
+  // When following a player, anything they say is implicitly addressed to us.
   const namedMe = !!(nickRe && nickRe.test(message))
-  if (namedMe && !fromBot) {
-    const stripped = extractMySegment(message).replace(nickRe, ' ').trim()
+  const implicitlyAddressed = !fromBot && followTarget && username === followTarget
+  if ((namedMe || implicitlyAddressed) && !fromBot) {
+    const stripped = namedMe ? extractMySegment(message).replace(nickRe, ' ').trim() : message.trim()
     for (const rule of CHAT_HANDLERS) {
       if (rule.pattern.test(stripped)) {
         // A new directed command from the followed player ends the follow.
@@ -5404,7 +5439,7 @@ bot.on('chat', (username, message) => {
 
   // Everything else — named conversation, unaddressed chatter, group-wide
   // requests, other bots — goes through the LLM router.
-  routeChat(username, message, { namedMe, fromBot }).catch(e => logEvent('chat-router', `error: ${e.message}`))
+  routeChat(username, message, { namedMe: namedMe || implicitlyAddressed, fromBot }).catch(e => logEvent('chat-router', `error: ${e.message}`))
 })
 bot.on('whisper', (username, message) => {
   logEvent('whisper', `<${username}> ${message}`)
@@ -5503,8 +5538,9 @@ setInterval(async () => {
   if (survived.length < beforeIds.size) {
     const killedCount = beforeIds.size - survived.length
     logEvent('hostile-watchdog', `op kill eliminated ${killedCount}/${beforeIds.size} hostiles`)
+    const victoryStyle = personaSpec.combatStyle || 'A small moment of triumph.'
     impulseExpressive('victory',
-      `You just protected the area: ${killedCount} hostile ${killedCount === 1 ? 'mob' : 'mobs'} dispatched. A small moment of triumph.`
+      `You just protected the area: ${killedCount} hostile ${killedCount === 1 ? 'mob' : 'mobs'} dispatched using your powers. ${victoryStyle}`
     ).catch(() => {})
   }
 
