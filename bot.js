@@ -5407,7 +5407,8 @@ bot.on('chat', (username, message) => {
     for (const rule of CHAT_HANDLERS) {
       if (rule.pattern.test(stripped)) {
         // A new directed command from the followed player ends the follow.
-        if (followTarget && username === followTarget && rule.name !== 'follow') {
+        // Exclude 'farewell' — it handles follow-stop + ack itself.
+        if (followTarget && username === followTarget && rule.name !== 'follow' && rule.name !== 'farewell') {
           bot.pathfinder.setGoal(null)
           followTarget = null; followEntity = null; followChainPos = 0
         }
