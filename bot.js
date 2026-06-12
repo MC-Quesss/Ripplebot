@@ -1400,6 +1400,7 @@ const EXPRESSIVE_COOLDOWN_MS = {
   ambient: 90_000,
   wildlife: 300_000,
   squirrel: 90_000,
+  butterfly: 300_000,
   victory: 60_000,
   bedtime_suggest: 120_000,
 }
@@ -1468,6 +1469,26 @@ function buildExpressiveContext (situation) {
   return parts.join('\n\n')
 }
 
+// /me lines render in chat as "~<name> <line>", so the line must read as a
+// third-person stage direction ("watches a cloud drift overhead"). The models
+// drift into first-person persona exclamations ("Good heavens! Observe!"),
+// which render as nonsense ("Muse Observe!") — so the prompt states the format
+// and asActionText() verifies the render before anything reaches chat.
+function actionTextFormatNote () {
+  return `Format: your line renders as action text after your name — chat will show "~${bot.username} <your line>". Write ONE short third-person stage direction that completes that sentence: start with a lowercase present-tense verb ("watches...", "frets over...", "recalculates..."). Stay in persona through word choice, not exclamations. No first person, no quotation marks, no exclamation openers, and never include your own name.`
+}
+
+function asActionText (line) {
+  let t = line.trim().replace(/^["'`*~]+|["'`*~]+$/g, '').trim()
+  t = t.replace(new RegExp(`^${bot.username}[:,]?\\s+`, 'i'), '') // model echoed the name
+  t = t.replace(/^\/me\s+/i, '')
+  if (!t) return null
+  // First-person openers and vocative interjections can't follow "~Name " —
+  // drop the line rather than print gibberish.
+  if (/^(i|i'm|i've|i'd|i'll|me|my|we|oh|ah|alas|heavens|good|dear|behold|observe|what|did|was|by|please|attention)\b/i.test(t)) return null
+  return t[0].toLowerCase() + t.slice(1)
+}
+
 // One expressive impulse: check the gate, optionally wait (the generation
 // happens AT FIRE TIME, after the wait, so the context already contains any
 // chat that arrived meanwhile — stale lines are never written), generate from
@@ -1479,12 +1500,25 @@ async function impulseExpressive (kind, situation, { me = false, delayMs = 0 } =
     await sleep(delayMs)
     if (!expressiveGateOpen(kind)) return false // something else spoke while we waited
   }
-  const line = await llm.generateLine({
+  const gen = () => llm.generateLine({
     system: personaSpec.systemPrompt,
     exemplars: personaSpec.exemplars,
-    context: buildExpressiveContext(situation),
+    context: buildExpressiveContext(me ? `${situation}\n\n${actionTextFormatNote()}` : situation),
   })
+  let line = await gen()
   if (!line) return false
+  if (me) {
+    let action = asActionText(line)
+    if (!action) {
+      const retry = await gen()
+      action = retry ? asActionText(retry) : null
+    }
+    if (!action) {
+      logEvent(kind, `dropped non-action line: ${line}`)
+      return false
+    }
+    line = action
+  }
   const spoken = speakExpressive(kind, line, { me })
   if (spoken) logEvent(kind, line)
   return spoken
@@ -1515,8 +1549,40 @@ async function tryAmbientAction () {
 }
 
 
+// Unknown-entity wildlife classification. Modded ambient mobs (squirrels,
+// butterflies, birds...) all report empty names, and the farm is ringed with
+// empty-name entities that never move (decorations, resting butterflies) —
+// so movement between watcher samples is the gate: no displacement, no
+// wildlife. Movers in the air are butterflies/birds; movers on the ground
+// are squirrels. One comment per individual, ever-greens pruned.
+const UNKNOWN_WILDLIFE_MOVE_BLOCKS = 1.5    // min horizontal travel between samples
+const SQUIRREL_DART_BLOCKS = 3              // squirrels dart; butterflies drift
+const BUTTERFLY_FLUTTER_DY = 0.5            // vertical wobble between samples
+const WILDLIFE_TRACK_STALE_MS = 60_000
+const WILDLIFE_COMMENT_DEDUPE_MS = 600_000  // one comment per individual per 10 min
+const unknownEntityTracks = new Map()       // id -> { x, y, z, at }
+const wildlifeCommentedAt = new Map()       // id -> last comment timestamp
+
+function isAirborneEntity (e) {
+  const below = bot.blockAt(e.position.floored().offset(0, -1, 0))
+  return !!below && below.name === 'air'
+}
+
+function classifyUnknownEntity (e, now) {
+  const prev = unknownEntityTracks.get(e.id)
+  unknownEntityTracks.set(e.id, { x: e.position.x, y: e.position.y, z: e.position.z, at: now })
+  if (!prev) return null
+  const moved = Math.hypot(e.position.x - prev.x, e.position.z - prev.z)
+  const flutter = Math.abs(e.position.y - prev.y)
+  if (moved < UNKNOWN_WILDLIFE_MOVE_BLOCKS && flutter < BUTTERFLY_FLUTTER_DY) return null
+  if (e.position.y > bot.entity.position.y + 2) return 'butterfly'  // well overhead
+  if (moved >= SQUIRREL_DART_BLOCKS) return 'squirrel'              // darting = ground critter
+  return (flutter >= BUTTERFLY_FLUTTER_DY || isAirborneEntity(e)) ? 'butterfly' : 'squirrel'
+}
+
 function getWildlifeNearby () {
   if (!bot.entity) return null
+  const now = Date.now()
   const found = []
   for (const e of Object.values(bot.entities)) {
     if (e === bot.entity) continue
@@ -1525,9 +1591,18 @@ function getWildlifeNearby () {
     if (e.name === 'wolf') found.push({ type: 'wolf', dist: d })
     else if (e.name === 'sheep') found.push({ type: 'sheep', dist: d })
     else if (!e.name && e.type !== 'player' && e.type !== 'object' && d < 12 &&
-             e.position.y >= bot.entity.position.y - 2 && e.position.y <= bot.entity.position.y + 3) {
-      found.push({ type: 'squirrel', dist: d })
+             e.position.y >= bot.entity.position.y - 2 && e.position.y <= bot.entity.position.y + 8) {
+      const type = classifyUnknownEntity(e, now)
+      if (!type) continue
+      if (now - (wildlifeCommentedAt.get(e.id) || 0) < WILDLIFE_COMMENT_DEDUPE_MS) continue
+      found.push({ type, dist: d, id: e.id })
     }
+  }
+  for (const [id, t] of unknownEntityTracks) {
+    if (now - t.at > WILDLIFE_TRACK_STALE_MS) unknownEntityTracks.delete(id)
+  }
+  for (const [id, t] of wildlifeCommentedAt) {
+    if (now - t > WILDLIFE_COMMENT_DEDUPE_MS) wildlifeCommentedAt.delete(id)
   }
   if (!found.length) return null
   found.sort((a, b) => a.dist - b.dist)
@@ -1539,6 +1614,7 @@ async function tryWildlifeComment () {
   if (!expressiveGateOpen('wildlife')) return false
   const wildlife = getWildlifeNearby()
   if (!wildlife) return false
+  if (wildlife.id) wildlifeCommentedAt.set(wildlife.id, Date.now())
   return impulseExpressive('wildlife',
     `A ${wildlife.type} is nearby, about ${Math.round(wildlife.dist)} blocks away. React to seeing it, as action text.`,
     { me: true })
@@ -1550,12 +1626,16 @@ async function checkSquirrelNearby () {
   if (!bot.entity) return
   if (bot.isSleeping) return
   if (!idleWanderEnabled) return
-  if (!expressiveGateOpen('squirrel')) return
+  // Detect before gating: getWildlifeNearby refreshes the movement tracks,
+  // which need a sample every tick for displacement to mean anything.
   const wildlife = getWildlifeNearby()
-  if (!wildlife || wildlife.type !== 'squirrel') return
-  await impulseExpressive('squirrel',
-    `A squirrel just darted past, about ${Math.round(wildlife.dist)} blocks away. React to it, as action text.`,
-    { me: true })
+  if (!wildlife || (wildlife.type !== 'squirrel' && wildlife.type !== 'butterfly')) return
+  if (!expressiveGateOpen(wildlife.type)) return
+  wildlifeCommentedAt.set(wildlife.id, Date.now())
+  const prompt = wildlife.type === 'squirrel'
+    ? `A squirrel just darted past, about ${Math.round(wildlife.dist)} blocks away. React to it, as action text.`
+    : `A butterfly just fluttered by, about ${Math.round(wildlife.dist)} blocks away. React to it, as action text.`
+  await impulseExpressive(wildlife.type, prompt, { me: true })
 }
 
 function startSquirrelWatcher () {
@@ -4837,6 +4917,18 @@ const CHAT_HANDLERS = [
         if (e.name === 'AbortError') return
         logEvent('follow', `couldn't exit house: ${e.message}`)
       })
+    },
+  },
+  {
+    name: 'farewell',
+    pattern: /\b(bye|goodbye|good\s*bye|see\s*ya|later|gotta\s*go|peace|take\s*care|night|g'?night|cya)\b/i,
+    handler: (user) => {
+      if (followTarget && user === followTarget) {
+        bot.pathfinder.setGoal(null)
+        bot.chat(pickFarewell())
+        logEvent('follow', `${followTarget} said goodbye, stopping follow`)
+        followTarget = null; followEntity = null; followChainPos = 0
+      }
     },
   },
   {

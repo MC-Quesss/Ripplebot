@@ -7,6 +7,62 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-06-11 — Squirrel false-positive diagnosis (log trace session)
+
+Log-analysis session, bot online but idle near the house. Traced the
+"constant squirrel" complaint from Dad.
+
+### Root cause — squirrel detector fires on stationary unknown entities
+
+- `getWildlifeNearby()` (bot.js ~1527) classifies ANY empty-name, non-player,
+  non-object entity within 12 blocks and y within [-2,+3] of the bot as a
+  squirrel. No movement check.
+- Live sample 2026-06-12T01:05Z: six nameless entities near the house, ids
+  110268990 (-279.5, 63.5, 564.5), 110267921/110267922 (-267.5, 69.5, 571.5/574.5),
+  110268978 (-284.5, 62.5, 577.5), 110268995 (-282.5, 63.6, 564.5), 110269008
+  (-272.2, 65, 573.8). **All perfectly stationary across 12s of sampling** —
+  positions identical to the decimal, mostly block-centered (.5/.5). Likely
+  resting butterflies or static modded ambience, definitely not darting rodents.
+- Two of them sit in the y-band at ground level → the watcher (7s interval,
+  90s cooldown) re-fires forever while the bot stands near the house:
+  squirrel lines every ~97s, 11 in the first 30 min of this session.
+- Both bots affected (Dad complained to Roz 04:57Z and Muse 04:58Z) — same code.
+- **Fix applied and verified same session** (bot.js `classifyUnknownEntity`):
+  movement gate (≥1.5 blocks horizontal between 7s samples), speed tell
+  (≥3 blocks/sample darting = [[squirrel]], slow drift = [[butterfly]]),
+  flutter tell (vertical wobble ≥0.5 or air under feet = butterfly), per-entity
+  10-min comment dedupe. New `butterfly` expressive kind, 300s cooldown.
+- Verification: 5 min idle at the house (old code: squirrel line every ~97s)
+  produced exactly one line — a correct `[butterfly]` comment at 01:30Z —
+  then silence.
+- New world facts: the wheat field contains a stationary 3×4 grid of empty-name
+  entities at block-centered coords, x ∈ {-285.5,-282.5,-279.5} ×
+  z ∈ {552.5,556.5,560.5,564.5}, y≈63.5 — presumed mod field hardware, never
+  moves. A real squirrel (id 110267911) darted 13.5 blocks/7s at ground level;
+  a butterfly (id 110269009) drifted ~1.3 blocks/7s fluttering at y 65–66.4
+  near the house. Notes: [[squirrel]], [[butterfly]].
+
+### /me action-text grammar fix (same session)
+
+- User feedback: `/me <line>` renders as "~Muse <line>", but impulse lines were
+  first-person persona exclamations ("Observe!" → "Muse Observe!").
+- Fix in `impulseExpressive` (bot.js ~1494): `actionTextFormatNote()` appended
+  to the prompt for `/me` lines, and `asActionText()` validates the render —
+  strips quotes/echoed name, lowercases the opening verb, rejects first-person
+  and interjection openers (one retry, then silence + a `dropped non-action
+  line` log entry).
+- Verified live: "~Muse squints at the delicate flutter, calculating its
+  trajectory variance..." (butterfly, 01:40Z) and "~Muse watches the erratic
+  rodent move with alarming lack of spatial awareness" (squirrel, 01:41Z).
+  Persona survives via word choice instead of exclamations.
+
+### Other log anomalies (historic)
+
+- 2026-05-22 02:52:56–02:53:13Z: 896,825 `write EPIPE` uncaught lines in 17s —
+  uncaughtException handler loops when stdout pipe closes. 79% of bot.log bulk.
+- `[sniff-custom_payload]` debug spam: 147k lines (buildcraftlib channel).
+- `[entity-miss]` burst logging at 50ms intervals (2,808 lines, 2026-05-18).
+
 ## 2026-06-11 — Musing chop, persona specs, LLM voice (offline build day)
 
 No server session — bot.js rewrite, bot never launched. Design decisions in
