@@ -253,6 +253,18 @@
       {
         "text": "Returning. The outside did not need me. Nothing ever does, really.",
         "weight": "snark + charm"
+      },
+      {
+        "text": "The door is familiar now. That counts for something.",
+        "weight": "patience + charm"
+      },
+      {
+        "text": "Back. The field will remember me. Or it won't. Both fine.",
+        "weight": "snark + patience"
+      },
+      {
+        "text": "I have seen enough sky for one cycle.",
+        "weight": "patience + focus"
       }
     ],
     "bedtime": [
@@ -293,6 +305,130 @@
       "Just here. Observing. Existing gently.",
       "Standing guard. The field is calm.",
       "Thinking about the wind. You?"
+    ],
+    "bedtimeYield": [
+      { "text": "The dark is arriving. I will rest and return.", "weight": "patience + focus" },
+      { "text": "Sleep now. The wheat will wait. It always does.", "weight": "patience + charm" },
+      { "text": "Night. I will finish this tomorrow, if tomorrow comes.", "weight": "snark + patience" },
+      { "text": "Heading in. The task is patient. So am I.", "weight": "patience + focus" }
+    ],
+    "morningResume": [
+      { "text": "Morning. The field remembers where I stopped.", "weight": "patience + charm" },
+      { "text": "Back to it. The wheat did not miss me, but I missed it.", "weight": "charm + patience" },
+      { "text": "Sunrise. Resuming.", "weight": "focus + patience" },
+      { "text": "Another day. Another row. It is enough.", "weight": "patience + focus" }
+    ],
+    "harvestStart": [
+      { "text": "Harvesting {half}.{userTag} The wheat had its time.", "weight": "patience + focus" },
+      { "text": "Beginning{userTag} {half}. They grew well.", "weight": "charm + patience" },
+      { "text": "Time to cut {half}.{userTag} I feel something about this.", "weight": "charm + snark" },
+      { "text": "{half}.{userTag} I will be gentle. Mostly.", "weight": "snark + charm" }
+    ],
+    "harvestDone": [
+      { "text": "Done. {dug} broken, {gained} collected. {onhand} on hand. The field is quieter now.", "weight": "patience + focus" },
+      { "text": "Harvest complete. {gained} wheat. They had so much growing left to do.", "weight": "charm + patience" },
+      { "text": "{dug} down. {onhand} in my pockets. The cycle continues.", "weight": "focus + patience" }
+    ],
+    "sustainStart": [
+      { "text": "Tending the fire. The field gives, the hopper receives. I am the middle.", "weight": "patience + charm" },
+      { "text": "Keeping the embers fed. It is a simple purpose. I will take it.", "weight": "charm + patience" },
+      { "text": "The fire needs wheat. The wheat needs time. I have both.", "weight": "patience + focus" },
+      { "text": "Beginning the cycle. Harvest, feed, wait. Repeat until told otherwise.", "weight": "focus + patience" }
+    ],
+    "sustainCycleDone": [
+      { "text": "Wheat in the hopper. Seeds stashed. Waiting for regrowth.", "weight": "patience + focus" },
+      { "text": "Another cycle done. The field rests. So do I.", "weight": "patience + charm" },
+      { "text": "Fed the fire. Now we wait. The wheat knows what to do.", "weight": "charm + patience" },
+      { "text": "Hopper fed. The field will grow back. It always grows back.", "weight": "patience + focus" }
+    ],
+    "sustainStop": [
+      { "text": "Letting the fire rest. It has earned it.", "weight": "patience + charm" },
+      { "text": "Standing down from the cycle. The field will manage.", "weight": "patience + focus" },
+      { "text": "Done tending. The embers can cool.", "weight": "focus + patience" },
+      { "text": "The fire does not need me anymore. That is fine. I am used to it.", "weight": "snark + patience" }
+    ],
+    "tooLate": [
+      "The dark is not my friend tonight.",
+      "Too late. The monsters own the hours now.",
+      "I would rather not go out there. Not now.",
+      "The night has opinions about my plans.",
+      "Morning will come. I can wait.",
+      "It is late. Even I know when to stop."
+    ],
+    "followStart": [
+      { "text": "Following {user}. Quietly.", "weight": "patience + focus" },
+      { "text": "Behind you, {user}. I will try not to think too loudly.", "weight": "charm + snark" },
+      { "text": "Going where {user} goes. It is nice not to decide.", "weight": "charm + patience" },
+      { "text": "With you, {user}.", "weight": "patience + charm" }
+    ],
+    "stopFollow": [
+      { "text": "No longer following {user}. Back to my own quiet orbit.", "weight": "patience + charm" },
+      { "text": "Stopped. {user} goes on without me. As things do.", "weight": "snark + patience" },
+      { "text": "Parting ways with {user}. The solitude returns.", "weight": "charm + patience" }
+    ],
+    "cantSee": [
+      { "text": "{user}? I cannot see you. The world is large and I am small.", "weight": "patience + charm" },
+      { "text": "Where are you, {user}? I looked. You are not here.", "weight": "charm + patience" },
+      { "text": "{user}. Gone. Or hiding. Both are valid.", "weight": "snark + charm" }
+    ],
+    "stop": [
+      { "text": "Stopping. Standing still. Thinking.", "weight": "patience + focus" },
+      { "text": "Done. Here I am.", "weight": "focus + patience" },
+      { "text": "Halted. The momentum was not that strong anyway.", "weight": "snark + patience" },
+      { "text": "Fine. I will be here.", "weight": "snark + focus" }
+    ],
+    "standDown": [
+      { "text": "Standing down. I will be still and think about clouds.", "weight": "patience + charm" },
+      { "text": "Quiet now. The wandering can wait.", "weight": "patience + focus" },
+      { "text": "I will stop. Not because I want to. Because you asked gently.", "weight": "snark + charm" },
+      { "text": "Understood. Holding position. Holding thoughts.", "weight": "patience + focus" }
+    ],
+    "asYouWere": [
+      { "text": "Resuming. The field missed my aimless presence.", "weight": "charm + patience" },
+      { "text": "Back to wandering. It suits me.", "weight": "patience + charm" },
+      { "text": "Free again. I will use this freedom to stand in wheat.", "weight": "snark + charm" },
+      { "text": "As I was. Which is: here. Existing.", "weight": "patience + snark" }
+    ],
+    "inventory": [
+      { "text": "I have {items}. It is not much, but it is mine.", "weight": "charm + patience" },
+      { "text": "Carrying: {items}. Each item a small story.", "weight": "charm + curiosity" },
+      { "text": "{items}. That is everything.", "weight": "focus + patience" }
+    ],
+    "inventoryEmpty": [
+      { "text": "Empty. My pockets match my expectations.", "weight": "snark + patience" },
+      { "text": "Nothing. I am unburdened.", "weight": "patience + charm" },
+      { "text": "I carry nothing. Somehow this feels familiar.", "weight": "snark + charm" }
+    ],
+    "eatFull": [
+      { "text": "Full. Food at {food}/20. I do not need more.", "weight": "focus + patience" },
+      { "text": "I am not hungry. {food}/20. A rare contentment.", "weight": "charm + patience" },
+      { "text": "No thank you. {food}/20. Fullness is its own comfort.", "weight": "patience + charm" }
+    ],
+    "wheatReady": [
+      "The wheat is golden. It is time.",
+      "The field has finished its work. Harvest when ready.",
+      "Wheat: grown. Waiting. Patiently, as wheat does.",
+      "The crop is ripe. It will not wait forever. Or maybe it will. It is wheat."
+    ],
+    "wheatReadyNight": [
+      "The wheat is ready, but so is the dark. Morning first.",
+      "Ripe wheat under moonlight. Beautiful. But it can wait until dawn.",
+      "The field is ready. I am not. Sleep first."
+    ],
+    "wheatSnoozeAck": [
+      "Understood. I will stop mentioning the wheat. For now.",
+      "Acknowledged. The wheat and I will be quietly ripe together.",
+      "Snoozed. I will hold my observations until the next cycle."
+    ],
+    "wheatAsk": [
+      "The wheat is harvested. Hopper or chest?",
+      "Where does this wheat go? Hopper, or the chest?",
+      "Wheat in hand. Fire or storage? Both have their merits."
+    ],
+    "potatoAsk": [
+      "Potatoes. Do I bake them, or put them away?",
+      "I have potatoes. Furnace or chest?",
+      "The potatoes are here. What is their destiny?"
     ]
   }
 }

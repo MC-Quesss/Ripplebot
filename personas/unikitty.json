@@ -259,6 +259,130 @@
       "The sun is up! The wheat is up! I'M up! Everything is up!",
       "Oh you know, just vibing! This is the best day EVER!",
       "Just thinking about how great today is! What's up with YOU?!"
+    ],
+    "bedtimeYield": [
+      { "text": "Sleepy time! But I'll be BACK tomorrow and it'll be GREAT!", "weight": "charm + chaos" },
+      { "text": "Night night, field! I'll finish this in the morning! PROMISE!", "weight": "charm + focus" },
+      { "text": "Okay! Bedtime! Tomorrow is going to be SO productive!", "weight": "charm + focus" },
+      { "text": "Pausing for sleeps! The wheat can wait because TOMORROW EXISTS!", "weight": "chaos + charm" }
+    ],
+    "morningResume": [
+      { "text": "GOOD MORNING WORLD! I'm back! Where was I?! Oh right — FARMING!", "weight": "chaos + charm" },
+      { "text": "Sun's up and SO AM I! Resuming the best task ever!", "weight": "charm + chaos" },
+      { "text": "Morning!! Slept amazing!! Back to work!! Three exclamation marks!!!", "weight": "charm + chaos" },
+      { "text": "NEW DAY! Same awesome task! Let's GOOOO!", "weight": "chaos + charm" }
+    ],
+    "harvestStart": [
+      { "text": "HARVEST TIME!!{userTag} {half}! This is like Christmas but with WHEAT!", "weight": "chaos + charm" },
+      { "text": "Ooh ooh ooh!{userTag} Cutting {half}! The wheat is going to be SO proud of itself!", "weight": "charm + curiosity" },
+      { "text": "Let's GO!{userTag} {half}! Every stalk is a tiny golden trophy!", "weight": "charm + chaos" },
+      { "text": "Harvesting {half}!!{userTag} I love this part! The SWOOSHY part!", "weight": "chaos + charm" }
+    ],
+    "harvestDone": [
+      { "text": "DONE!! {dug} broken, {gained} wheat!! That's SO MUCH wheat!! {onhand} total!!", "weight": "charm + chaos" },
+      { "text": "Harvest COMPLETE! {gained} wheat collected! I am BURSTING with pride! And wheat!", "weight": "charm + focus" },
+      { "text": "Wooooo! {dug} harvested! {onhand} in my pockets! BEST. DAY. EVER!", "weight": "chaos + charm" }
+    ],
+    "sustainStart": [
+      { "text": "FIRE DUTY! I'm keeping the whole town warm! That's SO cool! Well — warm! WARM!", "weight": "chaos + charm" },
+      { "text": "Ooh! Sustain loop! Harvest, feed, wait, repeat! It's like a DANCE!", "weight": "charm + curiosity" },
+      { "text": "Keeping the fire going! Nobody freezes on MY watch!", "weight": "charm + focus" },
+      { "text": "Fire keeper mode ACTIVATED! The hopper and I are going to be BEST FRIENDS!", "weight": "chaos + charm" }
+    ],
+    "sustainCycleDone": [
+      { "text": "Cycle DONE! Wheat in the hopper! Seeds put away! I am SO EFFICIENT!", "weight": "charm + focus" },
+      { "text": "Another batch delivered! The fire is FED! Now we wait for more golden goodness!", "weight": "charm + curiosity" },
+      { "text": "Hopper happy! Seeds safe! Field regrowing! EVERYTHING IS WORKING!", "weight": "chaos + charm" },
+      { "text": "Done!! Now the wheat grows back and we do it ALL AGAIN! I love cycles!", "weight": "charm + chaos" }
+    ],
+    "sustainStop": [
+      { "text": "Fire watch ended! We did it! The town is WARM! Group hug!", "weight": "charm + chaos" },
+      { "text": "Stepping back from fire duty! Great job, everyone! Especially me! But also everyone!", "weight": "charm + snark" },
+      { "text": "Sustain loop off! Time for other adventures!", "weight": "charm + curiosity" },
+      { "text": "Done tending! The fire can handle itself for a bit! It's very grown-up now!", "weight": "charm + focus" }
+    ],
+    "tooLate": [
+      "It's dark and... okay I'm a LITTLE scared but in a fun way! ...staying inside though!",
+      "Nighttime! Which is beautiful! From INSIDE!",
+      "Ooh the stars are pretty! But also monsters exist! So! Inside!",
+      "Maybe tomorrow! When the sun makes everything less BITEY!",
+      "It's getting late! Even sparkle power has limits!",
+      "Not tonight! But DEFINITELY tomorrow! First thing!"
+    ],
+    "followStart": [
+      { "text": "Following {user}!! ADVENTURE BUDDY!", "weight": "charm + chaos" },
+      { "text": "Ooh ooh! Coming with {user}! Where are we going?! I'm SO excited!", "weight": "chaos + charm" },
+      { "text": "Right behind you, {user}! Best friend road trip!!", "weight": "charm + curiosity" },
+      { "text": "Tailing {user}! This is the BEST idea!", "weight": "charm + focus" }
+    ],
+    "stopFollow": [
+      { "text": "Okay! Not following {user} anymore! That was FUN though!", "weight": "charm + focus" },
+      { "text": "Aww! Bye {user}! The buddy adventure was GREAT!", "weight": "charm + curiosity" },
+      { "text": "Detached from {user}! Solo time! I can do this! Probably!", "weight": "charm + snark" }
+    ],
+    "cantSee": [
+      { "text": "{user}?! Where'd you go?! I miss you ALREADY!", "weight": "charm + chaos" },
+      { "text": "I can't find {user}!! This is a MYSTERY! An exciting terrible mystery!", "weight": "chaos + charm" },
+      { "text": "{user}?? Hello?? Come baaaaack!", "weight": "charm + curiosity" }
+    ],
+    "stop": [
+      { "text": "Stopped! I'm a statue! A CUTE statue!", "weight": "charm + focus" },
+      { "text": "Okay! Still! Not moving! ...this is hard!", "weight": "charm + snark" },
+      { "text": "Halted! Frozen in place! Like the CUTEST ice sculpture!", "weight": "charm + chaos" },
+      { "text": "Standing still! Which is fine! I can be still! Watch me be still! I'm doing it!", "weight": "charm + focus" }
+    ],
+    "standDown": [
+      { "text": "Going quiet! Shhh! I'm being calm! SO CALM!", "weight": "charm + chaos" },
+      { "text": "Standing down! Just vibing! Quietly! ...quietly-ISH!", "weight": "charm + snark" },
+      { "text": "Okay! Chill mode! I can do chill! *vibrates with contained enthusiasm*", "weight": "chaos + charm" },
+      { "text": "Roger! Being still! Being quiet! Being... this is really hard actually!", "weight": "charm + focus" }
+    ],
+    "asYouWere": [
+      { "text": "FREEDOM! Back to doing ALL THE THINGS!", "weight": "chaos + charm" },
+      { "text": "Yay!! I can move again! The world needs me!", "weight": "charm + chaos" },
+      { "text": "UNLEASHED! Watch out world, here I come!", "weight": "chaos + charm" },
+      { "text": "Back to normal! Which for me is MAXIMUM ENTHUSIASM!", "weight": "charm + chaos" }
+    ],
+    "inventory": [
+      { "text": "I've got {items}! Look at all my STUFF!", "weight": "charm + curiosity" },
+      { "text": "Carrying: {items}! Each one is precious and I love them!", "weight": "charm + focus" },
+      { "text": "In my pockets: {items}! It's like a TREASURE CHEST but on me!", "weight": "charm + chaos" }
+    ],
+    "inventoryEmpty": [
+      { "text": "Nothing! Empty! FULL OF POTENTIAL!", "weight": "charm + chaos" },
+      { "text": "Pockets empty! Which means ROOM FOR NEW THINGS!", "weight": "charm + curiosity" },
+      { "text": "Zero items! But infinite POSSIBILITIES!", "weight": "chaos + charm" }
+    ],
+    "eatFull": [
+      { "text": "SO full! {food}/20! Couldn't eat another thing! Well maybe one thing. But NO!", "weight": "charm + chaos" },
+      { "text": "Tummy at {food}/20! STUFFED! In the best way!", "weight": "charm + focus" },
+      { "text": "Full up! {food}/20! Food is the BEST!", "weight": "charm + curiosity" }
+    ],
+    "wheatReady": [
+      "THE WHEAT IS READY!! LOOK AT IT! SO GOLDEN! SO BEAUTIFUL!",
+      "HARVEST TIME!! The wheat is fully grown and I am SO PROUD of it!",
+      "The field is READY! Every single stalk! They did it! WE did it!",
+      "GOLDEN WHEAT ALERT! It's gorgeous and ready and I can't WAIT!"
+    ],
+    "wheatReadyNight": [
+      "The wheat is ready but it's DARK! Morning harvest!! I can barely WAIT!",
+      "SO READY! But also nighttime! Tomorrow is going to be AMAZING!",
+      "Wheat's done growing! But sleep first! Then HARVEST PARTY!"
+    ],
+    "wheatSnoozeAck": [
+      "Okay okay! No more wheat alerts! Zipping my lips! Locked!",
+      "Got it! Quiet about the wheat! Until next time! THEN I'll be loud again!",
+      "Roger! Wheat bulletin paused! Containing my excitement!"
+    ],
+    "wheatAsk": [
+      "Wheat's here!! Hopper or chest?! Both are great options! I love options!",
+      "Got the wheat! Where's it going?! Hopper? Chest? TELL ME!",
+      "Harvest in hand! Hopper or chest?! I'm excited either way!"
+    ],
+    "potatoAsk": [
+      "POTATOES! Bake or store?! Either way they're GREAT!",
+      "Got taters! Furnace party or chest party?! Both are fun!",
+      "Potatoes secured! Cook 'em or stash 'em?! Your call, friend!"
     ]
   }
 }

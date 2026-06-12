@@ -795,7 +795,7 @@ function waitForMorning () {
 
 async function yieldToBedtime (myGen) {
   activeTask.sleeping = true
-  bot.chat(pickLine(BEDTIME_YIELD_LINES))
+  bot.chat(pickLine(withPersonaSlot(BEDTIME_YIELD_LINES, 'bedtimeYield')))
   logEvent('task', `${activeTask.name} yielding to bedtime`)
 
   if (!insideHouse()) {
@@ -831,7 +831,7 @@ async function yieldToBedtime (myGen) {
   if (myGen !== undefined) checkAbort(myGen)
 
   activeTask.sleeping = false
-  bot.chat(pickLine(MORNING_RESUME_LINES))
+  bot.chat(pickLine(withPersonaSlot(MORNING_RESUME_LINES, 'morningResume')))
   logEvent('task', `${activeTask.name} resuming after sleep (inside=${insideHouse()})`)
 
   if (insideHouse()) {
@@ -1541,8 +1541,15 @@ async function tryAmbientAction () {
   if (!idleWanderEnabled) return // "stand down" silences ambient chatter too
   if (!expressiveGateOpen('ambient')) return
   if (Math.random() < 0.4 && await tryWildlifeComment()) return
+  const ambientLocation = insideHouse()
+    ? 'You are inside the house. You can see: walls, beds, chests, the furnace, a door. You CANNOT see the sheep, the wheat field, the sky, the sun, clouds, or wildlife from here.'
+    : inPen()
+      ? 'You are in the sheep pen. You can see: sheep, the fence, grass, the sky. You cannot see the wheat field or the house interior from here.'
+      : inWheatField()
+        ? 'You are standing in the wheat field. You can see: wheat rows, the sky, the farmhouse in the distance. You cannot see the sheep pen or the house interior from here.'
+        : 'You are outside on the open farm. You can see: the farmhouse, the field, the sky, trees. You cannot see the house interior from here.'
   await impulseExpressive('ambient',
-    'Nothing in particular is happening — a quiet moment. Offer one small idle action or passing thought, written as action text (it renders after your name, like "watches a cloud drift overhead").',
+    `${ambientLocation} Nothing in particular is happening — a quiet moment. Offer one small idle action or passing thought, written as action text (it renders after your name, like "watches a cloud drift overhead"). Only reference things you can actually see from where you are.`,
     { me: true })
 }
 
@@ -1609,6 +1616,7 @@ function getWildlifeNearby () {
 
 async function tryWildlifeComment () {
   if (!idleWanderEnabled) return false
+  if (insideHouse()) return false
   if (!expressiveGateOpen('wildlife')) return false
   const wildlife = getWildlifeNearby()
   if (!wildlife) return false
@@ -1624,6 +1632,7 @@ async function checkSquirrelNearby () {
   if (!bot.entity) return
   if (bot.isSleeping) return
   if (!idleWanderEnabled) return
+  if (insideHouse()) return
   // Detect before gating: getWildlifeNearby refreshes the movement tracks,
   // which need a sample every tick for displacement to mean anything.
   const wildlife = getWildlifeNearby()
@@ -1849,7 +1858,9 @@ setInterval(async () => {
 }, 15 * 1000)
 
 function pickWheatReadyLine () {
-  const pool = isBedtime() ? WHEAT_READY_NIGHT_LINES : WHEAT_READY_LINES
+  const pool = isBedtime()
+    ? withPersonaSlot(WHEAT_READY_NIGHT_LINES, 'wheatReadyNight')
+    : withPersonaSlot(WHEAT_READY_LINES, 'wheatReady')
   return pickAvoidingRecentPhrase(pool)
 }
 
@@ -1857,8 +1868,8 @@ function snoozeWheatReadyAlerts (username = 'someone') {
   if (!wheatReadyState.ready || wheatReadyState.snoozed) return false
   wheatReadyState.snoozed = true
   wheatReadyState.lastAlertAt = 0
-  const line = WHEAT_SNOOZE_ACK_LINES[Math.floor(Math.random() * WHEAT_SNOOZE_ACK_LINES.length)]
-  bot.chat(line)
+  const pool = withPersonaSlot(WHEAT_SNOOZE_ACK_LINES, 'wheatSnoozeAck')
+  bot.chat(pool[Math.floor(Math.random() * pool.length)])
   logEvent('wheat-alert', `snoozed by ${username}`)
   return true
 }
@@ -1970,7 +1981,7 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
       : half === 'north-field' ? 'the north field'
       : half === 'south-field' ? 'the south field'
       : `the ${half} half`
-    bot.chat(pickLine(HARVEST_START_LINES, { userTag: user ? ' ' + user + ',' : '', half: halfLabel }))
+    bot.chat(pickLine(withPersonaSlot(HARVEST_START_LINES, 'harvestStart'), { userTag: user ? ' ' + user + ',' : '', half: halfLabel }))
     logEvent('harvest-rc', `start half=${half} startDeaths=${startDeaths}`)
 
     if (insideHouse()) {
@@ -2086,7 +2097,7 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
       .filter(i => i.name === 'wheat')
       .reduce((s, i) => s + i.count, 0)
     const gained = wheatOnHand - wheatCountBefore
-    bot.chat(pickLine(HARVEST_DONE_LINES, { dug: totalHarvested, gained, onhand: wheatOnHand }))
+    bot.chat(pickLine(withPersonaSlot(HARVEST_DONE_LINES, 'harvestDone'), { dug: totalHarvested, gained, onhand: wheatOnHand }))
     logEvent('harvest-rc', `activated=${totalActivated} harvested=${totalHarvested} gained=${gained} onhand=${wheatOnHand} kept-on-hand`)
 
     // Ask where the wheat should go — hopper or chest. No answer in 30s → keep it.
@@ -2096,7 +2107,7 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
         dest = autoDeposit // sustain loop: skip the question, feed the hopper directly
         logEvent('harvest-rc', `auto-deposit wheat → ${dest} (${wheatOnHand})`)
       } else {
-        bot.chat(WHEAT_ASK_LINES[Math.floor(Math.random() * WHEAT_ASK_LINES.length)])
+        { const pool = withPersonaSlot(WHEAT_ASK_LINES, 'wheatAsk'); bot.chat(pool[Math.floor(Math.random() * pool.length)]) }
         logEvent('harvest-rc', `asking user: hopper or chest? (${wheatOnHand} wheat)`)
         dest = await waitForChatReply((username, msg) => {
           if (/\bhopper\b/i.test(msg)) return 'hopper'
@@ -2440,7 +2451,7 @@ async function runSustainFarm (user) {
   sustainState.active = true
   sustainState.startedBy = user || null
   sustainState.cycles = 0
-  bot.chat(pickLine(SUSTAIN_START_LINES))
+  bot.chat(pickLine(withPersonaSlot(SUSTAIN_START_LINES, 'sustainStart')))
   logEvent('sustain', `started by ${user || 'someone'}`)
 
   let polls = 0
@@ -2505,7 +2516,7 @@ async function runSustainFarm (user) {
           }
 
           sustainState.lastCycleDay = bot.time?.day ?? -1
-          bot.chat(pickLine(SUSTAIN_CYCLE_DONE_LINES))
+          bot.chat(pickLine(withPersonaSlot(SUSTAIN_CYCLE_DONE_LINES, 'sustainCycleDone')))
         } catch (e) {
           if (e.name === 'AbortError' && !sustainState.active) {
             logEvent('sustain', `cycle ${sustainState.cycles} abort + inactive — breaking loop`)
@@ -2867,7 +2878,7 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
       logEvent('harvest-potato-rc', `auto-bake: ${onHand} potatoes`)
       logEvent('harvest-potato-rc', `auto-bake: keeping ${onHand} potatoes for bake step`)
     } else {
-      const askLine = POTATO_ASK_LINES[Math.floor(Math.random() * POTATO_ASK_LINES.length)]
+      const potatoPool = withPersonaSlot(POTATO_ASK_LINES, 'potatoAsk'); const askLine = potatoPool[Math.floor(Math.random() * potatoPool.length)]
       bot.chat(askLine)
       logEvent('harvest-potato-rc', `asking user: bake or stash? (${onHand} potatoes)`)
 
@@ -3366,7 +3377,7 @@ async function runGoOutsideOnce (activity) {
   if (!insideHouse()) { bot.chat("I'm already outside."); return }
   const t = bot.time || {}
   if (!t.isDay || (t.timeOfDay ?? 0) >= 11500) {
-    bot.chat(pickLine(TOO_LATE_LINES))
+    bot.chat(pickLine(withPersonaSlot(TOO_LATE_LINES, 'tooLate')))
     return
   }
   const act = activity || 'stuff'
@@ -3672,7 +3683,7 @@ async function runGoInside () {
 async function runGoIntoPen ({ skipActivate = false, allowNight = false } = {}) {
   const t = bot.time || {}
   if (!allowNight && (!t.isDay || (t.timeOfDay ?? 0) >= 11500)) {
-    bot.chat(pickLine(TOO_LATE_LINES))
+    bot.chat(pickLine(withPersonaSlot(TOO_LATE_LINES, 'tooLate')))
     return
   }
   if (insideHouse()) {
@@ -4902,8 +4913,8 @@ const CHAT_HANDLERS = [
     handler: (user) => {
       abortGen++
       const target = findPlayerEntity(user)
-      if (!target) { bot.chat(pickLine(CANT_SEE_LINES, { user })); return }
-      bot.chat(pickLine(FOLLOW_START_LINES, { user }))
+      if (!target) { bot.chat(pickLine(withPersonaSlot(CANT_SEE_LINES, 'cantSee'), { user })); return }
+      bot.chat(pickLine(withPersonaSlot(FOLLOW_START_LINES, 'followStart'), { user }))
       const startFollow = async () => {
         if (insideHouse()) await runGoOutside()
         followTarget = user
@@ -4939,13 +4950,13 @@ const CHAT_HANDLERS = [
       const wasSustaining = sustainState.active
       sustainState.active = false
       if (followTarget) {
-        bot.chat(pickLine(STOP_FOLLOW_LINES, { user: followTarget }))
+        bot.chat(pickLine(withPersonaSlot(STOP_FOLLOW_LINES, 'stopFollow'), { user: followTarget }))
         followTarget = null; followEntity = null; followChainPos = 0
       } else if (wasSustaining) {
-        bot.chat(pickLine(SUSTAIN_STOP_LINES))
+        bot.chat(pickLine(withPersonaSlot(SUSTAIN_STOP_LINES, 'sustainStop')))
         logEvent('sustain', 'stopped by stop command')
       } else {
-        bot.chat(pickLine(STOP_LINES))
+        bot.chat(pickLine(withPersonaSlot(STOP_LINES, 'stop')))
       }
     },
   },
@@ -4966,10 +4977,10 @@ const CHAT_HANDLERS = [
       const wasSustaining = sustainState.active
       sustainState.active = false
       if (wasSustaining) {
-        bot.chat(pickLine(SUSTAIN_STOP_LINES))
+        bot.chat(pickLine(withPersonaSlot(SUSTAIN_STOP_LINES, 'sustainStop')))
         logEvent('sustain', `stopped (stand down) by ${user}`)
       } else {
-        bot.chat(pickLine(STAND_DOWN_LINES))
+        bot.chat(pickLine(withPersonaSlot(STAND_DOWN_LINES, 'standDown')))
       }
       logEvent('idle-wander', `disabled (stand down) by ${user}`)
     },
@@ -4981,7 +4992,7 @@ const CHAT_HANDLERS = [
     pattern: /\b(do your (own )?thing|as you were|carry on|go on then)\b/i,
     handler: (user) => {
       idleWanderEnabled = true
-      bot.chat(pickLine(AS_YOU_WERE_LINES))
+      bot.chat(pickLine(withPersonaSlot(AS_YOU_WERE_LINES, 'asYouWere')))
       logEvent('idle-wander', `enabled (as you were) by ${user}`)
     },
   },
@@ -5004,8 +5015,8 @@ const CHAT_HANDLERS = [
         .sort((a, b) => b.count - a.count)
         .slice(0, 3)
         .map(i => `${i.count}× ${i.name}`)
-      if (!items.length) bot.chat(pickLine(INVENTORY_EMPTY))
-      else bot.chat(pickLine(INVENTORY_LINES, { items: items.join(', ') }))
+      if (!items.length) bot.chat(pickLine(withPersonaSlot(INVENTORY_EMPTY, 'inventoryEmpty')))
+      else bot.chat(pickLine(withPersonaSlot(INVENTORY_LINES, 'inventory'), { items: items.join(', ') }))
     },
   },
   {
@@ -5206,7 +5217,7 @@ const CHAT_INTENTS = {
   eat: {
     hint: 'eat something now',
     run: () => {
-      if (bot.food >= 20) { bot.chat(pickLine(EAT_FULL_LINES, { food: bot.food })); return Promise.resolve() }
+      if (bot.food >= 20) { bot.chat(pickLine(withPersonaSlot(EAT_FULL_LINES, 'eatFull'), { food: bot.food })); return Promise.resolve() }
       return eatSomething().then(msg => bot.chat(msg))
     },
   },

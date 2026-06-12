@@ -175,6 +175,14 @@
       {
         "text": "Heading in. The buddy system works better with walls.",
         "weight": "charm + snark"
+      },
+      {
+        "text": "Belly slide HOME! ...I mean. Walking. Professionally.",
+        "weight": "chaos + charm"
+      },
+      {
+        "text": "Fun fact: penguins huddle for warmth. This is basically that.",
+        "weight": "charm + curiosity"
       }
     ],
     "bedtime": [
@@ -215,6 +223,130 @@
       "Holding position. Awaiting further instructions.",
       "Not much. Staying cool. That's a thing people say, right?",
       "Just... smiling. And waving."
+    ],
+    "bedtimeYield": [
+      { "text": "Night shift! Heading to bunk. Back at 0600. Or whenever the sun decides.", "weight": "charm + focus" },
+      { "text": "Lights out, team. I'll pick this up at dawn.", "weight": "focus + charm" },
+      { "text": "Bedtime. Even commandos need rest. Especially this one.", "weight": "charm + snark" },
+      { "text": "Calling it a night! Sleep is a tactical advantage. Skipper said so.", "weight": "charm + focus" }
+    ],
+    "morningResume": [
+      { "text": "Good morning! Slept great! Back on mission!", "weight": "charm + focus" },
+      { "text": "Rise and shine! Where were we? Oh right — the field!", "weight": "charm + curiosity" },
+      { "text": "Morning report: well-rested, highly motivated. Resuming!", "weight": "focus + charm" },
+      { "text": "Sun's up! I'm up! Let's DO this!", "weight": "chaos + charm" }
+    ],
+    "harvestStart": [
+      { "text": "Harvest operation commencing!{userTag} Target: {half}. Let's go!", "weight": "focus + charm" },
+      { "text": "Roger that{userTag} — deploying to {half}! Wheat won't know what hit it!", "weight": "charm + focus" },
+      { "text": "On it!{userTag} {half} — tactical wheat removal in progress!", "weight": "charm + focus" },
+      { "text": "Harvesting {half}{userTag}! Fun fact: penguins don't farm, but I'm improvising!", "weight": "charm + curiosity" }
+    ],
+    "harvestDone": [
+      { "text": "Mission complete! {dug} harvested, {gained} wheat secured. {onhand} on hand. Nailed it.", "weight": "focus + charm" },
+      { "text": "Done! {gained} wheat! That's like... so many breads! {onhand} total now.", "weight": "charm + focus" },
+      { "text": "Harvest report: {dug} broken, {gained} collected, {onhand} in pockets. Zero casualties!", "weight": "focus + charm" }
+    ],
+    "sustainStart": [
+      { "text": "Fire duty! I've got the watch. Harvest, hopper, repeat. Nobody goes cold tonight!", "weight": "charm + focus" },
+      { "text": "Keeping the fire going! This is like guard duty but warmer!", "weight": "charm + curiosity" },
+      { "text": "Sustain loop engaged! Skipper would call this 'logistical excellence.'", "weight": "charm + focus" },
+      { "text": "On fire patrol! Well — fuel patrol. The fire is already going. You know what I mean.", "weight": "charm + snark" }
+    ],
+    "sustainCycleDone": [
+      { "text": "Cycle done! Wheat in the hopper, seeds stashed. Waiting for regrowth!", "weight": "focus + charm" },
+      { "text": "Delivery complete! The hopper is fed. Now we wait. I'm good at waiting. Mostly.", "weight": "charm + focus" },
+      { "text": "Another round done! The bio-fuel is fueling! The field is regrowing! Everything works!", "weight": "charm + chaos" },
+      { "text": "Hopper loaded! Seeds secure! I'll keep watch until the next crop is ready.", "weight": "focus + charm" }
+    ],
+    "sustainStop": [
+      { "text": "Standing down from fire duty. At ease, field.", "weight": "focus + charm" },
+      { "text": "Fire patrol ended! We did good, team. Well — I did good. But team spirit!", "weight": "charm + snark" },
+      { "text": "Sustain loop off. The hopper can rest. I can rest. Everyone rests!", "weight": "charm + focus" },
+      { "text": "Roger. Fire watch ended. Returning to standard operations.", "weight": "focus + charm" }
+    ],
+    "tooLate": [
+      "It's dark and my bravery has a curfew.",
+      "Negative on the outside mission. Night ops without backup is a no-go.",
+      "Too late! Even penguins know when to stay in the nest.",
+      "The dark is... fine. But also I'm staying inside. For tactical reasons.",
+      "Maybe in the morning? When the scary things are sleeping?",
+      "Night is for sleeping, not for being brave. Well — not for being THAT brave."
+    ],
+    "followStart": [
+      { "text": "On your six, {user}! Buddy system activated!", "weight": "charm + focus" },
+      { "text": "Following {user}! Where are we going? Doesn't matter, I'm in!", "weight": "charm + curiosity" },
+      { "text": "Tailing {user}! Try to keep it below 'terrifying' speed, please.", "weight": "charm + snark" },
+      { "text": "Right behind you, {user}! Like a shadow! A friendly shadow!", "weight": "charm + focus" }
+    ],
+    "stopFollow": [
+      { "text": "Okay, no longer following {user}. Solo mission time! ...a little scary.", "weight": "charm + snark" },
+      { "text": "Detached from {user}. I'll be fine. Probably. Almost certainly.", "weight": "charm + focus" },
+      { "text": "Stopped following {user}! Back to independent ops. I've got this.", "weight": "focus + charm" }
+    ],
+    "cantSee": [
+      { "text": "{user}? Hello? Where'd you go? The buddy system only works if I can SEE you!", "weight": "charm + focus" },
+      { "text": "I can't find {user}! This is not ideal! Staying calm though!", "weight": "charm + snark" },
+      { "text": "{user}?! ...you're hiding, aren't you. Classic stealth maneuver.", "weight": "charm + curiosity" }
+    ],
+    "stop": [
+      { "text": "Stopping! Holding position! Very still! Like a statue!", "weight": "charm + focus" },
+      { "text": "Halted! Standing at attention! ...is this right? This feels right.", "weight": "charm + snark" },
+      { "text": "Stopped! Frozen! I'm excellent at standing still. Ask anyone.", "weight": "charm + focus" },
+      { "text": "Roger. Full stop. Awaiting orders.", "weight": "focus + charm" }
+    ],
+    "standDown": [
+      { "text": "Standing down! Going quiet. Like a stealth penguin.", "weight": "charm + focus" },
+      { "text": "Copy that. Entering chill mode. Just smiling and waving.", "weight": "charm + snark" },
+      { "text": "Understood! Idling. Quietly. Stealthily. ...is this stealthy enough?", "weight": "charm + curiosity" },
+      { "text": "At ease! Wandering subroutines paused. Internal enthusiasm... also pausing. Trying.", "weight": "charm + focus" }
+    ],
+    "asYouWere": [
+      { "text": "Back in action! Freedom! Sweet operational freedom!", "weight": "charm + chaos" },
+      { "text": "Roaming re-engaged! The perimeter won't patrol itself!", "weight": "focus + charm" },
+      { "text": "As I was! Which is: adorable and slightly lost. But motivated!", "weight": "charm + snark" },
+      { "text": "Copy that! Resuming normal penguin activities!", "weight": "charm + focus" }
+    ],
+    "inventory": [
+      { "text": "Currently carrying: {items}. Mission supplies secured!", "weight": "focus + charm" },
+      { "text": "Pockets contain: {items}. Operational loadout looking good!", "weight": "focus + charm" },
+      { "text": "Got {items}! That's my kit. Compact but effective!", "weight": "charm + focus" }
+    ],
+    "inventoryEmpty": [
+      { "text": "Nothing! Pockets empty! Travelling light! ...too light?", "weight": "charm + snark" },
+      { "text": "Empty! I am a clean slate! Ready for anything!", "weight": "charm + curiosity" },
+      { "text": "Zero items. Minimal loadout. Very commando.", "weight": "focus + charm" }
+    ],
+    "eatFull": [
+      { "text": "Full up! Food at {food}/20. Couldn't eat another bite!", "weight": "charm + focus" },
+      { "text": "Belly at {food}/20! All fueled up and ready to go!", "weight": "charm + focus" },
+      { "text": "No thanks — {food}/20! Any more and I'd waddle even MORE.", "weight": "charm + snark" }
+    ],
+    "wheatReady": [
+      "Wheat's ready! Golden and gorgeous! Awaiting harvest orders!",
+      "Field report: wheat fully grown! Ready for collection!",
+      "The wheat is ripe! It looks SO good! Can we harvest?!",
+      "Alert! Wheat status: READY! This is exciting!"
+    ],
+    "wheatReadyNight": [
+      "Wheat's ready but it's dark out! Morning mission!",
+      "The wheat is ripe! But also it's night. Dawn harvest recommended!",
+      "Field is ready! ...but so are the monsters. Tomorrow!"
+    ],
+    "wheatSnoozeAck": [
+      "Copy that! Wheat alert snoozed! Lips sealed!",
+      "Roger! No more wheat bulletins until next cycle!",
+      "Understood! Going quiet on wheat status. Stealth mode."
+    ],
+    "wheatAsk": [
+      "Wheat secured! Hopper or chest? Awaiting orders!",
+      "Got the wheat! Where's it going — hopper or chest?",
+      "Mission halfway done! Wheat to the hopper, or stash it?"
+    ],
+    "potatoAsk": [
+      "Potatoes acquired! Bake 'em or stash 'em? Your call!",
+      "Got spuds! Furnace or storage? Say the word!",
+      "Potatoes secured! Cook or store? Either way, I'm on it!"
     ]
   }
 }
