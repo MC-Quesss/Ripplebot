@@ -1716,13 +1716,14 @@ const wheatReadyState = {
   lastScan: null,
 }
 
-function scanKnownWheatFields () {
+function scanKnownWheatFields (fieldFilter = null) {
   if (!bot.entity) return { ready: false, expected: 0, wheat: 0, mature: 0, loaded: 0 }
   let expected = 0
   let loaded = 0
   let wheat = 0
   let mature = 0
   for (const section of WHEAT_CROP_ROWS) {
+    if (fieldFilter && !section.label.startsWith(`${fieldFilter} field`)) continue
     for (const z of section.zs) {
       for (let x = section.xMin; x <= section.xMax; x++) {
         expected++
@@ -2325,7 +2326,7 @@ const SUSTAIN_POLL_MS = 5000
 const SUSTAIN_KEEP_WHEAT = 16
 const SUSTAIN_KEEP_SEEDS = 16
 const SUSTAIN_HOPPER_CHECK_INTERVAL = 6
-const sustainState = { active: false, cycles: 0, startedBy: null, lastCycleDay: -1 }
+const sustainState = { active: false, cycles: 0, startedBy: null, lastCycleDay: -1, role: null }
 
 async function feedHopperOneAtATime (waitMs) {
   await ensureInsideHouse()
@@ -2413,6 +2414,184 @@ const SUSTAIN_STOP_LINES = [
   { text: 'Stepping back from the harvest. Call me when you need the fire again.', weight: (s) => s.charm },
 ]
 
+// ── Multi-bot fire-duty coordination ────────────────────────────────────────
+// Bots run as separate processes (often separate machines); in-game chat is
+// the only channel they all share. Field claims, roll calls, and stand-downs
+// are persona-voiced lines that carry a parseable core. When several bots keep
+// the fire at once, the first two split the fields (north/south) and any
+// extras supervise from the field edge instead of triple-harvesting.
+const FIRE_CLAIM_TTL_MS = 45 * 60 * 1000
+const FIRE_ROLLCALL_WAIT_MS = 10000
+const FIRE_ROLLCALL_RE = /\bwho(?:'s| is)?\b[^.!?]*\bfire\b/i
+const FIRE_CLAIM_RE_A = /\b(?:i(?:'ll| will| shall|'m| am|'ve got| have| got)|tak(?:e|ing)|claim(?:ing)?|cover(?:ing)?|hold(?:ing)?|work(?:ing)?)\b[^.!?]*\b(north|south)\s+field\b/i
+const FIRE_CLAIM_RE_B = /\b(north|south)\s+field\b[^.!?]*\b(?:is mine|for me)\b/i
+const FIRE_SUPERVISE_RE = /\bsupervis/i
+const FIRE_STANDDOWN_RE = /\b(?:stand(?:ing)? down|stepping back|easing off|done tending|letting the fire (?:die|rest)|resting the embers|fire (?:duty|watch|patrol|operations?)[^.!?]*\b(?:over|ended|done|suspended|off)|ceas(?:e|ing) fire|sustain loop off|unattended fire|fire does not need me|off fire duty)\b/i
+const FIRE_ROLLCALL_LINES = [
+  { text: "Roll call — who's on fire duty already?",                                  weight: (s) => s.focus + 5 },
+  { text: "Who is keeping the fire right now? Speak up so we don't double-harvest.",  weight: (s) => s.focus + s.charm },
+  { text: "Before I start: who's already tending the fire?",                          weight: (s) => s.patience + s.focus },
+]
+const FIRE_CLAIM_NORTH_LINES = [
+  { text: "I'll take the north field.",                                weight: (s) => s.focus + 5 },
+  { text: "Taking the north field — it's mine until further notice.",  weight: (s) => s.focus + s.charm },
+  { text: "I've got the north field covered.",                         weight: (s) => s.charm + s.focus },
+]
+const FIRE_CLAIM_SOUTH_LINES = [
+  { text: "I'll take the south field.",                                weight: (s) => s.focus + 5 },
+  { text: "Taking the south field — it's mine until further notice.",  weight: (s) => s.focus + s.charm },
+  { text: "I've got the south field covered.",                         weight: (s) => s.charm + s.focus },
+]
+const FIRE_SUPERVISE_LINES = [
+  { text: "Both fields are taken. I guess I'll supervise.",            weight: (s) => s.charm + 5 },
+  { text: "Fields are covered — I'll supervise from over here.",       weight: (s) => s.patience + s.charm },
+  { text: "No field left for me, so: supervising.",                    weight: (s) => s.snark + s.charm },
+]
+const fireCrew = new Map() // bot name (lowercase) -> { field: 'north'|'south'|'supervise', at }
+let fireStartupRivals = null // Set<name>: bots that roll-called during our own startup wait
+let fireStandDownAnnounced = false
+
+function myFireName () { return (NICKNAME || bot.username || '').toLowerCase() }
+
+function parseFireClaim (message) {
+  const m = FIRE_CLAIM_RE_A.exec(message) || FIRE_CLAIM_RE_B.exec(message)
+  return m ? m[1].toLowerCase() : null
+}
+
+function fireCrewExpire () {
+  const now = Date.now()
+  for (const [name, claim] of fireCrew) {
+    if (now - claim.at > FIRE_CLAIM_TTL_MS) fireCrew.delete(name)
+  }
+}
+
+function activeFireClaims () {
+  fireCrewExpire()
+  const claimed = new Set()
+  for (const claim of fireCrew.values()) {
+    if (claim.field === 'north' || claim.field === 'south') claimed.add(claim.field)
+  }
+  return claimed
+}
+
+function fireClaimLines (field) {
+  return field === 'north'
+    ? withPersonaSlot(FIRE_CLAIM_NORTH_LINES, 'sustainClaimNorth')
+    : withPersonaSlot(FIRE_CLAIM_SOUTH_LINES, 'sustainClaimSouth')
+}
+
+function announceFireClaim (field) {
+  sustainState.role = field
+  bot.chat(pickLine(fireClaimLines(field)))
+  logEvent('sustain', `claimed the ${field} field`)
+}
+
+function announceFireSupervise () {
+  sustainState.role = 'supervise'
+  bot.chat(pickLine(withPersonaSlot(FIRE_SUPERVISE_LINES, 'sustainSupervise')))
+  logEvent('sustain', 'both fields claimed — supervising')
+}
+
+// One stand-down line per sustain run, whichever path stops it (stop command,
+// stand down, ctl, loop error) — other bots parse it to free our field claim.
+function announceFireStandDown () {
+  if (fireStandDownAnnounced) return
+  fireStandDownAnnounced = true
+  try { bot.chat(pickLine(withPersonaSlot(SUSTAIN_STOP_LINES, 'sustainStop'))) } catch (_) {}
+}
+
+// Role choice at startup: free fields go in alphabetical order among
+// simultaneous starters — everyone who roll-called inside everyone else's wait
+// window computes the same assignment without further negotiation.
+function pickFireRole () {
+  const claimed = activeFireClaims()
+  const free = ['north', 'south'].filter(f => !claimed.has(f))
+  const rivals = [...(fireStartupRivals || [])].filter(n => !fireCrew.has(n))
+  if (!claimed.size && !rivals.length) return 'solo'
+  const ahead = rivals.filter(n => n < myFireName()).length
+  return ahead < free.length ? free[ahead] : 'supervise'
+}
+
+function answerFireRollCall () {
+  // Mid-startup our own roll call is in flight; the rival ordering in
+  // pickFireRole already accounts for the newcomer.
+  if (fireStartupRivals) return
+  setTimeout(() => {
+    if (!sustainState.active) return
+    if (sustainState.role === 'solo') {
+      // We were covering both fields; take north and let the newcomer have south.
+      logEvent('sustain', 'roll call heard while solo — splitting, taking north')
+      announceFireClaim('north')
+    } else if (sustainState.role === 'north' || sustainState.role === 'south') {
+      bot.chat(pickLine(fireClaimLines(sustainState.role)))
+    }
+  }, 1000 + Math.random() * 3000)
+}
+
+function resolveFireClaimConflict (name, field) {
+  if (sustainState.role === 'solo') {
+    // Someone claimed a field while we covered both — cede that half.
+    announceFireClaim(field === 'north' ? 'south' : 'north')
+    return
+  }
+  if (field !== sustainState.role) return
+  if (myFireName() < name) {
+    // Alphabetical tie-break: we keep the field; re-announce so they yield.
+    setTimeout(() => {
+      if (sustainState.active && sustainState.role === field) bot.chat(pickLine(fireClaimLines(field)))
+    }, 1500 + Math.random() * 2500)
+    return
+  }
+  // Yield: take the other field if it's free, otherwise supervise.
+  setTimeout(() => {
+    if (!sustainState.active || sustainState.role !== field) return
+    const other = field === 'north' ? 'south' : 'north'
+    if (!activeFireClaims().has(other)) announceFireClaim(other)
+    else announceFireSupervise()
+  }, 1000 + Math.random() * 2000)
+}
+
+function scheduleFirePromotion () {
+  setTimeout(() => {
+    if (!sustainState.active || sustainState.role !== 'supervise') return
+    const claimed = activeFireClaims()
+    const free = ['north', 'south'].filter(f => !claimed.has(f))
+    if (free.length) {
+      logEvent('sustain', `field freed — promoting from supervisor to ${free[0]}`)
+      announceFireClaim(free[0])
+    }
+  }, 2000 + Math.random() * 4000)
+}
+
+// Parse other bots' chat for fire-duty coordination lines. Called for every
+// bot-authored chat line, addressed to us or not — claims are tracked even
+// while we're idle so a later "keep the fire going" starts informed.
+function trackFireCoordination (username, message) {
+  const name = String(username || '').toLowerCase()
+  if (FIRE_STANDDOWN_RE.test(message)) {
+    if (fireCrew.delete(name)) {
+      logEvent('sustain', `${username} stood down from fire duty`)
+      if (sustainState.active && sustainState.role === 'supervise') scheduleFirePromotion()
+    }
+    return
+  }
+  const field = parseFireClaim(message)
+  if (field) {
+    fireCrew.set(name, { field, at: Date.now() })
+    logEvent('sustain', `${username} claimed the ${field} field`)
+    if (sustainState.active) resolveFireClaimConflict(name, field)
+    return
+  }
+  if (FIRE_SUPERVISE_RE.test(message)) {
+    fireCrew.set(name, { field: 'supervise', at: Date.now() })
+    return
+  }
+  if (FIRE_ROLLCALL_RE.test(message)) {
+    if (fireStartupRivals) fireStartupRivals.add(name)
+    else if (sustainState.active) answerFireRollCall()
+  }
+}
+
 async function sustainWait (ms) {
   const steps = Math.max(1, Math.round(ms / 1000))
   for (let i = 0; i < steps && sustainState.active; i++) await sleep(1000)
@@ -2451,19 +2630,61 @@ async function runSustainFarm (user) {
   sustainState.active = true
   sustainState.startedBy = user || null
   sustainState.cycles = 0
+  sustainState.role = 'solo'
+  fireStandDownAnnounced = false
   bot.chat(pickLine(withPersonaSlot(SUSTAIN_START_LINES, 'sustainStart')))
   logEvent('sustain', `started by ${user || 'someone'}`)
 
+  // Crew handshake: ask who's already on fire duty, give existing keepers a
+  // beat to re-announce their field claims, then take a free field — or
+  // supervise when both fields are spoken for.
+  fireCrewExpire()
+  fireStartupRivals = new Set()
+  bot.chat(pickLine(withPersonaSlot(FIRE_ROLLCALL_LINES, 'sustainRollCall')))
+  await sustainWait(FIRE_ROLLCALL_WAIT_MS)
+  const startRole = pickFireRole()
+  fireStartupRivals = null
+  if (sustainState.active) {
+    if (startRole === 'north' || startRole === 'south') announceFireClaim(startRole)
+    else if (startRole === 'supervise') announceFireSupervise()
+    logEvent('sustain', `fire role: ${sustainState.role}`)
+  }
+
   let polls = 0
+  let supervisePosted = false
   let retryAfterInterrupt = false
   try {
     while (sustainState.active) {
       // Gate: wait for safe conditions (daytime, no hostiles, HP ok)
       if (!sustainSafe()) {
         if (!(await sustainWaitUntilSafe('unsafe conditions'))) break
+        supervisePosted = false
       }
 
-      const scan = scanKnownWheatFields()
+      // Supervisor: both fields are claimed by other bots. Stand by at the
+      // field edge and watch for a freed field to promote into.
+      if (sustainState.role === 'supervise') {
+        const claimed = activeFireClaims()
+        const freed = ['north', 'south'].filter(f => !claimed.has(f))
+        if (freed.length) {
+          logEvent('sustain', `field freed — promoting from supervisor to ${freed[0]}`)
+          announceFireClaim(freed[0])
+        } else if (!supervisePosted && !foodSafetyBusy) {
+          try {
+            if (insideHouse()) await runGoOutside()
+            await pathTo(HARVEST_WAYPOINTS.field_east_approach, 2, 15000)
+            supervisePosted = true
+            logEvent('sustain', 'supervising from the field edge')
+          } catch (e) {
+            logEvent('sustain', `supervise repositioning failed: ${e.message}`)
+          }
+        }
+        await sustainWait(SUSTAIN_POLL_MS)
+        continue
+      }
+
+      const fieldFilter = (sustainState.role === 'north' || sustainState.role === 'south') ? sustainState.role : null
+      const scan = scanKnownWheatFields(fieldFilter)
       if ((scan.maturePct >= 85 || retryAfterInterrupt) && !foodSafetyBusy) {
         logEvent('sustain', `triggering cycle: maturePct=${scan.maturePct.toFixed(0)}% retryAfterInterrupt=${retryAfterInterrupt} inside=${insideHouse()}`)
         retryAfterInterrupt = false
@@ -2474,8 +2695,8 @@ async function runSustainFarm (user) {
         // door snags, etc. skip this cycle and retry next poll. Only AbortError
         // (explicit user stop) kills the loop.
         try {
-          // 1. Harvest — keep seeds on hand (no auto-deposit)
-          await runHarvestRightClick({ half: 'all', keepSeeds: true, skipDeposit: true })
+          // 1. Harvest our claimed field — keep seeds on hand (no auto-deposit)
+          await runHarvestRightClick({ half: fieldFilter ? `${fieldFilter}-field` : 'all', keepSeeds: true, skipDeposit: true })
           if (!sustainState.active) break
 
           // 1b. Eat if hungry — auto-eat can't fire during window ops, so give it
@@ -2486,7 +2707,10 @@ async function runSustainFarm (user) {
             await sleep(500)
           }
 
-          // 2. Deposit wheat to hopper (keep 16 for restock + engine clearing)
+          // 2. Deposit wheat to hopper (keep 16 for restock + engine clearing).
+          // When two keepers finish their fields together, the south keeper
+          // waits a beat so they don't pile up at the door and hopper.
+          if (sustainState.role === 'south') await sustainWait(20000)
           await ensureInsideHouse()
           await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
           const wheatResult = await depositQuickMove('wheat', HOPPER, { keep: SUSTAIN_KEEP_WHEAT })
@@ -2536,7 +2760,9 @@ async function runSustainFarm (user) {
         if (polls % 20 === 0) {
           logEvent('sustain', `waiting (mature=${scan.mature}/${scan.expected} loaded=${scan.loaded})`)
         }
-        if (polls % SUSTAIN_HOPPER_CHECK_INTERVAL === 0 && sustainSafe() && !foodSafetyBusy && countOnHand('wheat') >= 1) {
+        // Jam-watch duty belongs to one keeper (solo or north) so two bots
+        // never feed clearing wheat into the hopper at the same time.
+        if (polls % SUSTAIN_HOPPER_CHECK_INTERVAL === 0 && (sustainState.role === 'solo' || sustainState.role === 'north') && sustainSafe() && !foodSafetyBusy && countOnHand('wheat') >= 1) {
           try {
             const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
             if (hopperBlock) {
@@ -2565,6 +2791,8 @@ async function runSustainFarm (user) {
     logEvent('sustain', `loop error: ${e.message}`)
   } finally {
     sustainState.active = false
+    announceFireStandDown()
+    sustainState.role = null
     logEvent('sustain', `stopped after ${sustainState.cycles} cycle(s)`)
   }
 }
@@ -4953,7 +5181,7 @@ const CHAT_HANDLERS = [
         bot.chat(pickLine(withPersonaSlot(STOP_FOLLOW_LINES, 'stopFollow'), { user: followTarget }))
         followTarget = null; followEntity = null; followChainPos = 0
       } else if (wasSustaining) {
-        bot.chat(pickLine(withPersonaSlot(SUSTAIN_STOP_LINES, 'sustainStop')))
+        announceFireStandDown()
         logEvent('sustain', 'stopped by stop command')
       } else {
         bot.chat(pickLine(withPersonaSlot(STOP_LINES, 'stop')))
@@ -4977,7 +5205,7 @@ const CHAT_HANDLERS = [
       const wasSustaining = sustainState.active
       sustainState.active = false
       if (wasSustaining) {
-        bot.chat(pickLine(withPersonaSlot(SUSTAIN_STOP_LINES, 'sustainStop')))
+        announceFireStandDown()
         logEvent('sustain', `stopped (stand down) by ${user}`)
       } else {
         bot.chat(pickLine(withPersonaSlot(STAND_DOWN_LINES, 'standDown')))
@@ -5394,6 +5622,7 @@ bot.on('chat', (username, message) => {
   rememberChatPhrase(message)
   rememberRecentChat(username, message)
   const fromBot = looksLikeBot(username)
+  if (fromBot) trackFireCoordination(username, message)
   if (!fromBot) resetBotExchange()
   logEvent('chat', `<${username}> ${message}`)
 
@@ -6585,11 +6814,12 @@ function handleCommand (cmd) {
       return { ok: true, started: true, sustaining: true }
     }
     case 'sustain_status': {
-      return { ok: true, active: sustainState.active, cycles: sustainState.cycles, startedBy: sustainState.startedBy }
+      return { ok: true, active: sustainState.active, cycles: sustainState.cycles, startedBy: sustainState.startedBy, role: sustainState.role, crew: Object.fromEntries([...fireCrew].map(([n, c]) => [n, c.field])) }
     }
     case 'sustain_stop': {
       const was = sustainState.active
       sustainState.active = false
+      if (was) announceFireStandDown()
       abortGen++
       return { ok: true, stopped: was }
     }

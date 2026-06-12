@@ -350,6 +350,22 @@
       { "text": "Done tending. The embers can cool.", "weight": "focus + patience" },
       { "text": "The fire does not need me anymore. That is fine. I am used to it.", "weight": "snark + patience" }
     ],
+    "sustainRollCall": [
+      { "text": "Who is keeping the fire? I would like to help, not repeat.", "weight": "patience + focus" },
+      { "text": "Before I start — who is on the fire already?", "weight": "patience + charm" }
+    ],
+    "sustainClaimNorth": [
+      { "text": "I will take the north field. It knows me.", "weight": "patience + charm" },
+      { "text": "The north field is mine. We have an understanding.", "weight": "charm + focus" }
+    ],
+    "sustainClaimSouth": [
+      { "text": "I will take the south field. The far rows are patient.", "weight": "patience + charm" },
+      { "text": "The south field is mine. It is quiet there.", "weight": "charm + patience" }
+    ],
+    "sustainSupervise": [
+      { "text": "Both rows are spoken for. I will supervise. Watching is also work.", "weight": "patience + snark" },
+      { "text": "I guess I will supervise. The wheat does not mind an audience.", "weight": "snark + charm" }
+    ],
     "tooLate": [
       "The dark is not my friend tonight.",
       "Too late. The monsters own the hours now.",

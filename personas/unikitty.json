@@ -304,6 +304,22 @@
       { "text": "Sustain loop off! Time for other adventures!", "weight": "charm + curiosity" },
       { "text": "Done tending! The fire can handle itself for a bit! It's very grown-up now!", "weight": "charm + focus" }
     ],
+    "sustainRollCall": [
+      { "text": "FIRE TEAM ROLL CALL!! Who's already keeping the fire?? This is so exciting!!", "weight": "charm + chaos" },
+      { "text": "Ooh ooh — who's on fire duty right now?? Tell me everything!!", "weight": "charm + curiosity" }
+    ],
+    "sustainClaimNorth": [
+      { "text": "I'll take the north field!! BEST FIELD EVER. Sorry, other field.", "weight": "charm + chaos" },
+      { "text": "Taking the north field! It has the BEST sunrise view!", "weight": "charm + curiosity" }
+    ],
+    "sustainClaimSouth": [
+      { "text": "I'll take the south field!! It has the BEST corner. I checked.", "weight": "charm + chaos" },
+      { "text": "Taking the south field! South is like north but WARMER sounding!", "weight": "charm + snark" }
+    ],
+    "sustainSupervise": [
+      { "text": "EVERYONE has a field already so I get to SUPERVISE!! Best job EVER!!", "weight": "charm + chaos" },
+      { "text": "Both fields are taken so I'm SUPERVISING! I have the BEST whistle! It's imaginary!", "weight": "charm + snark" }
+    ],
     "tooLate": [
       "It's dark and... okay I'm a LITTLE scared but in a fun way! ...staying inside though!",
       "Nighttime! Which is beautiful! From INSIDE!",

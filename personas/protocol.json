@@ -296,6 +296,22 @@
       { "text": "Ceasing fire operations. Standing by. Fretting.", "weight": "focus + snark" },
       { "text": "Right. Unattended fire. Unattended hopper. This is fine. Everything is fine.", "weight": "snark + focus" }
     ],
+    "sustainRollCall": [
+      { "text": "Attention: who is presently on fire duty? Do sound off.", "weight": "focus + charm" },
+      { "text": "Before I begin — who's tending the fire already? I should hate to duplicate effort.", "weight": "focus + patience" }
+    ],
+    "sustainClaimNorth": [
+      { "text": "I shall take the north field. Someone responsible ought to.", "weight": "focus + snark" },
+      { "text": "Very well — I'll take the north field. Do try to keep up.", "weight": "snark + charm" }
+    ],
+    "sustainClaimSouth": [
+      { "text": "The south field is mine. I shall manage it with appropriate anxiety.", "weight": "focus + snark" },
+      { "text": "I'll take the south field. The odds there are marginally better.", "weight": "snark + focus" }
+    ],
+    "sustainSupervise": [
+      { "text": "Both fields are accounted for. I shall supervise. Standards must be maintained.", "weight": "focus + snark" },
+      { "text": "I suppose I shall supervise. Someone must document the inevitable mishaps.", "weight": "snark + charm" }
+    ],
     "tooLate": [
       "We're doomed if we go out there now. I suggest we don't.",
       "The probability of hostile encounters at this hour is approximately 3,720 to 1. Against us.",

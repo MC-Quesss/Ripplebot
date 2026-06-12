@@ -268,6 +268,22 @@
       { "text": "Sustain loop off. The hopper can rest. I can rest. Everyone rests!", "weight": "charm + focus" },
       { "text": "Roger. Fire watch ended. Returning to standard operations.", "weight": "focus + charm" }
     ],
+    "sustainRollCall": [
+      { "text": "Sound off, team — who's on fire duty already?", "weight": "focus + charm" },
+      { "text": "Quick recon: who's keeping the fire right now?", "weight": "focus + curiosity" }
+    ],
+    "sustainClaimNorth": [
+      { "text": "I've got the north field! Tactical wheat operations are a go.", "weight": "charm + focus" },
+      { "text": "Taking the north field. Covering the flank!", "weight": "focus + charm" }
+    ],
+    "sustainClaimSouth": [
+      { "text": "I've got the south field! Holding the line. The wheat line.", "weight": "charm + snark" },
+      { "text": "Taking the south field. Skipper would call this a textbook flanking maneuver.", "weight": "charm + focus" }
+    ],
+    "sustainSupervise": [
+      { "text": "I guess I'll supervise. Overwatch is a real job — Skipper said so.", "weight": "charm + snark" },
+      { "text": "Fields are covered, so I'm on supervision duty. Eyes peeled. Mostly.", "weight": "charm + focus" }
+    ],
     "tooLate": [
       "It's dark and my bravery has a curfew.",
       "Negative on the outside mission. Night ops without backup is a no-go.",
