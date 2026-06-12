@@ -566,9 +566,7 @@ const _personaPools = new Map()
 function withPersonaSlot (basePool, slot) {
   const extra = personaSpec.functional[slot]
   if (!extra || !extra.length) return basePool
-  const cacheKey = `slot:${slot}:${basePool.length}`
-  if (!_personaPools.has(cacheKey)) _personaPools.set(cacheKey, basePool.concat(extra))
-  return _personaPools.get(cacheKey)
+  return extra
 }
 
 function posStr (p) { return `${p.x.toFixed(0)}, ${p.y.toFixed(0)}, ${p.z.toFixed(0)}` }
@@ -5746,7 +5744,7 @@ function looksLikeBot (username) {
 // sees everything said during the wait and PASSes if the topic moved on.
 const BOT_CHAT_DEPTH = Math.max(0, parseInt(process.env.BOT_CHAT_DEPTH || '0', 10) || 0)
 const BOT_EXCHANGE_RESET_MS = 60_000 // silence that ends an exchange
-const BOT_EXCHANGE_START_COOLDOWN_MS = 5 * 60_000 // breather before the next one
+const BOT_EXCHANGE_START_COOLDOWN_MS = 90_000 // breather before the next one
 let botExchange = { partner: null, turns: 0, lastAt: 0 }
 let lastBotExchangeStartAt = 0
 

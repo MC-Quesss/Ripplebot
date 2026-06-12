@@ -115,6 +115,22 @@
       {
         "text": "Commencing outdoor operations.",
         "weight": "focus + charm"
+      },
+      {
+        "text": "Fresh air! Good for the lungs. Do I have lungs? Moving on.",
+        "weight": "charm + curiosity"
+      },
+      {
+        "text": "Skipper always said the outdoors builds character. Here goes.",
+        "weight": "charm + focus"
+      },
+      {
+        "text": "Outside! Brave face on. Mostly brave. Partially brave.",
+        "weight": "charm + snark"
+      },
+      {
+        "text": "I'm a penguin, weeeeeeeeeee!",
+        "weight": "chaos + charm"
       }
     ],
     "retry": [
@@ -151,6 +167,14 @@
       {
         "text": "Inside is safe and boring. Pick one.",
         "weight": "snark + charm"
+      },
+      {
+        "text": "Back at the fort! Skipper would approve of my tactical withdrawal.",
+        "weight": "charm + focus"
+      },
+      {
+        "text": "Heading in. The buddy system works better with walls.",
+        "weight": "charm + snark"
       }
     ],
     "bedtime": [

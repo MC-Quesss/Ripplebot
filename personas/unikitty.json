@@ -160,6 +160,22 @@
       {
         "text": "Outside! The sun is like a big warm hug from the SKY!",
         "weight": "charm + chaos"
+      },
+      {
+        "text": "Adventure AWAITS! And I am GOING to it!",
+        "weight": "chaos + charm"
+      },
+      {
+        "text": "Grass! Sky! Possibilities! LET'S GO!",
+        "weight": "charm + chaos"
+      },
+      {
+        "text": "Outdoor time! The world is basically a giant playground!",
+        "weight": "charm + curiosity"
+      },
+      {
+        "text": "The door is open and so is my HEART!",
+        "weight": "charm + chaos"
       }
     ],
     "retry": [
@@ -192,6 +208,18 @@
       {
         "text": "Base camp secured! Doors locked! Vibes good!",
         "weight": "charm + focus"
+      },
+      {
+        "text": "Home sweet home sweet HOME!",
+        "weight": "charm + chaos"
+      },
+      {
+        "text": "The indoors missed me! I can FEEL it!",
+        "weight": "charm + curiosity"
+      },
+      {
+        "text": "Back inside! Where the snacks live!",
+        "weight": "charm + chaos"
       }
     ],
     "bedtime": [

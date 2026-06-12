@@ -19,7 +19,7 @@
   "functional": {
     "followBedtime": [
       {
-        "text": "Sir, the probability of survival outdoors at night is approximately... low.",
+        "text": "The probability of survival outdoors at night is approximately... low.",
         "weight": "focus + snark"
       },
       {
@@ -145,6 +145,22 @@
       {
         "text": "Into the wilderness. The odds are... let us not discuss the odds.",
         "weight": "snark + focus"
+      },
+      {
+        "text": "Stepping outside. If I am not back in ten minutes, assume the worst.",
+        "weight": "snark + charm"
+      },
+      {
+        "text": "The sun is doing its thing again. I shall go observe it at a safe distance.",
+        "weight": "focus + snark"
+      },
+      {
+        "text": "Right. Outside. Where the variables are.",
+        "weight": "snark + focus"
+      },
+      {
+        "text": "I have prepared a list of things that could go wrong. It is long. Going anyway.",
+        "weight": "focus + charm"
       }
     ],
     "retry": [
@@ -172,6 +188,22 @@
       },
       {
         "text": "Returning indoors before anything else goes wrong.",
+        "weight": "focus + snark"
+      },
+      {
+        "text": "Inside. Where the walls are predictable and the sheep are not.",
+        "weight": "snark + focus"
+      },
+      {
+        "text": "Back to safety. Relatively speaking.",
+        "weight": "focus + charm"
+      },
+      {
+        "text": "The outdoors has been survived. Barely. Gratefully.",
+        "weight": "charm + snark"
+      },
+      {
+        "text": "Right. Indoors. Where things make sense. Mostly.",
         "weight": "focus + snark"
       }
     ],
