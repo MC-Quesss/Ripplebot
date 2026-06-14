@@ -3453,7 +3453,7 @@ async function tryCollectBake () {
     }
 
     // Cap baked potatoes on hand — deposit excess to kitchen chest
-    if (countBakedPotatoes() > 32) {
+    if (countBakedPotatoes() > 128) {
       logEvent('collect-bake', `baked potatoes ${countBakedPotatoes()} > 32 — depositing excess`)
       try { await runDepositNamed(['baked_potato']) } catch (_) {}
     }
@@ -3466,11 +3466,10 @@ async function tryCollectBake () {
   }
 }
 
-// Dawn restock: keep 16 wheat and 16 baked potatoes at all times.
-// Checked on the 5s timer but only acts at dawn (timeOfDay 0–1000).
-// If any supply is low, harvest the appropriate crop. One attempt per morning;
-// if it doesn't reach 16, wait until the next morning.
-const RESTOCK_MIN = 16
+// Dawn maintenance: keep baked potatoes stocked (harvest + bake if low),
+// and deposit excess if over 32. Wheat is not restocked — it accumulates
+// naturally from sustain harvests. Checked on the 5s timer, acts at dawn only.
+const RESTOCK_MIN = 32
 let restockBusy = false
 let restockLastDay = -1
 
@@ -3485,32 +3484,57 @@ async function tryRestockSupplies () {
   if (bot.currentWindow) return
   if (Date.now() < foodSafetyWindowCooldownUntil) return
 
-  const wheat = countOnHand('wheat')
   const baked = countOnHand('baked_potato')
-  const needsRestock = wheat < RESTOCK_MIN || baked < RESTOCK_MIN
-  const needsOverflow = baked > 32
+  const needsRestock = baked < RESTOCK_MIN
+  const needsOverflow = baked > 128
   if (!needsRestock && !needsOverflow) return
 
   restockLastDay = day
   restockBusy = true
   try {
-    if (baked > 32) {
+    if (baked > 128) {
       logEvent('restock', `baked potatoes overflow (${baked}) — depositing excess`)
       try { await runDepositNamed(['baked_potato']) } catch (_) {}
     }
     if (baked < RESTOCK_MIN) {
-      logEvent('restock', `baked potatoes low (${baked}/${RESTOCK_MIN}) — harvesting + baking`)
-      await runHarvestPotatoesRightClick({ user: 'restock', then: 'bake', maxTiles: 42 })
-      await runBakePotatoes({ user: 'restock' })
-      logEvent('restock', `baked potatoes now ${countOnHand('baked_potato')}`)
-    }
-    if (wheat < RESTOCK_MIN) {
-      logEvent('restock', `wheat=${wheat} — harvesting wheat field`)
-      await runHarvestRightClick({ half: 'all', keepSeeds: false, skipDeposit: true })
-      const newWheat = countOnHand('wheat')
-      logEvent('restock', `after harvest: wheat=${newWheat}`)
-      if (newWheat < RESTOCK_MIN) {
-        logEvent('restock', `still short: wheat=${newWheat} — will retry tomorrow`)
+      // Check kitchen chest for already-baked potatoes before harvesting more
+      let pulled = 0
+      try {
+        await ensureInsideHouse()
+        await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 8000)
+        const chestBlock = bot.blockAt(new Vec3(
+          HARVEST_WAYPOINTS.kitchen_chest.x,
+          HARVEST_WAYPOINTS.kitchen_chest.y,
+          HARVEST_WAYPOINTS.kitchen_chest.z,
+        ))
+        if (chestBlock) {
+          const win = await bot.openContainer(chestBlock)
+          try {
+            const containerSize = win.slots.length - 36
+            for (let s = 0; s < containerSize; s++) {
+              const it = win.slots[s]
+              if (it && it.name === 'baked_potato' && it.count > 0) {
+                try {
+                  await win.withdraw(it.type, it.metadata, it.count)
+                  pulled += it.count
+                } catch (_) { break }
+              }
+            }
+          } finally { win.close() }
+        }
+      } catch (e) {
+        logEvent('restock', `chest check failed: ${e.message}`)
+      }
+
+      if (pulled > 0) {
+        logEvent('restock', `withdrew ${pulled} baked potatoes from chest — now ${countBakedPotatoes()}`)
+      }
+
+      if (countBakedPotatoes() < RESTOCK_MIN) {
+        logEvent('restock', `still low (${countBakedPotatoes()}/${RESTOCK_MIN}) — harvesting + baking`)
+        await runHarvestPotatoesRightClick({ user: 'restock', then: 'bake', maxTiles: 42 })
+        await runBakePotatoes({ user: 'restock' })
+        logEvent('restock', `baked potatoes now ${countBakedPotatoes()}`)
       }
     }
   } catch (e) {
@@ -5007,7 +5031,7 @@ async function runStashWheat () {
 async function runDepositNamed (names) {
   const KEEP_BREAD = 64
   const KEEP_SEEDS = 0
-  const KEEP_BAKED = 16
+  const KEEP_BAKED = 128
   const KEEPS = {
     bread: KEEP_BREAD,
     wheat_seeds: KEEP_SEEDS,
@@ -5072,7 +5096,7 @@ async function runDepositNamed (names) {
 // Stash everything except seeds (for replanting), baked potatoes (for eating),
 // and shears (for wool runs).
 // Uses win.deposit for known items and two-click for unknown/modded items.
-const STASH_ALL_KEEP = { wheat_seeds: 7, baked_potato: 16, shears: 1 }
+const STASH_ALL_KEEP = { wheat: 16, baked_potato: 128, shears: 1 }
 async function runStashAll () {
   const inv = bot.inventory.items()
   if (!inv.length) { bot.chat('Pockets already empty.'); return }
