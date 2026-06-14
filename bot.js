@@ -617,7 +617,7 @@ function evaluateFollowChain (targetUsername) {
 // ── Harvest + replant (codifies places.md) ───────────────────────────────
 // Harvests wheat (optionally filtered to north/south half), then replants
 // seeds on the same farmland set, then deposits wheat into the kitchen chest.
-// Safety-first: refuses at night or near hostiles, tracks deaths and HP
+// Safety-first: refuses at night, tracks deaths and HP
 // mid-operation, and breaks off cleanly if anything goes wrong.
 const HARVEST_WAYPOINTS = {
   field_east_approach: { x: -278, y: 64, z: 567 },
@@ -2142,7 +2142,7 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
 
     if (!keepSeeds) {
       try {
-        if (countOnHand('wheat_seeds') > 16) {
+        if (countOnHand('wheat_seeds') > 7) {
           await runDepositNamed(['wheat_seeds'])
         }
       } catch (e) {
@@ -2325,7 +2325,7 @@ async function craftPlantBalls ({ keepSeeds = 16, maxBalls = 15 } = {}) {
 // NO task between cycles, so the bot stays responsive while it waits.
 const SUSTAIN_POLL_MS = 5000
 const SUSTAIN_KEEP_WHEAT = 16
-const SUSTAIN_KEEP_SEEDS = 16
+const SUSTAIN_KEEP_SEEDS = 0
 const SUSTAIN_HOPPER_CHECK_INTERVAL = 6
 const sustainState = { active: false, cycles: 0, startedBy: null, lastCycleDay: -1, role: null }
 
@@ -2598,8 +2598,7 @@ async function sustainWait (ms) {
   for (let i = 0; i < steps && sustainState.active; i++) await sleep(1000)
 }
 
-// "Safe to act" gate for the sustain loop. Daytime, no hostiles, HP reasonable,
-// not following someone.
+// "Safe to act" gate for the sustain loop. Daytime, HP reasonable, not following.
 function sustainSafe () {
   if (followTarget) return false
   if (isBedtime()) return false
@@ -2656,7 +2655,7 @@ async function runSustainFarm (user) {
   let retryAfterInterrupt = false
   try {
     while (sustainState.active) {
-      // Gate: wait for safe conditions (daytime, no hostiles, HP ok)
+      // Gate: wait for safe conditions (daytime, HP ok)
       if (!sustainSafe()) {
         if (!(await sustainWaitUntilSafe('unsafe conditions'))) break
         supervisePosted = false
@@ -2686,8 +2685,9 @@ async function runSustainFarm (user) {
 
       const fieldFilter = (sustainState.role === 'north' || sustainState.role === 'south') ? sustainState.role : null
       const scan = scanKnownWheatFields(fieldFilter)
-      if ((scan.maturePct >= 85 || retryAfterInterrupt) && !foodSafetyBusy) {
-        logEvent('sustain', `triggering cycle: maturePct=${scan.maturePct.toFixed(0)}% retryAfterInterrupt=${retryAfterInterrupt} inside=${insideHouse()}`)
+      if ((scan.maturePct >= 85 || (retryAfterInterrupt && scan.mature > 0)) && !foodSafetyBusy) {
+        if (retryAfterInterrupt) logEvent('sustain', `resuming interrupted cycle — ${scan.mature} mature tiles remaining`)
+        logEvent('sustain', `triggering cycle: maturePct=${scan.maturePct.toFixed(0)}% mature=${scan.mature} inside=${insideHouse()}`)
         retryAfterInterrupt = false
         sustainState.cycles++
         logEvent('sustain', `field ready (mature=${scan.mature}/${scan.expected}, ${scan.maturePct.toFixed(0)}%) — cycle ${sustainState.cycles}`)
@@ -2729,6 +2729,12 @@ async function runSustainFarm (user) {
             logEvent('sustain', `plant ball deposit: deposited=${ballResult.deposited} remaining=${ballResult.remaining}`)
           }
 
+          // 4b. Deposit excess seeds (remainder > 7 means 15-ball cap was hit)
+          if (countOnHand('wheat_seeds') > 7) {
+            logEvent('sustain', `seeds still ${countOnHand('wheat_seeds')} after craft — depositing excess`)
+            try { await runDepositNamed(['wheat_seeds']) } catch (_) {}
+          }
+
           if (!sustainState.active) break
 
           // 5. Eat if hungry — the hopper + bench windows blocked auto-eat for
@@ -2749,7 +2755,7 @@ async function runSustainFarm (user) {
           }
           logEvent('sustain', `cycle ${sustainState.cycles} failed (recoverable): ${e.message} [type=${e.name} active=${sustainState.active}]`)
           retryAfterInterrupt = true
-          logEvent('sustain', `retryAfterInterrupt=true, heading inside`)
+          logEvent('sustain', `cycle failed — will retry when field reaches 85% again`)
           try { if (!followTarget && !insideHouse()) await runGoInside() } catch (_) {}
         }
         // Clear food-safety cooldown so tryFoodSafety can run during the poll wait.
@@ -3328,11 +3334,41 @@ async function tryFoodSafety () {
   if (bot.currentWindow) { foodSafetyWindowCooldownUntil = Date.now() + 30000; return }
   if (Date.now() < foodSafetyWindowCooldownUntil) return
   if (bot.health == null || bot.health >= 10) return
-  if (hostilesNearby(16).length) return
 
   foodSafetyBusy = true
   try {
-    logEvent('food-safety', `HP=${bot.health} — emergency bread protocol`)
+    logEvent('food-safety', `HP=${bot.health} food=${bot.food} — checking recovery options`)
+
+    // Step 1: Try eating food already in inventory before traversing anywhere.
+    // The bot often has baked potatoes on hand — eat those first.
+    if (bot.food < 18) {
+      let ate = false
+      for (let i = 0; i < 4 && bot.food < 18; i++) {
+        try { await eatSomething(); ate = true; await sleep(500) } catch (_) { break }
+      }
+      if (ate) {
+        logEvent('food-safety', `ate from inventory: HP=${bot.health} food=${bot.food}`)
+        return // let natural regen do its work
+      }
+    }
+
+    // Step 2: If food bar is full but HP is low, this is environmental damage
+    // (suffocation, fall, cactus), not starvation. Don't run to the bread chest —
+    // traversals at low HP risk death. Stay put and let regen work.
+    if (bot.food >= 18) {
+      logEvent('food-safety', `HP=${bot.health} but food=${bot.food} (not starving) — staying put, regen will heal`)
+      return
+    }
+
+    // Step 3: No food in inventory and food bar is low. Go to the bread chest.
+    // But refuse to traverse the pen door at critical HP — the walk is too risky.
+    if (inPen() && bot.health <= 6) {
+      logEvent('food-safety', `HP=${bot.health} in pen — too risky to traverse, waiting`)
+      foodSafetyWindowCooldownUntil = Date.now() + 60_000
+      return
+    }
+
+    logEvent('food-safety', `no food in inventory, heading to bread chest`)
     await ensureInsideHouse()
     await pathTo(HARVEST_WAYPOINTS.kitchen_chest, 2, 8000)
     const win = await openChest()
@@ -3350,12 +3386,11 @@ async function tryFoodSafety () {
       }
     } finally { win.close() }
     if (pulled === 0) {
-      logEvent('food-safety', 'no bread in chest — cannot recover')
-      logEvent('food-safety', 'no bread in chest — need help')
+      logEvent('food-safety', 'no bread in chest — backing off 5 minutes')
+      foodSafetyWindowCooldownUntil = Date.now() + 300_000
       return
     }
     logEvent('food-safety', `withdrew ${pulled} bread, eating`)
-    logEvent('food-safety', `eating ${pulled} bread to recover`)
     foodSafetyWindowCooldownUntil = 0
     for (let i = 0; i < 4 && bot.food < 18; i++) {
       try { await eatSomething(); await sleep(500) } catch (_) { break }
@@ -3410,15 +3445,17 @@ async function tryCollectBake () {
 
     const onHand = countBakedPotatoes()
     if (inputLeft > 0) {
-      // Smelt not finished (fuel low or batch larger than the wait estimate).
-      // Take what's done and come back for the rest.
       pendingBake.doneAt = Date.now() + (inputLeft * 10 + 8) * 1000
-      logEvent('collect-bake', `taken=${taken} input_left=${inputLeft} — coming back`)
       logEvent('collect-bake', `taken=${taken} input_left=${inputLeft} onhand=${onHand} — rescheduled`)
     } else {
       pendingBake.active = false
       logEvent('collect-bake', `done taken=${taken} onhand=${onHand}`)
-      logEvent('collect-bake', `done taken=${taken} onhand=${onHand}`)
+    }
+
+    // Cap baked potatoes on hand — deposit excess to kitchen chest
+    if (countBakedPotatoes() > 32) {
+      logEvent('collect-bake', `baked potatoes ${countBakedPotatoes()} > 32 — depositing excess`)
+      try { await runDepositNamed(['baked_potato']) } catch (_) {}
     }
   } catch (e) {
     logEvent('collect-bake', `error: ${e.message}`)
@@ -3429,7 +3466,7 @@ async function tryCollectBake () {
   }
 }
 
-// Dawn restock: keep 16 wheat, 16 seeds, 16 baked potatoes at all times.
+// Dawn restock: keep 16 wheat and 16 baked potatoes at all times.
 // Checked on the 5s timer but only acts at dawn (timeOfDay 0–1000).
 // If any supply is low, harvest the appropriate crop. One attempt per morning;
 // if it doesn't reach 16, wait until the next morning.
@@ -3449,29 +3486,31 @@ async function tryRestockSupplies () {
   if (Date.now() < foodSafetyWindowCooldownUntil) return
 
   const wheat = countOnHand('wheat')
-  const seeds = countOnHand('wheat_seeds')
   const baked = countOnHand('baked_potato')
-  if (wheat >= RESTOCK_MIN && seeds >= RESTOCK_MIN && baked >= RESTOCK_MIN) return
+  const needsRestock = wheat < RESTOCK_MIN || baked < RESTOCK_MIN
+  const needsOverflow = baked > 32
+  if (!needsRestock && !needsOverflow) return
 
   restockLastDay = day
   restockBusy = true
   try {
+    if (baked > 32) {
+      logEvent('restock', `baked potatoes overflow (${baked}) — depositing excess`)
+      try { await runDepositNamed(['baked_potato']) } catch (_) {}
+    }
     if (baked < RESTOCK_MIN) {
       logEvent('restock', `baked potatoes low (${baked}/${RESTOCK_MIN}) — harvesting + baking`)
-      logEvent('restock', 'low on baked potatoes — heading to potato patch')
       await runHarvestPotatoesRightClick({ user: 'restock', then: 'bake', maxTiles: 42 })
       await runBakePotatoes({ user: 'restock' })
       logEvent('restock', `baked potatoes now ${countOnHand('baked_potato')}`)
     }
-    if (wheat < RESTOCK_MIN || seeds < RESTOCK_MIN) {
-      logEvent('restock', `wheat=${wheat} seeds=${seeds} — harvesting wheat field`)
-      logEvent('restock', 'wheat or seeds low — harvesting field')
-      await runHarvestRightClick({ half: 'all', keepSeeds: true, skipDeposit: true })
+    if (wheat < RESTOCK_MIN) {
+      logEvent('restock', `wheat=${wheat} — harvesting wheat field`)
+      await runHarvestRightClick({ half: 'all', keepSeeds: false, skipDeposit: true })
       const newWheat = countOnHand('wheat')
-      const newSeeds = countOnHand('wheat_seeds')
-      logEvent('restock', `after harvest: wheat=${newWheat} seeds=${newSeeds}`)
-      if (newWheat < RESTOCK_MIN || newSeeds < RESTOCK_MIN) {
-        logEvent('restock', `still short: wheat=${newWheat} seeds=${newSeeds} — will retry tomorrow`)
+      logEvent('restock', `after harvest: wheat=${newWheat}`)
+      if (newWheat < RESTOCK_MIN) {
+        logEvent('restock', `still short: wheat=${newWheat} — will retry tomorrow`)
       }
     }
   } catch (e) {
@@ -3484,7 +3523,7 @@ async function tryRestockSupplies () {
 // Morning plant ball craft: each dawn, if seeds > 8, craft up to 15 plant balls
 // and deposit them in the hopper. Capped to 15 per morning to stay within the
 // server's window-open tolerance.
-const MORNING_BALLS_MIN_SEEDS = 8
+const MORNING_BALLS_MIN_SEEDS = 0
 const MORNING_BALLS_MAX = 15
 let morningBallsBusy = false
 let morningBallsLastDay = -1
@@ -3502,7 +3541,7 @@ async function tryMorningPlantBalls () {
   if (sustainState.active) return // sustain loop handles its own crafting
 
   const seeds = countOnHand('wheat_seeds')
-  if (seeds <= MORNING_BALLS_MIN_SEEDS) return
+  if (seeds < 8) return
 
   morningBallsLastDay = day
   morningBallsBusy = true
@@ -3526,7 +3565,7 @@ async function tryMorningPlantBalls () {
 
 // Exit the house to outside_orientation. Follows the places.md procedure:
 // pathfind to house_center → face west → walk_until x≤-275 → verify.
-// Refuses at night or with hostiles nearby (same safety gate as harvest).
+// Refuses at night (same safety gate as harvest).
 const HOUSE_CENTER = { x: -268, y: 65, z: 572 }
 const OUTSIDE_ORIENTATION = { x: -275, y: 64, z: 572 }
 // Sheep-pen gate pads. Mirror the door pad pattern: one tile each side of
@@ -3727,12 +3766,7 @@ async function runGoOutsideOnce (activity) {
 async function runGoInsideOnce () {
   if (insideHouse()) { bot.chat("I'm already inside."); return }
   const startDeaths = deathCount
-  const hostiles = hostilesNearby(10)
-  if (hostiles.length) {
-    bot.chat(`Hostiles too close (${hostiles.map(h => h.name).join(', ')}) — rushing in.`)
-  } else {
-    bot.chat(pickLine(isBedtime() ? withPersonaSlot(BEDTIME_LINES, 'bedtime') : withPersonaSlot(COME_INSIDE_LINES, 'comeInside')))
-  }
+  bot.chat(pickLine(isBedtime() ? withPersonaSlot(BEDTIME_LINES, 'bedtime') : withPersonaSlot(COME_INSIDE_LINES, 'comeInside')))
   suppressLookAt(20000)
 
   // 1. Get onto outside_orientation. If pathfinding fails or doesn't arrive
@@ -4972,7 +5006,7 @@ async function runStashWheat () {
 // All other named items are deposited fully.
 async function runDepositNamed (names) {
   const KEEP_BREAD = 64
-  const KEEP_SEEDS = 16
+  const KEEP_SEEDS = 0
   const KEEP_BAKED = 16
   const KEEPS = {
     bread: KEEP_BREAD,
@@ -5038,7 +5072,7 @@ async function runDepositNamed (names) {
 // Stash everything except seeds (for replanting), baked potatoes (for eating),
 // and shears (for wool runs).
 // Uses win.deposit for known items and two-click for unknown/modded items.
-const STASH_ALL_KEEP = { wheat_seeds: 32, baked_potato: 16, shears: 1 }
+const STASH_ALL_KEEP = { wheat_seeds: 7, baked_potato: 16, shears: 1 }
 async function runStashAll () {
   const inv = bot.inventory.items()
   if (!inv.length) { bot.chat('Pockets already empty.'); return }
@@ -5782,23 +5816,17 @@ bot.on('entityHurt', (entity) => {
   }
 })
 
-// Hostile watchdog — proactive retreat. Every 2.5s, if the bot is outside and
-// hostiles are within 16 blocks, try to /kill them with op powers first. If
-// the mob disappears, celebrate. If it survives (not op, or out of range for
-// the selector), abort the current task and rush home.
-let hostileRetreatBusy = false
+// Hostile watchdog — op kill. Every 2.5s, if hostiles are within 16 blocks,
+// vaporize them with /kill. The bots are op; no need to retreat.
+let hostileKillBusy = false
 setInterval(async () => {
-  if (hostileRetreatBusy) return
-  if (insideHouse() || inPen()) return
+  if (hostileKillBusy) return
   const hostiles = hostilesNearby(16)
   if (!hostiles.length) return
-  hostileRetreatBusy = true
+  hostileKillBusy = true
   const names = hostiles.map(h => h.name).join(', ')
-  const detail = hostiles.map(h => `${h.name}@(${h.position.x.toFixed(1)},${h.position.y.toFixed(1)},${h.position.z.toFixed(1)}) d=${h.position.distanceTo(bot.entity.position).toFixed(1)}`).join('; ')
-  logEvent('hostile-watchdog', `detected ${names} [${detail}]`)
+  logEvent('hostile-watchdog', `detected ${names}`)
 
-  // Try op /kill for each unique hostile type — track IDs to detect kills
-  const beforeIds = new Set(hostiles.map(h => h.id))
   const types = [...new Set(hostiles.map(h => h.name))]
   for (const type of types) {
     bot.chat(`/kill @e[type=${type},r=16]`)
@@ -5806,45 +5834,18 @@ setInterval(async () => {
   await sleep(2000)
 
   const remaining = hostilesNearby(16)
-  const remainingIds = new Set(remaining.map(h => h.id))
-  const survived = [...beforeIds].filter(id => remainingIds.has(id))
-
-  if (survived.length < beforeIds.size) {
-    const killedCount = beforeIds.size - survived.length
-    logEvent('hostile-watchdog', `op kill eliminated ${killedCount}/${beforeIds.size} hostiles`)
+  const killed = hostiles.length - remaining.length
+  if (killed > 0) {
+    logEvent('hostile-watchdog', `eliminated ${killed}/${hostiles.length}`)
     const victoryStyle = personaSpec.combatStyle || 'A small moment of triumph.'
     impulseExpressive('victory',
-      `You just protected the area: ${killedCount} hostile ${killedCount === 1 ? 'mob' : 'mobs'} dispatched using your powers. ${victoryStyle}`
+      `You just protected the area: ${killed} hostile ${killed === 1 ? 'mob' : 'mobs'} dispatched using your powers. ${victoryStyle}`
     ).catch(() => {})
   }
-
-  // Only retreat if original mobs are still present
-  if (!survived.length) {
-    hostileRetreatBusy = false
-    return
+  if (remaining.length) {
+    logEvent('hostile-watchdog', `${remaining.length} survived — will retry next tick`)
   }
-
-  // Original mobs survived — fall back to retreat (but not during follow mode)
-  const rNames = survived.map(id => {
-    const e = remaining.find(h => h.id === id)
-    return e ? e.name : 'unknown'
-  }).join(', ')
-  if (followTarget) {
-    logEvent('hostile-watchdog', `${rNames} survived op kill — following ${followTarget}, skipping retreat`)
-    hostileRetreatBusy = false
-    return
-  }
-  logEvent('hostile-retreat', `${rNames} survived op kill — aborting task and rushing inside`)
-  bot.chat(`Hostiles (${rNames})! Heading inside!`)
-  abortGen++
-  bot.pathfinder.setGoal(null)
-  followTarget = null; followEntity = null; followChainPos = 0
-  try {
-    await runGoInside()
-  } catch (e) {
-    logEvent('hostile-retreat', `go-inside failed: ${e.message}`)
-  }
-  hostileRetreatBusy = false
+  hostileKillBusy = false
 }, 2500)
 
 // Player join/leave — proactive hi/bye.  Bye messages are Ripple-flavored
@@ -6795,6 +6796,15 @@ function handleCommand (cmd) {
       }
       const target = findPlayerEntity(args.username)
       if (!target) return { ok: false, error: `can't see player: ${args.username}` }
+      if (taskBusy()) {
+        logEvent('follow', `aborting active task: ${activeTask.name}`)
+        abortGen++
+        bot.pathfinder.setGoal(null)
+      }
+      if (sustainState.active) {
+        sustainState.active = false
+        logEvent('sustain', 'stopped — follow takes priority')
+      }
       followTarget = args.username
       followEntity = null; followChainPos = 0; lastChainEval = 0
       return { ok: true, following: followTarget }
@@ -6895,9 +6905,26 @@ function handleCommand (cmd) {
       return { ok: true, started: true }
     }
     case 'come_inside': {
-      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
-      runGoInside().catch(e => logEvent('go-inside-error', e.message))
-      return { ok: true, started: true }
+      const wasTask = taskBusy() ? activeTask.name : null
+      if (wasTask) {
+        logEvent('come-inside', `aborting active task: ${wasTask}`)
+        abortGen++
+        bot.pathfinder.setGoal(null)
+      }
+      if (sustainState.active) {
+        sustainState.active = false
+        logEvent('sustain', 'stopped — come-inside takes priority')
+      }
+      if (followTarget) {
+        logEvent('come-inside', `skipping — follow (${followTarget}) takes priority`)
+        return { ok: false, error: 'following', following: followTarget }
+      }
+      ;(async () => {
+        if (wasTask) await sleep(300)
+        if (inPen()) await runLeavePen()
+        await runGoInside()
+      })().catch(e => logEvent('go-inside-error', e.message))
+      return { ok: true, started: true, aborted: wasTask }
     }
     case 'go_into_pen': {
       if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
