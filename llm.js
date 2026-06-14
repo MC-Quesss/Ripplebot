@@ -47,11 +47,69 @@ async function checkHealth () {
   return healthy
 }
 
+// Probe which models are currently loaded in Ollama VRAM/RAM.
+async function logLoadedModels () {
+  try {
+    const res = await fetchWithTimeout(`${LLM_URL}/api/ps`, {}, HEALTH_TIMEOUT_MS)
+    if (!res.ok) { log('llm', `[diag] /api/ps returned HTTP ${res.status}`); return }
+    const data = await res.json()
+    const models = (data.models || []).map(m => `${m.name} (${m.size_vram ? Math.round(m.size_vram / 1e9) + 'GB VRAM' : 'CPU'})`)
+    if (models.length) {
+      log('llm', `[diag] loaded models: ${models.join(', ')}`)
+    } else {
+      log('llm', `[diag] no models currently loaded — first request will trigger a cold load`)
+    }
+  } catch (e) {
+    log('llm', `[diag] /api/ps failed (${e.message})`)
+  }
+}
+
+// Warm up the model by sending a trivial classify request and logging the time.
+async function warmUpModel () {
+  const t0 = Date.now()
+  log('llm', `[diag] warming up model "${LLM_MODEL}" — sending probe request...`)
+  try {
+    const res = await fetchWithTimeout(`${LLM_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: LLM_MODEL,
+        think: false,
+        format: 'json',
+        messages: [
+          { role: 'system', content: 'Reply with {"ok":true}' },
+          { role: 'user', content: 'ping' },
+        ],
+        stream: false,
+        keep_alive: KEEP_ALIVE,
+        options: { num_predict: 10, temperature: 0 },
+      }),
+    }, 90_000) // 90s timeout — cold loads can be very slow
+    const elapsed = Date.now() - t0
+    if (res.ok) {
+      log('llm', `[diag] model warm-up complete in ${elapsed}ms — ready for classify`)
+    } else {
+      log('llm', `[diag] model warm-up got HTTP ${res.status} after ${elapsed}ms`)
+    }
+  } catch (e) {
+    const elapsed = Date.now() - t0
+    log('llm', `[diag] model warm-up failed after ${elapsed}ms (${e.message})`)
+  }
+  await logLoadedModels()
+}
+
 // Start the generator: initial health probe + periodic recheck. logFn is the
 // host's logEvent so llm activity lands in bot.log alongside everything else.
 function init ({ logFn } = {}) {
   if (logFn) log = logFn
-  checkHealth()
+  log('llm', `[diag] init — url=${LLM_URL} model=${LLM_MODEL}`)
+  checkHealth().then(isHealthy => {
+    if (isHealthy) {
+      logLoadedModels().then(() => warmUpModel())
+    } else {
+      log('llm', `[diag] Ollama not reachable at startup — skipping warm-up`)
+    }
+  })
   healthTimerId = setInterval(checkHealth, HEALTH_INTERVAL_MS)
   if (healthTimerId.unref) healthTimerId.unref()
 }
@@ -144,6 +202,7 @@ function classify ({ system, user, timeoutMs = CLASSIFY_TIMEOUT_MS }) {
   if (classifyPending >= CLASSIFY_MAX_PENDING) return Promise.resolve(null) // chat storm — drop, lines go stale fast
   classifyPending++
   const job = classifyChain.then(async () => {
+    const t0 = Date.now()
     try {
       const res = await fetchWithTimeout(`${LLM_URL}/api/chat`, {
         method: 'POST',
@@ -163,10 +222,15 @@ function classify ({ system, user, timeoutMs = CLASSIFY_TIMEOUT_MS }) {
       }, timeoutMs)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
+      const elapsed = Date.now() - t0
       const parsed = JSON.parse(data?.message?.content ?? 'null')
+      if (parsed && typeof parsed === 'object') {
+        log('llm', `classify ok (${elapsed}ms)`)
+      }
       return (parsed && typeof parsed === 'object') ? parsed : null
     } catch (e) {
-      log('llm', `classify failed (${e.message})`)
+      const elapsed = Date.now() - t0
+      log('llm', `classify failed after ${elapsed}ms (${e.message}) [timeout=${timeoutMs}ms, pending=${classifyPending}]`)
       return null
     } finally {
       classifyPending--
