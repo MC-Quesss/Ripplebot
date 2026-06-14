@@ -403,6 +403,7 @@ function startAutoSleep () {
     tryFoodSafety()
     tryCollectBake()
     tryRestockSupplies()
+    tryMorningPlantBalls()
   }, 5000)
 }
 
@@ -2185,9 +2186,9 @@ function openBench () {
   })
 }
 
-async function craftPlantBalls ({ keepSeeds = 16 } = {}) {
+async function craftPlantBalls ({ keepSeeds = 16, maxBalls = 15 } = {}) {
   const seedsOnHand = countOnHand('wheat_seeds')
-  const craftable = Math.floor((seedsOnHand - keepSeeds) / 8)
+  const craftable = Math.min(Math.floor((seedsOnHand - keepSeeds) / 8), maxBalls)
   if (craftable <= 0) {
     logEvent('craft', `not enough seeds: ${seedsOnHand} on hand, keeping ${keepSeeds}`)
     return { crafted: 0 }
@@ -3477,6 +3478,49 @@ async function tryRestockSupplies () {
     if (e.name !== 'AbortError') logEvent('restock', `error: ${e.message}`)
   } finally {
     restockBusy = false
+  }
+}
+
+// Morning plant ball craft: each dawn, if seeds > 8, craft up to 15 plant balls
+// and deposit them in the hopper. Capped to 15 per morning to stay within the
+// server's window-open tolerance.
+const MORNING_BALLS_MIN_SEEDS = 8
+const MORNING_BALLS_MAX = 15
+let morningBallsBusy = false
+let morningBallsLastDay = -1
+
+async function tryMorningPlantBalls () {
+  if (morningBallsBusy || restockBusy || foodSafetyBusy) return
+  if (taskBusy() || goInsideBusy || autoSleepBusy || penTraversalBusy) return
+  if (!bot.entity || !bot.world || bot.isSleeping || isBedtime()) return
+  const t = bot.time?.timeOfDay
+  if (typeof t !== 'number' || t > 1000) return
+  const day = bot.time?.day
+  if (day === morningBallsLastDay) return
+  if (bot.currentWindow) return
+  if (Date.now() < foodSafetyWindowCooldownUntil) return
+  if (sustainState.active) return // sustain loop handles its own crafting
+
+  const seeds = countOnHand('wheat_seeds')
+  if (seeds <= MORNING_BALLS_MIN_SEEDS) return
+
+  morningBallsLastDay = day
+  morningBallsBusy = true
+  try {
+    logEvent('morning-balls', `seeds=${seeds}, crafting up to ${MORNING_BALLS_MAX} plant balls`)
+    const result = await craftPlantBalls({ keepSeeds: MORNING_BALLS_MIN_SEEDS, maxBalls: MORNING_BALLS_MAX })
+    if (result.crafted > 0) {
+      await ensureInsideHouse()
+      await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+      const deposit = await depositQuickMove('unknown', HOPPER, { keep: 0 })
+      logEvent('morning-balls', `crafted=${result.crafted} deposited=${deposit.deposited}`)
+    } else {
+      logEvent('morning-balls', `crafted 0 — bench may not have opened`)
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') logEvent('morning-balls', `error: ${e.message}`)
+  } finally {
+    morningBallsBusy = false
   }
 }
 
