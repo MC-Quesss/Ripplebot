@@ -248,6 +248,25 @@ bot.once('spawn', () => {
   // Make sure spruce door is in the openable set
   const doorIds = Object.values(mcData.blocksByName).filter(b => /door/.test(b.name) && !/iron/.test(b.name)).map(b => b.id)
   doorIds.forEach(id => mvts.openable.add(id))
+
+  // Avoid the unsafe modded blocks on the east side of the house. These report
+  // with empty names on this Forge 1.12.2 server. The charging pad is believed
+  // to be (-265, 65, 574), with adjacent empty-name modded blocks at z=572/573.
+  // Pathfinder exclusion adds a large step cost so routes prefer the normal
+  // floor tiles instead of stepping onto the pad/wall-adjacent machinery.
+  const PATHFINDER_AVOID_BLOCKS = new Set([
+    '-265,65,572',
+    '-265,65,573',
+    '-265,65,574',
+  ])
+  function avoidBlockKey (pos) {
+    return `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}`
+  }
+  mvts.exclusionAreasStep.push((block) => {
+    if (!block || !block.position) return 0
+    return PATHFINDER_AVOID_BLOCKS.has(avoidBlockKey(block.position)) ? 100 : 0
+  })
+
   bot.pathfinder.setMovements(mvts)
 
   // Permanently zero out collision for the modded block at (-271, 65, 572) —
