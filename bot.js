@@ -547,6 +547,27 @@ function botPersonaKey () { return PERSONA }
 // when unreachable, expressive speech is silent — functional speech unaffected.
 llm.init({ logFn: logEvent })
 
+
+// Shared world context for LLM-generated speech.
+// Keep persona identity in personas/*.json, and keep place/world facts here.
+// This gives every persona the same local map without duplicating text in each
+// persona file. Missing file is fine: the bots simply run without world notes.
+const WORLD_CONTEXT_PATH = path.join(__dirname, process.env.WORLD_CONTEXT_FILE || 'data/world_context.md')
+let worldContext = ''
+function loadWorldContext () {
+  try {
+    worldContext = fs.readFileSync(WORLD_CONTEXT_PATH, 'utf8')
+      .replace(/\r\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+    if (worldContext) logEvent('world-context', `loaded ${worldContext.length} chars from ${WORLD_CONTEXT_PATH}`)
+  } catch (e) {
+    worldContext = ''
+    logEvent('world-context', `none loaded (${e.message})`)
+  }
+}
+loadWorldContext()
+
 // Persona's own pool for a slot, or the shared fallback when absent.
 function personaPool (slot, fallbackPool) {
   const pool = personaSpec.functional[slot]
@@ -1471,6 +1492,7 @@ function describeWhereabouts () {
 function buildExpressiveContext (situation) {
   const parts = []
   parts.push(`It is ${describeTimeOfDay()}${bot.isRaining ? ' and raining' : ''}. You are ${describeWhereabouts()}.`)
+  if (worldContext) parts.push(`Shared world facts for grounding. Use these facts naturally when relevant; do not recite them as a list. Avoid inventing conflicting details.\n${worldContext}`)
   // Vitals and pockets, so questions like "how are you", "where are you",
   // "what are you carrying" get answered truthfully, in voice — these were
   // scripted handlers before the 2026-06-11 router refactor.
