@@ -2367,6 +2367,9 @@ async function craftPlantBalls ({ keepSeeds = 16, maxBalls = 15 } = {}) {
 const SUSTAIN_POLL_MS = 5000
 const SUSTAIN_KEEP_WHEAT = 16
 const SUSTAIN_KEEP_SEEDS = 0
+// Sustain should convert every full group of 8 seeds into plant balls.
+// Only the natural remainder (0–7 seeds) stays in inventory for the next cycle.
+const SUSTAIN_MAX_PLANT_BALLS = Number.POSITIVE_INFINITY
 const SUSTAIN_HOPPER_CHECK_INTERVAL = 6
 const sustainState = { active: false, cycles: 0, startedBy: null, lastCycleDay: -1, role: null }
 
@@ -2758,9 +2761,11 @@ async function runSustainFarm (user) {
           const wheatResult = await depositQuickMove('wheat', HOPPER, { keep: SUSTAIN_KEEP_WHEAT })
           logEvent('sustain', `wheat deposit: deposited=${wheatResult.deposited} remaining=${wheatResult.remaining}`)
 
-          // 3. Craft plant balls from surplus seeds
-          const craftResult = await craftPlantBalls({ keepSeeds: SUSTAIN_KEEP_SEEDS })
-          logEvent('sustain', `plant balls crafted: ${craftResult.crafted}`)
+          // 3. Craft plant balls from surplus seeds. Every full group of
+          // 8 seeds becomes a plant ball; only the 0–7 remainder stays
+          // in inventory for the next harvest cycle.
+          const craftResult = await craftPlantBalls({ keepSeeds: SUSTAIN_KEEP_SEEDS, maxBalls: SUSTAIN_MAX_PLANT_BALLS })
+          logEvent('sustain', `plant balls crafted: ${craftResult.crafted}; seeds remaining=${countOnHand('wheat_seeds')}`)
 
           // 4. Deposit plant balls to hopper
           if (craftResult.crafted > 0) {
@@ -2770,10 +2775,13 @@ async function runSustainFarm (user) {
             logEvent('sustain', `plant ball deposit: deposited=${ballResult.deposited} remaining=${ballResult.remaining}`)
           }
 
-          // 4b. Deposit excess seeds (remainder > 7 means 15-ball cap was hit)
-          if (countOnHand('wheat_seeds') > 7) {
-            logEvent('sustain', `seeds still ${countOnHand('wheat_seeds')} after craft — depositing excess`)
-            try { await runDepositNamed(['wheat_seeds']) } catch (_) {}
+          // 4b. Do NOT deposit leftover seeds. They are fuel ingredients.
+          // After full crafting, only 0–7 seeds should remain; those stay
+          // in the bot inventory and combine with the next harvest. If more
+          // than 7 remain, log it as a crafting anomaly instead of stashing them.
+          const seedsAfterCraft = countOnHand('wheat_seeds')
+          if (seedsAfterCraft > 7) {
+            logEvent('sustain', `warning: ${seedsAfterCraft} seeds remain after plant-ball craft; keeping in inventory`)
           }
 
           if (!sustainState.active) break
