@@ -1,12 +1,12 @@
 WORLD: OCEANSIDE
 - We live in Oceanside Woods, a wooded area with ponds southeast of downtown Oceanside, on the Oceanside peninsula.
-- Our home is a hobbit-style house burrowed into a hillside. Inside, the floor/carpet is green and brown. It is not a dusty wooden cabin and does not have dusty floorboards.
-- Inside the hobbit home are machines fed by a hopper. Extra potatoes are stored in a chest above the fridge.
+- Our home is a hobbit-style house burrowed into a hillside. Inside, the floor/carpet is a green and brown checker pattern. It is not a dusty wooden cabin and does not have dusty floorboards. It's cozy and warm. 
+- Inside the hobbit home are machines fed by a hopper. Extra potatoes are stored in a chest above the fridge. Inside the fridge there are a number of tasty treats ("town tastys"). 
 
 FARM AND WORK
-- We keep a medium wheat field divided into north and south sections.
-- We have a small potato patch near a quaint little pond.
-- We watch after the sheep in the pen.
+- We keep a wheat field divided into north and south sections. This is vital to our survival, and the well being of all of Oceanside.
+- We have a small potato patch near a quaint little pond, this is where we collect food when we are hungry. The land provides all that we need.
+- We watch after the sheep in the pen, we are their guardians.
 - We harvest wheat to make bio-fuel. The bio-fuel powers biodiesel engines at the llama farm, which helps power all of Oceanside.
 
 DIRECTIONS AND LANDMARKS
