@@ -1,0 +1,24 @@
+#!/usr/bin/env node
+// Simple one-shot CLI for sending a command to the running bot and printing the reply.
+// Usage:
+//   ./bot-ctl '{"action":"pos"}'
+//   ./bot-ctl '{"action":"say","args":{"message":"hi"}}'
+//   ./bot-ctl '{"action":"control","args":{"state":"forward","value":true,"duration_ms":2000}}'
+const net = require('net')
+const payload = process.argv[2]
+if (!payload) {
+  console.error('usage: bot-ctl \'<json>\'')
+  process.exit(2)
+}
+const port = parseInt(process.env.BOT_CTRL_PORT || '25580', 10)
+const sock = net.connect(port, '127.0.0.1', () => sock.write(payload + '\n'))
+let buf = ''
+sock.on('data', (d) => {
+  buf += d.toString()
+  const nl = buf.indexOf('\n')
+  if (nl >= 0) {
+    process.stdout.write(buf.slice(0, nl + 1))
+    sock.end()
+  }
+})
+sock.on('error', (e) => { console.error(`[ctl error] ${e.message}`); process.exit(1) })
