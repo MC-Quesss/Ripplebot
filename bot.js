@@ -1586,6 +1586,9 @@ function buildExpressiveContext (situation) {
   // "what are you carrying" get answered truthfully, in voice — these were
   // scripted handlers before the 2026-06-11 router refactor.
   parts.push(`Your vitals: HP ${bot.health?.toFixed(0) ?? '?'}/20, food ${bot.food ?? '?'}/20, deaths this session: ${deathCount}. Position: ${bot.entity ? posStr(bot.entity.position) : 'unknown'}.`)
+  if ((bot.health ?? 20) < 20 || (bot.food ?? 20) < 20) {
+    parts.push(`IMPORTANT: you are NOT at full health/hunger right now (HP ${bot.health?.toFixed(0) ?? '?'}/20, food ${bot.food ?? '?'}/20). If anyone asks how you are or how you're feeling, do NOT say "fine" or "good" — report your actual condition in your own voice (hungry, hurt, low, recovering) and say if you need food.`)
+  }
   const inv = (bot.inventory?.items() || []).sort((a, b) => b.count - a.count).slice(0, 5).map(i => `${i.count}× ${i.name}`)
   parts.push(inv.length ? `Carrying: ${inv.join(', ')}.` : 'Your pockets are empty.')
   if (activeTask.name) parts.push(`You are in the middle of: ${activeTask.name}.`)
@@ -3471,7 +3474,11 @@ async function tryFoodSafety () {
   if (!bot.entity || bot.isSleeping) return
   if (bot.currentWindow) { foodSafetyWindowCooldownUntil = Date.now() + 30000; return }
   if (Date.now() < foodSafetyWindowCooldownUntil) return
-  if (bot.health == null || bot.health >= 10) return
+  if (bot.health == null) return
+  // Eat as soon as hunger sets in (food < 18) OR when hurt (HP < 10) — not only
+  // in the HP emergency. autoEat is unreliable on this server, so foodSafety is
+  // the primary eater now.
+  if (bot.health >= 10 && (bot.food ?? 20) >= 18) return
 
   foodSafetyBusy = true
   try {
@@ -3766,7 +3773,7 @@ async function tryClearPenPlate () {
   penPlateSince = null
   logEvent('pen-plate', 'dwelled >3s on plate — stepping north off it')
   try {
-    await faceYaw(0) // north (-z)
+    await faceYaw(Math.PI) // face -z (decrease z toward 571)
     await walkUntilAxis({ axis: 'z', target: 571, direction: 'lte', maxMs: 3000 })
     await ensurePenDoorClosed() // make sure the door didn't stay propped open
   } catch (e) {
@@ -3938,7 +3945,7 @@ async function runGoInsideOnce () {
     logEvent('go-inside', `pathfind to outside_orientation failed; walking manually`)
     await faceYaw(Math.PI / 2) // face west
     await walkUntilAxis({ axis: 'x', target: -275, direction: 'lte', maxMs: 6000 })
-    await faceYaw(0) // face north
+    await faceYaw(Math.PI) // face -z (decrease z toward 572)
     await walkUntilAxis({ axis: 'z', target: 572, direction: 'lte', maxMs: 4000 })
   }
   if (deathCount > startDeaths) throw new Error('died en route to outside_orientation')
@@ -3955,13 +3962,13 @@ async function runGoInsideOnce () {
   // door at z=572. Bot bbox is ±0.3, so safe band is z=572.3–572.7.
   const curZ = bot.entity.position.z
   if (curZ > 572.7) {
-    logEvent('go-inside', `z-align: ${curZ.toFixed(2)} > 572.7, nudging north`)
-    await faceYaw(0) // north
+    logEvent('go-inside', `z-align: ${curZ.toFixed(2)} > 572.7, nudging -z`)
+    await faceYaw(Math.PI) // face -z (decrease z toward 572.5)
     await walkUntilAxis({ axis: 'z', target: 572.5, direction: 'lte', maxMs: 3000 })
     logEvent('go-inside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
   } else if (curZ < 572.3) {
-    logEvent('go-inside', `z-align: ${curZ.toFixed(2)} < 572.3, nudging south`)
-    await faceYaw(Math.PI) // south
+    logEvent('go-inside', `z-align: ${curZ.toFixed(2)} < 572.3, nudging +z`)
+    await faceYaw(0) // face +z (increase z toward 572.5)
     await walkUntilAxis({ axis: 'z', target: 572.5, direction: 'gte', maxMs: 3000 })
     logEvent('go-inside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
   }
@@ -4061,7 +4068,7 @@ async function resetToHouseSide (target /* HOUSE_CENTER or OUTSIDE_ORIENTATION *
   // Correct z to match the orientation block's z=572
   const zOff = (bot.entity?.position?.z ?? 572) - 572
   if (Math.abs(zOff) > 0.8) {
-    await faceYaw(zOff > 0 ? 0 : Math.PI).catch(() => {}) // north if z>572, south if z<572
+    await faceYaw(zOff > 0 ? Math.PI : 0).catch(() => {}) // z>572 → face -z; z<572 → face +z
     await walkUntilAxis({ axis: 'z', target: 572, direction: zOff > 0 ? 'lte' : 'gte', maxMs: 4000 }).catch(() => {})
   }
   await pathTo(target, 0, 6000).catch(() => {})
@@ -5033,29 +5040,36 @@ async function runBake (mode = 'both') {
   }
 }
 
-// Manual eat: try the plugin first (vanilla food), then fall back to slot 44
-// (modded hamburgers) via equip_slot + activateItem. Returns a chat-friendly
-// summary string.
+// Foods this server actually lets the bot eat, best-first. NEVER includes wheat
+// (inedible — eating it was the old slot-44 bug).
+const EDIBLE_FOODS = [
+  'baked_potato', 'bread', 'cooked_beef', 'cooked_porkchop', 'cooked_chicken',
+  'cooked_mutton', 'cooked_rabbit', 'cooked_cod', 'cooked_salmon', 'cooked_fish',
+  'mushroom_stew', 'rabbit_stew', 'beetroot_soup', 'apple', 'carrot',
+  'golden_carrot', 'melon', 'cookie', 'pumpkin_pie',
+]
+// Eat one real food item and VERIFY it registered. autoEat is unreliable here —
+// its eat() resolves on the finish animation without the server applying hunger —
+// so drive the eat by hand and confirm bot.food actually rose before claiming success.
 async function eatSomething () {
-  // Try the plugin — works for vanilla food (bread, beef, etc.)
-  if (bot.autoEat) {
-    try {
-      const info = await bot.autoEat.eat()
-      if (info) return `Ate ${info.name || 'food'}. Food ${bot.food}/20.`
-    } catch (_) { /* fall through */ }
-  }
-  // Fallback: slot 44 hamburger or any other consumable the plugin didn't see
-  const HAMBURGER_SLOT = 44
-  const item = bot.inventory.slots[HAMBURGER_SLOT]
-  if (!item) throw new Error('no food in slot 44')
+  if ((bot.food ?? 20) >= 20) return `Already full (${bot.food}/20).`
   const before = bot.food
-  await bot.equip(item, 'hand')
-  bot.activateItem()
-  // Give the server ~2s to process the eat animation + apply hunger
-  await sleep(2100)
-  try { bot.deactivateItem() } catch (_) {}
-  await clearHand()
-  return `Ate ${item.displayName || item.name || 'hamburger'}. Food ${before}→${bot.food}/20.`
+  for (const name of EDIBLE_FOODS) {
+    const item = bot.inventory.items().find(i => i.name === name)
+    if (!item) continue
+    await bot.equip(item, 'hand')
+    const start = bot.food
+    bot.activateItem() // hold right-click; server consumes after the use duration
+    await sleep(1800)  // bread/potato eat is ~1.6s — hold through completion
+    try { bot.deactivateItem() } catch (_) {}
+    if ((bot.food ?? 0) > start) {
+      await clearHand().catch(() => {})
+      return `Ate ${item.displayName || name}. Food ${before}→${bot.food}/20.`
+    }
+    // Didn't register (interrupted or refused) — try the next food type.
+  }
+  await clearHand().catch(() => {})
+  throw new Error(`could not eat — food stayed at ${bot.food}/20`)
 }
 
 // Deposit all 'unknown'-named items from the bot's inventory into the kitchen
