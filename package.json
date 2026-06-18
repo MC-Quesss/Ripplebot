@@ -11,11 +11,13 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "canvas": "^3.2.3",
     "dotenv": "^17.4.2",
     "minecraft-protocol": "^1.66.1",
     "minecraft-protocol-forge": "^1.0.0",
     "mineflayer": "^4.37.1",
     "mineflayer-auto-eat": "^5.0.3",
-    "mineflayer-pathfinder": "^2.4.5"
+    "mineflayer-pathfinder": "^2.4.5",
+    "prismarine-viewer": "^1.33.0"
   }
 }

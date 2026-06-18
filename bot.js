@@ -22,11 +22,58 @@ const useForge = process.env.MC_FORGE === 'true'
 const ctrlPort = parseInt(process.env.BOT_CTRL_PORT || '25580', 10)
 const logPath = path.join(__dirname, 'bot.log')
 
-const logStream = fs.createWriteStream(logPath, { flags: 'a' })
+// Single bounded log file — no archives. When bot.log passes LOG_MAX_BYTES it is
+// trimmed to its last LOG_KEEP_BYTES (older lines dropped) so the most recent
+// history survives. bot.js is the only writer (launched as plain `node bot.js`,
+// no shell redirect), so the Node stream owns the file and can rewrite it safely.
+const LOG_MAX_BYTES = 50 * 1024 * 1024  // trim once bot.log passes 50 MB
+const LOG_KEEP_BYTES = 10 * 1024 * 1024 // ... keeping the last 10 MB
+
+// Rewrite bot.log to its last ~LOG_KEEP_BYTES, dropping a partial leading line
+// so the file starts on a clean record. Must run with the stream closed.
+// Returns the size of the retained tail (0 on any failure → empty file).
+function trimLogTail () {
+  let fd = null
+  try {
+    const sz = fs.statSync(logPath).size
+    const keep = Math.min(LOG_KEEP_BYTES, sz)
+    const buf = Buffer.allocUnsafe(keep)
+    fd = fs.openSync(logPath, 'r')
+    fs.readSync(fd, buf, 0, keep, sz - keep)
+    fs.closeSync(fd); fd = null
+    const nl = buf.indexOf(0x0a) // first newline; drop the partial line before it
+    const tail = buf.subarray(nl === -1 ? 0 : nl + 1)
+    fs.writeFileSync(logPath, tail)
+    return tail.length
+  } catch {
+    if (fd !== null) { try { fs.closeSync(fd) } catch {} }
+    try { fs.writeFileSync(logPath, '') } catch {}
+    return 0
+  }
+}
+
+// Trim a leftover oversized log on startup, then append going forward.
+let logBytes = 0
+try {
+  logBytes = fs.statSync(logPath).size
+  if (logBytes >= LOG_MAX_BYTES) logBytes = trimLogTail()
+} catch {}
+
+let logStream = fs.createWriteStream(logPath, { flags: 'a' })
+
 function logEvent (kind, msg) {
   const line = `${new Date().toISOString()} [${kind}] ${msg}\n`
   process.stdout.write(line)
   logStream.write(line)
+  logBytes += Buffer.byteLength(line)
+  if (logBytes >= LOG_MAX_BYTES) {
+    logStream.end()
+    logBytes = trimLogTail()
+    logStream = fs.createWriteStream(logPath, { flags: 'a' })
+    const marker = `${new Date().toISOString()} [log] trimmed to last ${LOG_KEEP_BYTES} bytes\n`
+    logStream.write(marker)
+    logBytes += Buffer.byteLength(marker)
+  }
 }
 
 let forgeMods = []
@@ -182,6 +229,129 @@ client.on('window_items', (packet) => {
 const bot = mineflayer.createBot({ ...clientOpts, client })
 bot.loadPlugin(pathfinder)
 bot.loadPlugin(autoEat)
+
+// Custom web view + control bar at http://localhost:3007. We own the page and
+// the render loop (instead of prismarine-viewer's bundled `mineflayer` helper)
+// so the page can carry buttons that drive the bot and a live camera toggle.
+// Guarded so a missing/unbuilt `canvas` native dep can't take down the whole
+// bot — the viewer is a debug aid, not core functionality.
+bot.once('spawn', () => {
+  try {
+    startViewer(bot, 3007)
+  } catch (err) {
+    logEvent('viewer', `viewer disabled: ${err.message}`)
+  }
+})
+
+// Page served at '/'. The viewer's bundle (index.js) creates its own full-screen
+// canvas and appends it to <body>; our control bar sits on top via fixed
+// positioning. Buttons POST to /cmd (reusing the TCP control dispatcher) or
+// /camera (live first/third-person toggle, read by the render loop below).
+const VIEWER_HTML = `<!DOCTYPE html>
+<html><head><title>Ripplebot Viewer</title><style>
+  html,body{height:100%;margin:0;padding:0;overflow:hidden}
+  canvas{height:100%;width:100%}
+  #bar{position:fixed;top:8px;left:8px;z-index:10;display:flex;gap:6px;flex-wrap:wrap;
+       font-family:system-ui,sans-serif}
+  #bar button,#bar input{font-size:13px;padding:6px 10px;border:0;border-radius:6px;
+       background:rgba(0,0,0,.6);color:#fff;cursor:pointer}
+  #bar input{cursor:text;width:180px}
+  #bar button:hover{background:rgba(0,0,0,.8)}
+  #status{position:fixed;bottom:8px;left:8px;z-index:10;color:#fff;font-family:monospace;
+       font-size:12px;background:rgba(0,0,0,.5);padding:4px 8px;border-radius:4px}
+</style></head><body>
+  <div id="bar">
+    <button id="cam">Camera: 1st person</button>
+    <button id="look">Look around</button>
+    <button id="inside">Go inside</button>
+    <button id="outside">Go outside</button>
+    <input id="say" placeholder="say something…"/>
+    <button id="send">Send</button>
+  </div>
+  <div id="status">connecting…</div>
+  <script src="index.js"></script>
+  <script>
+    const post=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(b||{})}).then(r=>r.json());
+    const cmd=(action,args)=>post('/cmd',{action,args});
+    let firstPerson=true;
+    const camBtn=document.getElementById('cam');
+    const setCamLabel=()=>{camBtn.textContent='Camera: '+(firstPerson?'1st':'3rd')+' person';};
+    // Read current mode from the server so the label is right after a reload.
+    fetch('/camera').then(r=>r.json()).then(d=>{if(d&&'firstPerson'in d){firstPerson=d.firstPerson;setCamLabel();}}).catch(()=>{});
+    // The frontend only applies the camera mode on connect, so reload after toggling.
+    camBtn.onclick=async()=>{await post('/camera',{firstPerson:!firstPerson});location.reload();};
+    document.getElementById('look').onclick=()=>{let y=0;
+      const id=setInterval(()=>{cmd('look',{yaw:y,pitch:0});y+=Math.PI/4;
+        if(y>2*Math.PI+0.1)clearInterval(id);},250);};
+    document.getElementById('inside').onclick=()=>cmd('come_inside');
+    document.getElementById('outside').onclick=()=>cmd('go_outside');
+    const st=document.getElementById('status');
+    const say=document.getElementById('say');
+    const sendSay=()=>{const m=say.value.trim();if(!m)return;
+      cmd('say',{message:m}).then(r=>{st.textContent=(r&&r.ok)?('sent: '+m):'say failed';say.value='';});};
+    document.getElementById('send').onclick=sendSay;
+    // stopPropagation so typing doesn't leak to the viewer's keyboard controls,
+    // and so the bundle can't swallow the Enter key before we see it.
+    say.addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter')sendSay();});
+    say.addEventListener('keyup',e=>e.stopPropagation());
+    setInterval(async()=>{try{const p=await cmd('pos');if(p.ok&&document.activeElement!==say)
+      st.textContent='('+p.x+', '+p.y+', '+p.z+')  HP '+p.health+'  food '+p.food+'  deaths '+p.deaths;
+      }catch(e){st.textContent='disconnected';}},2000);
+  </script>
+</body></html>`
+
+// Camera mode is mutable so the /camera button flips it live (no restart).
+let viewerFirstPerson = true
+
+// Minimal re-implementation of prismarine-viewer's mineflayer mode using the
+// module's exported WorldView (the same API the bundled helper uses). The
+// rendering path mirrors node_modules/prismarine-viewer/lib/mineflayer.js; we
+// add our own '/', '/cmd', and '/camera' routes.
+function startViewer (bot, port) {
+  const path = require('path')
+  const express = require('express')
+  const compression = require('compression')
+  const { WorldView } = require('prismarine-viewer/viewer')
+  const viewerPublic = path.join(require.resolve('prismarine-viewer/package.json'), '..', 'public')
+
+  const app = express()
+  app.use(compression())
+  app.use(express.json())
+  app.get('/', (req, res) => res.type('html').send(VIEWER_HTML)) // our page wins at '/'
+  app.post('/cmd', async (req, res) => {
+    try { res.json(await handleCommand(req.body || {})) } // reuse the TCP dispatcher
+    catch (e) { res.json({ ok: false, error: e.message }) }
+  })
+  app.get('/camera', (req, res) => res.json({ ok: true, firstPerson: viewerFirstPerson }))
+  app.post('/camera', (req, res) => {
+    viewerFirstPerson = !!(req.body && req.body.firstPerson)
+    logEvent('viewer', `camera -> ${viewerFirstPerson ? 'first' : 'third'} person`)
+    res.json({ ok: true, firstPerson: viewerFirstPerson })
+  })
+  app.use('/', express.static(viewerPublic)) // bundle + textures fall through to here
+
+  const http = require('http').createServer(app)
+  const io = require('socket.io')(http, { path: '/socket.io' })
+  io.on('connection', (socket) => {
+    socket.emit('version', bot.version)
+    const worldView = new WorldView(bot.world, 6, bot.entity.position, socket)
+    worldView.init(bot.entity.position)
+    function botPosition () {
+      const packet = { pos: bot.entity.position, yaw: bot.entity.yaw, addMesh: true }
+      if (viewerFirstPerson) packet.pitch = bot.entity.pitch
+      socket.emit('position', packet)
+      worldView.updatePosition(bot.entity.position)
+    }
+    bot.on('move', botPosition)
+    worldView.listenToBot(bot)
+    socket.on('disconnect', () => {
+      bot.removeListener('move', botPosition)
+      worldView.removeListenersFromBot(bot)
+    })
+  })
+  http.listen(port, () => logEvent('viewer', `viewer + controls on http://localhost:${port}`))
+}
 
 // Patch: mineflayer-auto-eat leaks entity_status + updateSlot listeners on eat
 // timeout — the setTimeout rejects the promise but never removes the listeners.

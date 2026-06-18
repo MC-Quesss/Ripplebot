@@ -7,6 +7,32 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-06-17 — prismarine-viewer added + bot.log bounded
+
+Infra session, bot offline. Details in [[prismarine-viewer-and-log-rotation]].
+
+- **prismarine-viewer** (`^1.33.0`) added — web view at http://localhost:3007.
+  Original add was broken **three** ways (see [[prismarine-viewer-and-log-rotation]]):
+  (1) the real root cause — package.json had been downgraded to mineflayer `^1.4.0`
+  (resolved 1.8.0, ~2019) + auto-eat `^3.3.6`, crashing bot.js (written for 4.x)
+  with `windows.InventoryWindow is not a constructor` before spawn; (2) native
+  `canvas` dep never installed; (3) viewer init ran before `const bot` existed
+  (temporal dead zone). Fixes: restored deps from HEAD (mineflayer 4.37.1) then
+  re-added viewer + canvas on top; installed `canvas` (`^3.2.3`, Node 26 prebuilt);
+  moved init into a try/catch `bot.once('spawn')` after `createBot`. **Verified
+  live**: clean launch, control server :25580, viewer serving :3007, `pos` healthy.
+- **Viewer control bar** — replaced prismarine-viewer's bundled helper with our own
+  `startViewer()` (exported `WorldView` + our Express routes), so the :3007 page now
+  carries buttons: live first/third-person **Camera** toggle (`POST /camera`), Look
+  around, Go inside, Go outside, and a Say box (all `POST /cmd` → `handleCommand`).
+  Owns the index.html; no node_modules edits. Verified live.
+- **bot.log bounded** — had reached ~939 MB (append-forever). Now a single file
+  (no archives): when it passes 50 MB it is trimmed to its last 10 MB — newest
+  history kept, older lines dropped — with the same trim applied to a leftover
+  oversized log on startup. Verified against a synthetic 60 MB log.
+- Verified: `node --check` clean, both modules load. In-game view test pending
+  next launch.
+
 ## 2026-06-11 — Squirrel false-positive diagnosis (log trace session)
 
 Log-analysis session, bot online but idle near the house. Traced the
