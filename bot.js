@@ -744,6 +744,11 @@ function botPersonaKey () { return PERSONA }
 // when unreachable, expressive speech is silent — functional speech unaffected.
 llm.init({ logFn: logEvent })
 
+const claude = require('./claude')
+claude.init({ logFn: logEvent })
+let brainMode = 'local'
+const CLAUDE_PREFILTER = (process.env.CLAUDE_PREFILTER || 'local').toLowerCase()
+
 
 // Shared world context for LLM-generated speech.
 // Keep persona identity in personas/*.json, and keep place/world facts here.
@@ -1158,15 +1163,9 @@ const POTATO_ASK_LINES = [
   "Spuds acquired. Bake or stash?",
   "What's the plan for these bad boys — furnace or chest?",
 ]
-const WHEAT_ASK_LINES = [
-  "Wheat's all bundled up — hopper or chest?",
-  "Got the wheat. Want it in the hopper or the chest?",
-  "Where's this wheat headed — hopper or chest?",
-  "Harvest's in hand. Hopper or chest for the wheat?",
-  "Wheat secured. Drop it in the hopper, or stash it in the chest?",
-]
-// Hopper inside the house (vanilla container). Wheat can be routed here as an
-// alternative to the kitchen chest after a harvest. See journal/places/house-hopper.
+// Hopper inside the house (vanilla container). Wheat always goes here after a harvest.
+// Seeds always get crafted into plant balls, which also go to the hopper.
+// See journal/places/house-hopper.
 const HOPPER = { x: -266, y: 65, z: 573 }
 
 function waitForChatReply (testFn, timeoutMs = 60000) {
@@ -1332,6 +1331,31 @@ function findPlayerEntity (username) {
   const realName = resolveUsername(username)
   if (!realName) return null
   return bot.players[realName]?.entity || null
+}
+
+function splitChatLines (text, maxLen) {
+  if (text.length <= maxLen) return [text]
+  const chunks = []
+  let remaining = text
+  while (remaining.length > maxLen) {
+    let cut = remaining.slice(0, maxLen)
+    const sentenceEnd = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '))
+    if (sentenceEnd > maxLen * 0.4) {
+      chunks.push(remaining.slice(0, sentenceEnd + 1).trim())
+      remaining = remaining.slice(sentenceEnd + 1).trim()
+    } else {
+      const space = cut.lastIndexOf(' ')
+      if (space > maxLen * 0.3) {
+        chunks.push(remaining.slice(0, space).trim())
+        remaining = remaining.slice(space).trim()
+      } else {
+        chunks.push(cut.trim())
+        remaining = remaining.slice(maxLen).trim()
+      }
+    }
+  }
+  if (remaining) chunks.push(remaining)
+  return chunks
 }
 
 async function facePlayer (username) {
@@ -2405,51 +2429,38 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
     bot.chat(pickLine(withPersonaSlot(HARVEST_DONE_LINES, 'harvestDone'), { dug: totalHarvested, gained, onhand: wheatOnHand }))
     logEvent('harvest-rc', `activated=${totalActivated} harvested=${totalHarvested} gained=${gained} onhand=${wheatOnHand} kept-on-hand`)
 
-    // Ask where the wheat should go — hopper or chest. No answer in 30s → keep it.
+    // Wheat always goes to the hopper. No prompting.
     if (wheatOnHand > 0 && !skipDeposit) {
-      let dest
-      if (autoDeposit) {
-        dest = autoDeposit // sustain loop: skip the question, feed the hopper directly
-        logEvent('harvest-rc', `auto-deposit wheat → ${dest} (${wheatOnHand})`)
-      } else {
-        { const pool = withPersonaSlot(WHEAT_ASK_LINES, 'wheatAsk'); bot.chat(pool[Math.floor(Math.random() * pool.length)]) }
-        logEvent('harvest-rc', `asking user: hopper or chest? (${wheatOnHand} wheat)`)
-        dest = await waitForChatReply((username, msg) => {
-          if (/\bhopper\b/i.test(msg)) return 'hopper'
-          if (/\b(chest|stash|store|deposit|box)\b/i.test(msg)) return 'chest'
-          return undefined
-        }, 30000)
-      }
-
-      if (dest === 'hopper' || dest === 'chest') {
-        try {
-          await ensureInsideHouse()
-          if (deathCount > startDeaths) throw new Error('died entering house')
-          await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-          const target = dest === 'hopper' ? HOPPER : HARVEST_WAYPOINTS.kitchen_chest
-          const r = await depositQuickMove('wheat', target, { keep: 0 })
-          if (r.backedUp) {
-            logEvent('harvest-rc', `${dest} backed up: deposited=${r.deposited} remaining=${r.remaining} rounds=${r.rounds}`)
-          } else {
-            logEvent('harvest-rc', `deposited ${r.deposited} wheat to ${dest} (quick-move, ${r.rounds} rounds)`)
-          }
-        } catch (e) {
-          logEvent('harvest-rc', `${dest} deposit failed: ${e.message} — keeping wheat`)
-          logEvent('harvest-rc', `${dest} deposit failed: ${e.message}`)
+      try {
+        await ensureInsideHouse()
+        if (deathCount > startDeaths) throw new Error('died entering house')
+        await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+        const r = await depositQuickMove('wheat', HOPPER, { keep: SUSTAIN_KEEP_WHEAT })
+        if (r.backedUp) {
+          logEvent('harvest-rc', `hopper backed up: deposited=${r.deposited} remaining=${r.remaining} rounds=${r.rounds}`)
+        } else {
+          logEvent('harvest-rc', `wheat → hopper: deposited=${r.deposited} kept=${r.remaining} (${r.rounds} rounds)`)
         }
-      } else {
-        logEvent('harvest-rc', 'no reply after 30s, keeping wheat on hand')
-        logEvent('harvest-rc', 'no reply after 30s, keeping wheat on hand')
+      } catch (e) {
+        logEvent('harvest-rc', `hopper deposit failed: ${e.message} — keeping wheat`)
       }
     }
 
+    // Seeds always get crafted into plant balls and deposited to the hopper.
     if (!keepSeeds) {
       try {
-        if (countOnHand('wheat_seeds') > 7) {
-          await runDepositNamed(['wheat_seeds'])
+        if (countOnHand('wheat_seeds') >= 8) {
+          await ensureInsideHouse()
+          const craftResult = await craftPlantBalls({ keepSeeds: 0, maxBalls: Infinity })
+          logEvent('harvest-rc', `plant balls crafted: ${craftResult.crafted}; seeds remaining=${countOnHand('wheat_seeds')}`)
+          if (craftResult.crafted > 0) {
+            await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+            const ballResult = await depositQuickMove('unknown', HOPPER, { keep: 0 })
+            logEvent('harvest-rc', `plant balls → hopper: deposited=${ballResult.deposited}`)
+          }
         }
       } catch (e) {
-        logEvent('harvest-rc', `seed overflow deposit failed: ${e.message}`)
+        logEvent('harvest-rc', `seed/plantball handling failed: ${e.message}`)
       }
     }
   } finally {
@@ -2878,7 +2889,21 @@ function trackFireCoordination (username, message) {
   if (FIRE_STANDDOWN_RE.test(message)) {
     if (fireCrew.delete(name)) {
       logEvent('sustain', `${username} stood down from fire duty`)
-      if (sustainState.active && sustainState.role === 'supervise') scheduleFirePromotion()
+      if (sustainState.active) {
+        if (sustainState.role === 'supervise') {
+          scheduleFirePromotion()
+        } else if (sustainState.role === 'north' || sustainState.role === 'south') {
+          // If no remote bots still hold fields, we're the only keeper — cover both.
+          if (activeFireClaims().size === 0) {
+            setTimeout(() => {
+              if (sustainState.active && (sustainState.role === 'north' || sustainState.role === 'south')) {
+                logEvent('sustain', 'only keeper remaining — expanding to solo coverage')
+                sustainState.role = 'solo'
+              }
+            }, 2000 + Math.random() * 2000)
+          }
+        }
+      }
     }
     return
   }
@@ -2989,11 +3014,36 @@ async function runSustainFarm (user) {
         continue
       }
 
-      const fieldFilter = (sustainState.role === 'north' || sustainState.role === 'south') ? sustainState.role : null
-      const scan = scanKnownWheatFields(fieldFilter)
-      if ((scan.maturePct >= 85 || (retryAfterInterrupt && scan.mature > 0)) && !foodSafetyBusy) {
+      // Determine which half to harvest this poll.
+      // Assigned roles (north/south) watch only their half. Solo mode scans
+      // each half independently so north and south can trigger at different times.
+      const isFieldRole = sustainState.role === 'north' || sustainState.role === 'south'
+      let harvestHalf, scan
+      if (isFieldRole) {
+        scan = scanKnownWheatFields(sustainState.role)
+        const ready = scan.maturePct >= 85 || (retryAfterInterrupt && scan.mature > 0)
+        harvestHalf = ready ? `${sustainState.role}-field` : null
+      } else {
+        const northScan = scanKnownWheatFields('north')
+        const southScan = scanKnownWheatFields('south')
+        const northReady = northScan.maturePct >= 85 || (retryAfterInterrupt && northScan.mature > 0)
+        const southReady = southScan.maturePct >= 85 || (retryAfterInterrupt && southScan.mature > 0)
+        if (northReady && southReady) {
+          harvestHalf = 'all'
+          scan = { maturePct: (northScan.maturePct + southScan.maturePct) / 2, mature: northScan.mature + southScan.mature, expected: northScan.expected + southScan.expected, loaded: northScan.loaded + southScan.loaded }
+        } else if (northReady) {
+          harvestHalf = 'north-field'; scan = northScan
+        } else if (southReady) {
+          harvestHalf = 'south-field'; scan = southScan
+        } else {
+          harvestHalf = null
+          scan = { maturePct: (northScan.maturePct + southScan.maturePct) / 2, mature: northScan.mature + southScan.mature, expected: northScan.expected + southScan.expected, loaded: northScan.loaded + southScan.loaded }
+        }
+      }
+
+      if (harvestHalf && !foodSafetyBusy) {
         if (retryAfterInterrupt) logEvent('sustain', `resuming interrupted cycle — ${scan.mature} mature tiles remaining`)
-        logEvent('sustain', `triggering cycle: maturePct=${scan.maturePct.toFixed(0)}% mature=${scan.mature} inside=${insideHouse()}`)
+        logEvent('sustain', `triggering cycle: half=${harvestHalf} maturePct=${scan.maturePct.toFixed(0)}% mature=${scan.mature} inside=${insideHouse()}`)
         retryAfterInterrupt = false
         sustainState.cycles++
         logEvent('sustain', `field ready (mature=${scan.mature}/${scan.expected}, ${scan.maturePct.toFixed(0)}%) — cycle ${sustainState.cycles}`)
@@ -3002,8 +3052,8 @@ async function runSustainFarm (user) {
         // door snags, etc. skip this cycle and retry next poll. Only AbortError
         // (explicit user stop) kills the loop.
         try {
-          // 1. Harvest our claimed field — keep seeds on hand (no auto-deposit)
-          await runHarvestRightClick({ half: fieldFilter ? `${fieldFilter}-field` : 'all', keepSeeds: true, skipDeposit: true })
+          // 1. Harvest the ready half — keep seeds on hand (no auto-deposit)
+          await runHarvestRightClick({ half: harvestHalf, keepSeeds: true, skipDeposit: true })
           if (!sustainState.active) break
 
           // 1b. Eat if hungry — auto-eat can't fire during window ops, so give it
@@ -3076,7 +3126,13 @@ async function runSustainFarm (user) {
       } else {
         polls++
         if (polls % 20 === 0) {
-          logEvent('sustain', `waiting (mature=${scan.mature}/${scan.expected} loaded=${scan.loaded})`)
+          if (!isFieldRole) {
+            const nS = scanKnownWheatFields('north')
+            const sS = scanKnownWheatFields('south')
+            logEvent('sustain', `waiting north=${nS.mature}/${nS.expected}(${nS.maturePct.toFixed(0)}%) south=${sS.mature}/${sS.expected}(${sS.maturePct.toFixed(0)}%) loaded=${nS.loaded + sS.loaded}`)
+          } else {
+            logEvent('sustain', `waiting (mature=${scan.mature}/${scan.expected} loaded=${scan.loaded})`)
+          }
         }
         // Jam-watch duty belongs to one keeper (solo or north) so two bots
         // never feed clearing wheat into the hopper at the same time.
@@ -4129,15 +4185,16 @@ async function runGoInsideOnce () {
   logEvent('go-inside', `at orientation ${JSON.stringify(atOrigin.pos)}`)
 
   // 2b. Align z to 572.5 — center of door opening. Wall (planks) at z=571,
-  // door at z=572. Bot bbox is ±0.3, so safe band is z=572.3–572.7.
+  // door at z=572. Bot bbox is ±0.3, so the hard collision edge is z=572.0.
+  // Use z=572.45 as the lower trigger — gives 0.15 block clearance from the plank.
   const curZ = bot.entity.position.z
   if (curZ > 572.7) {
     logEvent('go-inside', `z-align: ${curZ.toFixed(2)} > 572.7, nudging -z`)
     await faceYaw(Math.PI) // face -z (decrease z toward 572.5)
     await walkUntilAxis({ axis: 'z', target: 572.5, direction: 'lte', maxMs: 3000 })
     logEvent('go-inside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
-  } else if (curZ < 572.3) {
-    logEvent('go-inside', `z-align: ${curZ.toFixed(2)} < 572.3, nudging +z`)
+  } else if (curZ < 572.45) {
+    logEvent('go-inside', `z-align: ${curZ.toFixed(2)} < 572.45, nudging +z`)
     await faceYaw(0) // face +z (increase z toward 572.5)
     await walkUntilAxis({ axis: 'z', target: 572.5, direction: 'gte', maxMs: 3000 })
     logEvent('go-inside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
@@ -5304,56 +5361,29 @@ async function runStashUnknown () {
 }
 
 async function runStashWheat () {
-  const wheatItems = bot.inventory.items().filter(i => i.name === 'wheat')
-  const onHand = wheatItems.reduce((s, i) => s + i.count, 0)
+  const onHand = bot.inventory.items().filter(i => i.name === 'wheat').reduce((s, i) => s + i.count, 0)
   if (!onHand) { bot.chat('No wheat in my pockets.'); return }
-  bot.chat(`Stashing ${onHand} wheat in the kitchen chest…`)
+  bot.chat(`Sending ${onHand} wheat to the hopper…`)
 
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
 
-  const chestBlock = bot.blockAt(new Vec3(
-    HARVEST_WAYPOINTS.kitchen_chest.x,
-    HARVEST_WAYPOINTS.kitchen_chest.y,
-    HARVEST_WAYPOINTS.kitchen_chest.z,
-  ))
-  if (!chestBlock) throw new Error('kitchen chest not reachable')
-
-  const win = await bot.openContainer(chestBlock)
-  let deposited = 0
-  try {
-    for (const it of wheatItems) {
-      try { await win.deposit(it.type, it.metadata, it.count); deposited += it.count } catch (e) {
-        logEvent('stash-wheat', `deposit fail: ${e.message}`)
-        break
-      }
-    }
-  } finally { win.close() }
-  const remaining = onHand - deposited
-  const msg = remaining > 0
-    ? `Stashed ${deposited} wheat. ${remaining} didn't fit.`
-    : `Stashed ${deposited} wheat. Pockets clear.`
+  const r = await depositQuickMove('wheat', HOPPER, { keep: 0 })
+  const msg = r.remaining > 0
+    ? `Hopper took ${r.deposited} wheat. ${r.remaining} didn't fit.`
+    : `Sent ${r.deposited} wheat to the hopper. Pockets clear.`
   bot.chat(msg)
-  logEvent('stash-wheat', `deposited=${deposited} remaining=${remaining}`)
+  logEvent('stash-wheat', `deposited=${r.deposited} remaining=${r.remaining}`)
 }
 
-// Deposit one or more item names into the kitchen chest. Items not present
-// in inventory are silently skipped — the routine never fails just because
-// one of the requested names isn't on hand. "deposit bread, wheat, seeds"
-// will deposit whichever subset the bot actually has.
-//
-// `bread` is kept on hand up to KEEP_BREAD for auto-eat; the rest is stashed.
-// `wheat_seeds` is kept on hand up to KEEP_SEEDS for replanting.
-// All other named items are deposited fully.
+// Deposit one or more item names. Items not present are silently skipped.
+// Routing: wheat → hopper (quick-move); wheat_seeds → craft plant balls → hopper;
+// everything else → kitchen chest.
+// `bread` and `baked_potato` are kept to their stack limits; all others go fully.
 async function runDepositNamed (names) {
   const KEEP_BREAD = 64
-  const KEEP_SEEDS = 0
   const KEEP_BAKED = 128
-  const KEEPS = {
-    bread: KEEP_BREAD,
-    wheat_seeds: KEEP_SEEDS,
-    baked_potato: KEEP_BAKED,
-  }
+  const KEEPS = { bread: KEEP_BREAD, baked_potato: KEEP_BAKED }
 
   const inv = bot.inventory.items()
   const present = names.filter(n => inv.some(i => i.name === n))
@@ -5361,59 +5391,77 @@ async function runDepositNamed (names) {
     bot.chat(`Nothing to deposit — none of ${names.join(', ')} on hand.`)
     return
   }
-  bot.chat(`Depositing ${present.join(', ')} in the kitchen chest…`)
 
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
 
-  const chestBlock = bot.blockAt(new Vec3(
-    HARVEST_WAYPOINTS.kitchen_chest.x,
-    HARVEST_WAYPOINTS.kitchen_chest.y,
-    HARVEST_WAYPOINTS.kitchen_chest.z,
-  ))
-  if (!chestBlock) throw new Error('kitchen chest not reachable')
-
-  const win = await bot.openContainer(chestBlock)
   const summary = []
-  try {
-    for (const name of names) {
-      const stacks = bot.inventory.items().filter(i => i.name === name)
-      const onHand = stacks.reduce((s, i) => s + i.count, 0)
-      if (!onHand) continue
-      const keep = KEEPS[name] ?? 0
-      let toDeposit = Math.max(0, onHand - keep)
-      if (toDeposit === 0) {
-        summary.push(`${name}: ${onHand} on hand, all kept`)
-        continue
-      }
-      let deposited = 0
-      for (const it of stacks) {
-        if (toDeposit <= 0) break
-        const take = Math.min(it.count, toDeposit)
-        try {
-          await win.deposit(it.type, it.metadata, take)
-          deposited += take
-          toDeposit -= take
-        } catch (e) {
-          logEvent('deposit-named', `${name} fail: ${e.message}`)
-          break
-        }
-      }
-      summary.push(`${name}: ${deposited}${keep ? ` (kept ${onHand - deposited})` : ''}`)
-    }
-  } finally { win.close() }
 
-  const msg = summary.length
-    ? `Deposited — ${summary.join('; ')}.`
-    : `Nothing deposited.`
+  // wheat → hopper via quick-move
+  if (names.includes('wheat') && countOnHand('wheat') > 0) {
+    const r = await depositQuickMove('wheat', HOPPER, { keep: 0 })
+    summary.push(`wheat: ${r.deposited} → hopper${r.remaining ? ` (${r.remaining} kept)` : ''}`)
+    logEvent('deposit-named', `wheat → hopper: deposited=${r.deposited} remaining=${r.remaining}`)
+  }
+
+  // wheat_seeds → craft plant balls → hopper
+  if (names.includes('wheat_seeds') && countOnHand('wheat_seeds') >= 8) {
+    try {
+      const craftResult = await craftPlantBalls({ keepSeeds: 0, maxBalls: Infinity })
+      summary.push(`wheat_seeds: crafted ${craftResult.crafted} plant balls`)
+      if (craftResult.crafted > 0) {
+        await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+        const r = await depositQuickMove('unknown', HOPPER, { keep: 0 })
+        summary.push(`plant_balls: ${r.deposited} → hopper`)
+        logEvent('deposit-named', `plant balls → hopper: deposited=${r.deposited}`)
+      }
+    } catch (e) {
+      logEvent('deposit-named', `seed craft/deposit failed: ${e.message}`)
+      summary.push(`wheat_seeds: craft failed (${e.message})`)
+    }
+  } else if (names.includes('wheat_seeds') && countOnHand('wheat_seeds') > 0) {
+    summary.push(`wheat_seeds: ${countOnHand('wheat_seeds')} on hand, fewer than 8 (kept)`)
+  }
+
+  // everything else → kitchen chest
+  const toChest = names.filter(n => n !== 'wheat' && n !== 'wheat_seeds')
+  if (toChest.length && toChest.some(n => inv.some(i => i.name === n))) {
+    const chestBlock = bot.blockAt(new Vec3(
+      HARVEST_WAYPOINTS.kitchen_chest.x,
+      HARVEST_WAYPOINTS.kitchen_chest.y,
+      HARVEST_WAYPOINTS.kitchen_chest.z,
+    ))
+    if (!chestBlock) throw new Error('kitchen chest not reachable')
+    const win = await bot.openContainer(chestBlock)
+    try {
+      for (const name of toChest) {
+        const stacks = bot.inventory.items().filter(i => i.name === name)
+        const onHand = stacks.reduce((s, i) => s + i.count, 0)
+        if (!onHand) continue
+        const keep = KEEPS[name] ?? 0
+        let toDeposit = Math.max(0, onHand - keep)
+        if (toDeposit === 0) { summary.push(`${name}: all kept`); continue }
+        let deposited = 0
+        for (const it of stacks) {
+          if (toDeposit <= 0) break
+          const take = Math.min(it.count, toDeposit)
+          try { await win.deposit(it.type, it.metadata, take); deposited += take; toDeposit -= take }
+          catch (e) { logEvent('deposit-named', `${name} fail: ${e.message}`); break }
+        }
+        summary.push(`${name}: ${deposited}${keep ? ` (kept ${onHand - deposited})` : ''}`)
+      }
+    } finally { win.close() }
+  }
+
+  const msg = summary.length ? `Deposited — ${summary.join('; ')}.` : `Nothing deposited.`
   bot.chat(msg)
   logEvent('deposit-named', summary.join('; '))
 }
 
-// Stash everything except seeds (for replanting), baked potatoes (for eating),
-// and shears (for wool runs).
+// Stash everything. Wheat → hopper; seeds → craft plant balls → hopper;
+// everything else → kitchen chest (keeping baked_potato/shears at their limits).
 // Uses win.deposit for known items and two-click for unknown/modded items.
-const STASH_ALL_KEEP = { wheat: 16, baked_potato: 128, shears: 1 }
+const STASH_ALL_KEEP = { baked_potato: 128, shears: 1 }
 async function runStashAll () {
   const inv = bot.inventory.items()
   if (!inv.length) { bot.chat('Pockets already empty.'); return }
@@ -5421,6 +5469,27 @@ async function runStashAll () {
 
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+
+  // Wheat → hopper
+  const wheatOnHand = countOnHand('wheat')
+  if (wheatOnHand > 0) {
+    const r = await depositQuickMove('wheat', HOPPER, { keep: 0 })
+    logEvent('stash-all', `wheat → hopper: deposited=${r.deposited} remaining=${r.remaining}`)
+  }
+
+  // Seeds → craft plant balls → hopper
+  if (countOnHand('wheat_seeds') >= 8) {
+    try {
+      const craftResult = await craftPlantBalls({ keepSeeds: 0, maxBalls: Infinity })
+      if (craftResult.crafted > 0) {
+        await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+        const r = await depositQuickMove('unknown', HOPPER, { keep: 0 })
+        logEvent('stash-all', `plant balls → hopper: deposited=${r.deposited}`)
+      }
+    } catch (e) {
+      logEvent('stash-all', `seed craft/deposit failed: ${e.message}`)
+    }
+  }
 
   const chestBlock = bot.blockAt(new Vec3(
     HARVEST_WAYPOINTS.kitchen_chest.x,
@@ -5453,6 +5522,7 @@ async function runStashAll () {
       const it = win.slots[i]
       if (!it) continue
       if (TRASH_ITEMS.has(it.name)) continue // skip trash; tossed when outside
+      if (it.name === 'wheat' || it.name === 'wheat_seeds') continue // already routed to hopper above
 
       const keepLimit = STASH_ALL_KEEP[it.name] ?? 0
       let depositCount = it.count
@@ -5520,7 +5590,7 @@ async function runStashAll () {
   } finally { win.close() }
 
   const parts = [`stashed ${deposited}`]
-  if (kept > 0) parts.push(`kept ${kept} (seeds/food/shears)`)
+  if (kept > 0) parts.push(`kept ${kept} (food/shears)`)
   if (failed > 0) parts.push(`${failed} didn't fit`)
   bot.chat(parts.join(', ') + '.')
   logEvent('stash-all', `deposited=${deposited} kept=${kept} failed=${failed}`)
@@ -5840,7 +5910,7 @@ const CHAT_INTENTS = {
   },
   bake_bread: { hint: 'bake bread (mixes dough first if needed)', run: () => runBake('both') },
   mix_dough: { hint: 'mix wheat into dough only, no baking', run: () => runBake('dough') },
-  stash_wheat: { hint: 'deposit carried wheat into its chest', run: () => runStashWheat() },
+  stash_wheat: { hint: 'deposit carried wheat into the hopper', run: () => runStashWheat() },
   stash_unknown: { hint: 'stash unknown/junk/modded items', run: () => runStashUnknown() },
   deposit_items: {
     hint: 'deposit specific items; args.items array from: bread, wheat, seeds, baked_potato',
@@ -5972,9 +6042,91 @@ function buildRouterSystemPrompt () {
   ].filter(Boolean).join('\n')
 }
 
+function buildClaudeBrainSystemPrompt () {
+  const myNames = [...new Set([NICKNAME, bot.username].filter(Boolean))]
+  const others = [...KNOWN_BOT_NAMES].filter(n => !myNames.some(m => m.toLowerCase() === n))
+  const catalog = Object.entries(CHAT_INTENTS).map(([k, v]) => `  ${k} — ${v.hint}`).join('\n')
+  const emoteList = 'no, yes, wave, salute, cheer, clap, think, point, shrug, headbang, weep, facepalm'
+
+  return [
+    personaSpec.systemPrompt,
+
+    personaSpec.exemplars?.length
+      ? 'Lines you have said before, in your true voice:\n' + personaSpec.exemplars.map(e => `- ${e}`).join('\n')
+      : null,
+
+    `You are a Minecraft farm robot named ${myNames.join(' (also known as ')}${myNames.length > 1 ? ')' : ''} on a modded 1.12.2 Forge server.`,
+    others.length ? `Other robots on this server: ${others.join(', ')}. Anyone else speaking is a human player.` : null,
+
+    'You can perform these actions when asked (use exactly these intent keys):\n' + catalog,
+    `You can perform emotes: ${emoteList}.`,
+
+    personaSpec.interests?.length
+      ? `You are especially interested in: ${personaSpec.interests.join(', ')}.`
+      : null,
+
+    'Respond with ONLY a JSON object — no prose, no markdown:\n' +
+    '{"chat": "your reply or null", "actions": [], "emote": null}\n\n' +
+    'Fields:\n' +
+    '- chat: in-game chat in your persona voice (plain text, no quotes around it, no emoji, never starting with /). You may write up to 3 sentences when the moment calls for it — they will be split across multiple chat messages automatically. null to stay silent.\n' +
+    '- actions: array of bot commands, each {"action":"<intent_key>","args":{}}. Use intent keys from the list above only. Empty array if no action needed.\n' +
+    '- emote: one emote name or null.\n\n' +
+    'Decision rules:\n' +
+    '- If the message is not addressed to you, is noise, or you have nothing genuine to add: {"chat":null,"actions":[],"emote":null}\n' +
+    '- If addressed to you with a task request, include both a chat reply AND the matching action.\n' +
+    '- Stay in character. Keep it wholesome. Never discuss real-world topics.\n' +
+    '- Do not take orders from other robots — only respond conversationally to them.',
+  ].filter(Boolean).join('\n\n')
+}
+
+
 async function routeChat (username, message, { namedMe, fromBot }) {
-  // Bot-to-bot lines: check the exchange budget before spending a classification.
   if (fromBot && !botExchangeAllows(username)) return
+
+  if (brainMode === 'claude') {
+    if (CLAUDE_PREFILTER === 'local') {
+      const verdict = await llm.classify({
+        system: buildRouterSystemPrompt(),
+        user: [
+          recentChat.length ? `Recent chat (oldest first):\n${recentChat.join('\n')}` : null,
+          `Latest line — <${username}>: ${message}`,
+        ].filter(Boolean).join('\n\n'),
+      })
+      if (!verdict) {
+        logEvent('claude', 'prefilter unavailable — falling back to local')
+        return routeChatLocal(username, message, { namedMe, fromBot })
+      }
+      const audience = String(verdict.audience || 'unclear')
+      const kind = String(verdict.kind || 'noise')
+      const relevance = Math.max(0, Math.min(10, Number(verdict.relevance) || 0))
+      logEvent('chat-prefilter', `<${username}> ${message} -> ${JSON.stringify({ audience, kind, relevance })}`)
+      if (kind === 'noise' || audience === 'other') return
+      const addressed = audience === 'me' || audience === 'everyone' || namedMe
+      if (!addressed && relevance < CHAT_RELEVANCE_MIN) return
+      if (fromBot) return replyToBotTurn(username, message)
+    }
+
+    const expressiveCtx = buildExpressiveContext(
+      `<${username}> just said: "${message}"\n` +
+      (namedMe ? 'This message is addressed to you.' : 'This message was said to the room.') +
+      (fromBot ? ' The speaker is another robot.' : ' The speaker is a human player.')
+    )
+    const result = await claude.brainChat({
+      systemPrompt: buildClaudeBrainSystemPrompt(),
+      userMessage: expressiveCtx,
+    })
+    if (!result) {
+      logEvent('claude', 'brainChat returned null — falling back to local')
+      return routeChatLocal(username, message, { namedMe, fromBot })
+    }
+    await executeClaudeResponse(username, message, result, { namedMe, fromBot })
+    return
+  }
+
+  return routeChatLocal(username, message, { namedMe, fromBot })
+}
+
+async function routeChatLocal (username, message, { namedMe, fromBot }) {
   const verdict = await llm.classify({
     system: buildRouterSystemPrompt(),
     user: [
@@ -5990,10 +6142,9 @@ async function routeChat (username, message, { namedMe, fromBot }) {
   if (kind === 'noise' || audience === 'other') return
 
   if (kind === 'command' && (audience === 'me' || audience === 'everyone')) {
-    if (fromBot) return // robots don't take orders from each other
+    if (fromBot) return
     const intent = CHAT_INTENTS[verdict.intent]
     if (!intent) return
-    // A new directed command from the followed player ends the follow.
     if (followTarget && username === followTarget && verdict.intent !== 'follow') {
       bot.pathfinder.setGoal(null)
       followTarget = null; followEntity = null; followChainPos = 0
@@ -6007,8 +6158,6 @@ async function routeChat (username, message, { namedMe, fromBot }) {
     return
   }
 
-  // Conversation. A line addressed to the bot always earns a reply attempt;
-  // anything else must clear the chime-in bar. The LLM may still PASS.
   const addressed = audience === 'me' || audience === 'everyone' || namedMe
   if (!addressed && relevance < CHAT_RELEVANCE_MIN) return
   if (fromBot) return replyToBotTurn(username, message)
@@ -6027,6 +6176,58 @@ async function routeChat (username, message, { namedMe, fromBot }) {
   if (line) {
     bot.chat(line)
     logEvent('player-chat', `<${username}> ${message} -> ${line}`)
+  }
+}
+
+async function executeClaudeResponse (username, message, result, { namedMe, fromBot }) {
+  const { chat, actions, emote } = result
+  logEvent('claude-brain', `<${username}> ${message} -> chat=${chat ? `"${chat}"` : 'null'} actions=${JSON.stringify(actions || [])} emote=${emote || 'null'}`)
+
+  if (chat && typeof chat === 'string') {
+    let text = chat.trim()
+    text = text.replace(/[^\x00-\xFF]/g, '')
+    while (text.startsWith('/')) text = text.slice(1).trim()
+    if (text) {
+      facePlayer(username).catch(() => {})
+      const chunks = splitChatLines(text, 230)
+      for (let i = 0; i < chunks.length; i++) {
+        if (i > 0) await sleep(1500 + Math.random() * 1000)
+        bot.chat(chunks[i])
+      }
+    }
+  }
+
+  if (Array.isArray(actions)) {
+    for (const cmd of actions) {
+      if (!cmd || typeof cmd !== 'object' || !cmd.action) continue
+      const intent = CHAT_INTENTS[cmd.action]
+      if (!intent) {
+        logEvent('claude-brain', `rejected unknown action: ${cmd.action}`)
+        continue
+      }
+      if (fromBot) {
+        logEvent('claude-brain', `rejected bot-originated action: ${cmd.action}`)
+        continue
+      }
+      if (followTarget && username === followTarget && cmd.action !== 'follow') {
+        bot.pathfinder.setGoal(null)
+        followTarget = null; followEntity = null; followChainPos = 0
+      }
+      logEvent('claude-intent', `${cmd.action} <- claude brain <- <${username}> ${message}`)
+      try {
+        await Promise.resolve(intent.run(username, cmd.args || {}))
+      } catch (e) {
+        if (e.name === 'AbortError') break
+        logEvent('claude-intent', `${cmd.action} failed: ${e.message}`)
+        bot.chat(`Couldn't do that: ${e.message}`)
+        break
+      }
+    }
+  }
+
+  if (emote && typeof emote === 'string') {
+    const valid = new Set(['no', 'yes', 'wave', 'salute', 'cheer', 'clap', 'think', 'point', 'shrug', 'headbang', 'weep', 'facepalm'])
+    if (valid.has(emote.toLowerCase())) sendEmote(emote.toLowerCase())
   }
 }
 
@@ -6491,8 +6692,23 @@ function handleCommand (cmd) {
       return { ok: true, count: deathCount }
     }
     case 'llm': {
-      // Voice generator status: {"action":"llm"}
-      return { ok: true, ...llm.status(), persona: PERSONA, personaName: personaSpec.name, botChatDepth: BOT_CHAT_DEPTH }
+      return { ok: true, ...llm.status(), persona: PERSONA, personaName: personaSpec.name, botChatDepth: BOT_CHAT_DEPTH, brainMode, claude: claude.status() }
+    }
+    case 'brain': {
+      const newMode = String(args.mode || '').toLowerCase()
+      if (newMode === 'claude') {
+        const st = claude.status()
+        if (!st.hasKey) return { ok: false, error: 'CLAUDE_API_KEY / ANTHROPIC_API_KEY not set in .env' }
+        brainMode = 'claude'
+        logEvent('brain', `switched to claude (${st.model})`)
+        return { ok: true, mode: 'claude', model: st.model, prefilter: CLAUDE_PREFILTER }
+      }
+      if (newMode === 'local') {
+        brainMode = 'local'
+        logEvent('brain', 'switched to local')
+        return { ok: true, mode: 'local', model: llm.status().model }
+      }
+      return { ok: true, mode: brainMode, local: llm.status(), claude: claude.status(), prefilter: CLAUDE_PREFILTER }
     }
     case 'mem': {
       // Memory counters: {"action":"mem"}

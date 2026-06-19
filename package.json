@@ -13,6 +13,7 @@
   "dependencies": {
     "canvas": "^3.2.3",
     "dotenv": "^17.4.2",
+    "express": "^5.2.1",
     "minecraft-protocol": "^1.66.1",
     "minecraft-protocol-forge": "^1.0.0",
     "mineflayer": "^4.37.1",

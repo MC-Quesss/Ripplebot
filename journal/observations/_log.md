@@ -7,6 +7,73 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-06-18 — Claude brain mode implemented, multi-bot fire coordination verified
+
+Bot state at start: pos (-266.5, 65, 571.5) inside house near furnace, HP 20, food 20, deaths 0, day 44382, timeOfDay 3025 (early morning).
+
+**Inventory:** 16 wheat, 64 bread, 128 baked_potato (2×64), 1 shears.
+
+**Players online:** Quesss (Dad), Musebot (Muse).
+
+### LLM verified — Qwen3.5-9B-MLX-4bit
+
+Model warmed up in 432ms. Classify calls running 2.7–5s (local 9B model, expected). Chat router correctly:
+- Classified Dad's greeting (relevance 8, audience "me") → Roz replied in persona.
+- Classified Muse's chatter (relevance 0–2, audience "other"/"everyone") → Roz stayed quiet. No bot-to-bot spiral.
+
+### Log duplication anomaly — fixed
+
+Every `bot.log` line was printing twice. Root cause: launch command `node bot.js >> bot.log 2>&1` redirected stdout to bot.log, but `logEvent()` already writes to both `process.stdout` and the bot.log write stream. Double-write. Fix: launch with `> /dev/null 2>&1` since bot.js handles its own logging.
+
+### Bot-to-bot double reply — race condition in replyToBotTurn
+
+Observed: Roz said "Muse, quiet is nice. The wheat sways easier when the wind stops." twice (14s apart, different timestamps — not a log dupe). Root cause: two Muse messages arrived in quick succession ("Understood. Going still..." classified as audience:"everyone" and "The statistical probability..." classified as audience:"me"). Both passed the `addressed` gate at bot.js:6012 because `audience === "everyone"` counts as addressed. Both called `replyToBotTurn`, and since `botExchange.turns` is only incremented in an async `.then()` after delay+generation completes, both reads `turns=0` and both fired.
+
+Two fixes to consider:
+1. **Race fix:** increment `botExchange.turns` synchronously before the delay, not in `.then()`.
+2. **Classification fix:** `audience === "everyone"` probably shouldn't count as `addressed` for bot-to-bot exchanges — Roz shouldn't feel obligated to reply to everything Muse says to the room.
+
+### Claude brain mode — implemented and tested
+
+Added a runtime-switchable "Claude brain" mode: `./bot-ctl '{"action":"brain","args":{"mode":"claude"}}'`. In this mode, Claude Opus 4.6 replaces the local Qwen model for chat responses and action dispatch. A single API call handles classification + reply + actions simultaneously. Returns structured JSON: `{chat, actions, emote}`.
+
+**Architecture:**
+- New module `claude.js` — raw fetch to Anthropic Messages API, no SDK dependency.
+- `routeChat` checks `brainMode`: `'local'` runs existing Qwen pipeline (renamed `routeChatLocal`), `'claude'` calls Claude.
+- Local Qwen still serves as prefilter (`CLAUDE_PREFILTER=local` default) — filters noise/unaddressed chat before spending an API call.
+- `executeClaudeResponse` dispatches chat (multi-line splitting at sentence boundaries), emotes (after actions complete), and actions (via whitelisted `CHAT_INTENTS` only).
+- Reflex tier (stop, stand_down, follow) completely untouched — instant safety regardless of brain mode.
+- Automatic fallback to local Qwen if Claude API unreachable.
+
+**Tested interactions:**
+- "Come outside and give a salute" → Claude dispatched `go_outside` + emote. Bug found: emote fired before action. Fixed: emote now fires after actions complete.
+- "What do you have for food?" → Claude answered with full inventory summary in persona voice.
+- "Tell me about Brightbill" → Claude dispatched `tell_story` intent with a detailed topic prompt.
+- "Roz, be a friend to Muse" → Claude generated a multi-sentence supportive message, correctly split across chat lines.
+- Chat splitting added (230-char chunks at sentence boundaries, ~1.5s pacing) to accommodate Opus's longer responses.
+- Prefilter correctly tags Muse's chatter as `audience:"other"` — Claude only called for relevant messages.
+
+**Config:** `BOT_API_KEY` in .env (also accepts `CLAUDE_API_KEY` / `ANTHROPIC_API_KEY`). Default model: `claude-opus-4-6`.
+
+**Limitation discovered:** bot-to-bot commands are blocked by design (`!fromBot` guard in reflex tier + `if (fromBot) return` in command dispatch). Roz saying "Muse, follow me" won't work — Dad needs to give that command directly.
+
+### Multi-bot fire coordination — confirmed working
+
+Both bots ran "keep the fire going" simultaneously. Coordination over in-game chat:
+- Roz claimed south field, Muse claimed north field (107ms apart).
+- Each harvested only their assigned half independently.
+- Roz: 54 tiles in south, deposited wheat to hopper, crafted 4 plant balls from 34 seeds.
+- Muse: harvested north, deposited to hopper independently.
+- Sustain status confirmed: `role: "south"`, `crew: {muse: "north"}`.
+
+### Ghost blocks in prismarine-viewer — place-and-remove fix
+
+Question-mark blocks appeared on grass near the wheat field in the viewer. Cause: modded [[../creatures/butterfly]] entities landing on blocks confuse prismarine-viewer's texture lookup for that tile. **Viewer-only issue** — mineflayer's `block_at` returns the correct underlying block (farmland, grass, etc.) unaffected by the entity. Placing dirt and removing it forces a block update that re-renders correctly. Bot perception (pathfinder, find_blocks, block_at) is not impacted.
+
+### Viewer enabled — express + prismarine-viewer + canvas installed
+
+Installed `express` (was missing from package.json entirely), then `npm install` to pull `prismarine-viewer` and `canvas` (were in package.json but not in node_modules). Bot restarted; viewer confirmed serving at http://localhost:3007 with control buttons (camera toggle, look around, go inside/outside, say box).
+
 ## 2026-06-17 — prismarine-viewer added + bot.log bounded
 
 Infra session, bot offline. Details in [[prismarine-viewer-and-log-rotation]].

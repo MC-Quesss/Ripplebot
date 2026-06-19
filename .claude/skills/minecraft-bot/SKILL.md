@@ -21,12 +21,18 @@ You also maintain a structured journal of the world. The journal is the source o
 ## Starting the bot
 
 ```
-node bot.js
+node bot.js > /dev/null 2>&1 &
 ```
+
+**Important:** redirect stdout to `/dev/null`, NOT to `bot.log`. The bot's `logEvent()` already writes to both stdout and bot.log via its own write stream — redirecting stdout to bot.log causes every line to appear twice.
 
 Use `run_in_background: true`. Wait ~14s for spawn. Confirm with `./bot-ctl '{"action":"pos"}'` — a JSON reply means it's live. `[ctl error] ECONNREFUSED` means it's dead.
 
 If already running (`lsof -i :25580` or the pos check succeeds), don't launch another.
+
+## Prismarine Viewer
+
+When `express` is installed, the bot serves a web viewer at **http://localhost:3007** with camera toggle, look controls, and a say box. Check `[viewer]` in bot.log on startup — if it says "viewer disabled" a dependency is missing (`npm install`).
 
 First-time auth prints an MSA device code — relay to user. After that, cached in `~/.minecraft/nmp-cache/`.
 

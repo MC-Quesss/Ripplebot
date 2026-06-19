@@ -10,3 +10,8 @@ mentions.log
 
 # Obsidian editor state
 .obsidian/
+
+# Symlinked skills from other repos
+.claude/skills/buddy
+.claude/skills/tara
+.claude/skills/richard
