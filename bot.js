@@ -746,7 +746,13 @@ llm.init({ logFn: logEvent })
 
 const claude = require('./claude')
 claude.init({ logFn: logEvent })
-let brainMode = 'local'
+let brainMode = (process.env.BRAIN_MODE || 'local').toLowerCase()
+if (brainMode === 'claude' && !claude.status().hasKey) {
+  logEvent('brain', 'BRAIN_MODE=claude but no API key found — falling back to local')
+  brainMode = 'local'
+} else if (brainMode === 'claude') {
+  logEvent('brain', `starting in claude mode (${claude.status().model})`)
+}
 const CLAUDE_PREFILTER = (process.env.CLAUDE_PREFILTER || 'local').toLowerCase()
 
 
@@ -4190,12 +4196,12 @@ async function runGoInsideOnce () {
   const curZ = bot.entity.position.z
   if (curZ > 572.7) {
     logEvent('go-inside', `z-align: ${curZ.toFixed(2)} > 572.7, nudging -z`)
-    await faceYaw(Math.PI) // face -z (decrease z toward 572.5)
+    await faceYaw(0) // face north (-z) to decrease z toward 572.5
     await walkUntilAxis({ axis: 'z', target: 572.5, direction: 'lte', maxMs: 3000 })
     logEvent('go-inside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
   } else if (curZ < 572.45) {
     logEvent('go-inside', `z-align: ${curZ.toFixed(2)} < 572.45, nudging +z`)
-    await faceYaw(0) // face +z (increase z toward 572.5)
+    await faceYaw(Math.PI) // face south (+z) to increase z toward 572.5
     await walkUntilAxis({ axis: 'z', target: 572.5, direction: 'gte', maxMs: 3000 })
     logEvent('go-inside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
   }
