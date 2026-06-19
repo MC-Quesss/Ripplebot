@@ -7,19 +7,33 @@ confirmed: true
 first_tested: 2026-05-30
 ---
 
-# Food Safety Loop (HP emergency + dawn baked-potato restock)
+# Food Safety Loop
 
-A background safety net, now **split into two separate functions**:
+A background safety net with three tiers: eat from inventory, withdraw from chest, or
+harvest from the field. Runs on the 5s timer alongside auto-sleep.
 
-- **`tryFoodSafety()`** — an **HP emergency routine**. Gate is **HP < 10** (not a baked-potato
-  floor). It eats inventory food first; if still hungry (`bot.food < 18`) and starving, it goes
-  inside and withdraws up to **16 bread** from the kitchen chest (slot 24). If the food bar is
-  full (i.e. the HP loss is environmental damage only), it **stays put and does NOT do a bread
-  run**.
-- **`tryRestockSupplies()`** — the **baked-potato restock**, runs at **dawn**. Floor is
-  **`RESTOCK_MIN = 32`**. When baked potatoes are below the floor it calls
-  `runHarvestPotatoesRightClick({ then: 'bake', maxTiles: 42 })` and bakes the crop — keeping the
-  baked output on hand (food, never stashed).
+## Overview (updated 2026-06-19)
+
+- **`tryFoodSafety()`** — fires as soon as `food < 20` (hunger not full). Three steps:
+  1. **Eat from inventory** — tries all `EDIBLE_FOODS` in priority order (baked_potato first,
+     raw potato last).
+  2. **Withdraw from kitchen chest** — scans all container slots by name. Priority: baked_potato
+     (up to 32), then bread (up to 16, only if health < 20). No fixed-slot lookup — vanilla items
+     can be in any slot.
+  3. **Field harvest** (`tryFoodSafetyFieldHarvest`) — if chest is empty: harvest raw potatoes,
+     eat raw until full, bake the remainder in the furnace (non-blocking, walks away). Only during
+     daytime.
+- **`tryRestockSupplies()`** — fires whenever baked potatoes < `RESTOCK_MIN` (32) or > 128
+  (overflow). Cooldown: 10 minutes between runs. Checks chest first, then harvests + bakes if
+  still low.
+- **`tryCollectBake()`** — collects baked potatoes from the furnace when `pendingBake.doneAt` is
+  reached. Also collected opportunistically by idle wander furnace visits.
+
+## Food priority
+
+1. **Baked potatoes** — primary food source. Bot keeps ≥32 on hand via restock.
+2. **Bread** — emergency only: no baked potatoes available AND health not full.
+3. **Raw potatoes** — last resort: harvested and eaten in the field when chest is empty.
 
 ## Control
 
@@ -27,31 +41,13 @@ A background safety net, now **split into two separate functions**:
   `{"action":"auto_food","args":{"enabled":false}}` to disable,
   `{"action":"auto_food","args":{"min":20}}` to change the floor.
   Status: `{"action":"auto_food"}` → `{enabled, busy, min, baked}`.
-- No chat phrase yet — it runs on its own.
 
-## How it works (`bot.js`)
+## Furnace memory
 
-- Runs off the **same 5s timer as auto-sleep** (`startAutoSleep` interval → `tryFoodSafety()`).
-- State: `foodSafetyEnabled` (default true), `foodSafetyBusy`, `foodSafetyMin` (default 16).
-  **Note:** `foodSafetyMin` is now **vestigial** — no gate reads it. The restock floor lives in
-  `RESTOCK_MIN = 32` instead.
-- **`tryFoodSafety()` (HP emergency):** gate is **HP < 10**. The bot first eats inventory food;
-  if it's still hungry (`bot.food < 18`) and starving, it goes inside and withdraws up to **16
-  bread** from [[../chests/house-kitchen-chest]] slot 24, then eats to recover. If the food bar
-  is already full (HP loss is environmental damage only), it **stays put — no bread run**. Breaks
-  the HP-too-low-to-harvest / no-food-to-heal deadlock. If no bread is available, the bot
-  announces it needs help and aborts. (Introduced as the emergency bread protocol 2026-06-03.)
-- **`tryRestockSupplies()` (dawn restock):** gate (all must hold to fire): enabled, not already
-  busy, **no active task**, not `goInsideBusy`/`autoSleepBusy`, **not sleeping and not bedtime**,
-  `baked_potato < RESTOCK_MIN` (32). Runs at dawn.
-- Action: `runHarvestPotatoesRightClick({ then: 'bake', maxTiles: 42 })` then
-  `runBakePotatoes()` — both the usual one-at-a-time, bedtime-aware tasks. The harvest is
-  **capped at 42 tiles** (of ~60 total) to keep the food run short.
-- The `then: 'bake'` flag makes the harvest **skip its "bake or stash?" prompt** (no 60s wait)
-  and keep the raw potatoes on hand; the loop's separate `runBakePotatoes()` call does the bake.
-  (Baking can't run inside the harvest — the harvest still holds the `harvest_potatoes_rc` task,
-  and `bake_potatoes` is a separate task. So the two-call structure is required, not optional.)
-- Baked potatoes stay on hand (the bake routine never stashes them).
+After baking, `pendingBake.active` is set and `tryCollectBake` picks up the output on the 5s
+timer. Idle wander also checks the furnace (~10-20% chance per wander, boosted when a bake is
+pending). On bot restart, `pendingBake.active` defaults to `true` so stale furnace contents are
+always collected.
 
 ## Composition with "keep the fire going"
 
@@ -61,23 +57,8 @@ Mutual yielding through the task system:
   `!foodSafetyBusy` before starting a wheat cycle).
 So both can be active at once; they interleave rather than fight for the pathfinder.
 
-## Tested 2026-05-30 (day 42935)
-
-With `baked=16`, bumped the floor to 17 to force a trigger → `[food-safety] baked=16 < 17 —
-harvesting + baking potatoes` → `[harvest-potato-rc] start` → exited house to the patch. During
-the run `task_status` showed `harvest_potatoes_rc` and the sustain loop stayed paused
-(`foodSafetyBusy`). Floor reset to 16. (Full harvest→bake reuses the already-proven potato
-routines.)
-
-## Resolved: the 60s prompt (2026-05-30)
-
-Originally the autonomous run ate a 60s timeout: `runHarvestPotatoesRightClick` asked "bake or
-stash?" and waited for a chat reply no one gave. Fixed by adding the `then: 'bake'` flag (above),
-which skips the prompt entirely on the automatic path. The interactive chat path (no `then`) is
-unchanged — it still asks.
-
 ## Related
 - [[harvest-potatoes-right-click]] — the harvest step
 - [[bake-potatoes]] — the bake step (keeps baked on hand)
 - [[keep-the-fire-going]] — the sibling autonomous loop (wheat → bio-fuel)
-- [[../observations/_log]]
+- [[../chests/house-kitchen-chest]] — vanilla items found by name scan, not fixed slot

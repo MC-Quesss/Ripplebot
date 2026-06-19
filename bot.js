@@ -1592,28 +1592,33 @@ function randomIdleWanderTarget () {
   const fieldNow = inWheatField()
   const insideNow = insideHouse()
   const penNow = inPen()
+  const fb = pendingBake.active ? 0.10 : 0
   const r = Math.random()
   if (penNow) {
     if (r < 0.70) return 'outside'
-    if (r < 0.92) return 'inside'
+    if (r < 0.85) return 'inside'
+    if (r < 0.85 + 0.10 + fb) return 'furnace'
     return 'stay'
   }
   if (insideNow) {
     if (r < 0.25) return 'outside'
-    if (r < 0.78) return 'field'
-    if (r < 0.90) return 'pen'
+    if (r < 0.65) return 'field'
+    if (r < 0.78) return 'pen'
+    if (r < 0.78 + 0.12 + fb) return 'furnace'
     return 'stay'
   }
   if (fieldNow) {
-    if (r < 0.30) return 'stay'
-    if (r < 0.55) return 'outside'
-    if (r < 0.82) return 'inside'
-    if (r < 0.92) return 'pen'
+    if (r < 0.28) return 'stay'
+    if (r < 0.50) return 'outside'
+    if (r < 0.72) return 'inside'
+    if (r < 0.84) return 'pen'
+    if (r < 0.84 + 0.10 + fb) return 'furnace'
     return 'stay'
   }
-  if (r < 0.25) return 'inside'
-  if (r < 0.72) return 'field'
-  if (r < 0.86) return 'pen'
+  if (r < 0.22) return 'inside'
+  if (r < 0.58) return 'field'
+  if (r < 0.74) return 'pen'
+  if (r < 0.74 + 0.12 + fb) return 'furnace'
   return 'stay'
 }
 
@@ -1650,6 +1655,53 @@ async function runIdleWanderToPen () {
   await sleep(1500 + Math.floor(Math.random() * 2500))
   await sleep(2500 + Math.floor(Math.random() * 4500))
   if (inPen()) await runLeavePen()
+}
+
+async function runIdleWanderToFurnace () {
+  if (!insideHouse()) {
+    await runGoInside()
+    if (!insideHouse()) {
+      logEvent('idle-wander', 'furnace check skipped — could not get inside')
+      return
+    }
+  }
+
+  logEvent('idle-wander', 'checking furnace')
+  await pathTo(HARVEST_WAYPOINTS.furnace, 2, 8000)
+  const furnaceBlock = bot.blockAt(new Vec3(
+    HARVEST_WAYPOINTS.furnace.x, HARVEST_WAYPOINTS.furnace.y, HARVEST_WAYPOINTS.furnace.z,
+  ))
+  if (!furnaceBlock) {
+    logEvent('idle-wander', 'furnace block not loaded')
+    return
+  }
+
+  let taken = 0
+  let inputLeft = 0
+  const f = await bot.openFurnace(furnaceBlock)
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const out = f.outputItem()
+      if (!out || out.count === 0) break
+      const n = out.count
+      try { await f.takeOutput(); taken += n } catch (_) { break }
+    }
+    const inp = f.inputItem()
+    inputLeft = inp ? inp.count : 0
+  } finally { f.close() }
+
+  if (pendingBake.active && inputLeft === 0) pendingBake.active = false
+  if (taken > 0) {
+    logEvent('idle-wander', `collected ${taken} baked potatoes from furnace (${countBakedPotatoes()} on hand)`)
+    if (countBakedPotatoes() > 128) {
+      logEvent('idle-wander', `overflow (${countBakedPotatoes()}) — depositing excess`)
+      try { await runDepositNamed(['baked_potato']) } catch (_) {}
+    }
+  } else {
+    logEvent('idle-wander', 'furnace empty')
+  }
+
+  await sleep(1500 + Math.floor(Math.random() * 2000))
 }
 
 async function tryIdleWander () {
@@ -1689,6 +1741,8 @@ async function tryIdleWander () {
       await runIdleWanderToField()
     } else if (action === 'pen') {
       await runIdleWanderToPen()
+    } else if (action === 'furnace') {
+      await runIdleWanderToFurnace()
     }
   } catch (e) {
     if (e.name === 'AbortError') return
@@ -3686,7 +3740,7 @@ bot.on('windowOpen', () => { foodSafetyWindowCooldownUntil = Date.now() + 30000 
 // non-blocking (see runBakePotatoes): the furnace cooks on its own, the bot
 // walks away, and tryCollectBake picks the batch up later when it's free —
 // after any active wheat harvest + deposit, per the "keep the fire going" flow.
-const pendingBake = { active: false, doneAt: 0 }
+const pendingBake = { active: true, doneAt: 0 }
 let pendingBakeBusy = false
 
 const FOOD_SAFETY_LINES = [
@@ -3707,69 +3761,72 @@ async function tryFoodSafety () {
   if (bot.currentWindow) { foodSafetyWindowCooldownUntil = Date.now() + 30000; return }
   if (Date.now() < foodSafetyWindowCooldownUntil) return
   if (bot.health == null) return
-  // Eat as soon as hunger sets in (food < 18) OR when hurt (HP < 10) — not only
-  // in the HP emergency. autoEat is unreliable on this server, so foodSafety is
-  // the primary eater now.
-  if (bot.health >= 10 && (bot.food ?? 20) >= 18) return
+  if ((bot.food ?? 20) >= 20) return
 
   foodSafetyBusy = true
   try {
     logEvent('food-safety', `HP=${bot.health} food=${bot.food} — checking recovery options`)
 
     // Step 1: Try eating food already in inventory before traversing anywhere.
-    // The bot often has baked potatoes on hand — eat those first.
-    if (bot.food < 18) {
+    if (bot.food < 20) {
       let ate = false
-      for (let i = 0; i < 4 && bot.food < 18; i++) {
+      for (let i = 0; i < 4 && bot.food < 20; i++) {
         try { await eatSomething(); ate = true; await sleep(500) } catch (_) { break }
       }
       if (ate) {
         logEvent('food-safety', `ate from inventory: HP=${bot.health} food=${bot.food}`)
-        return // let natural regen do its work
+        return
       }
     }
 
     // Step 2: If food bar is full but HP is low, this is environmental damage
-    // (suffocation, fall, cactus), not starvation. Don't run to the bread chest —
-    // traversals at low HP risk death. Stay put and let regen work.
-    if (bot.food >= 18) {
+    // (suffocation, fall, cactus), not starvation. Stay put and let regen work.
+    if (bot.food >= 20) {
       logEvent('food-safety', `HP=${bot.health} but food=${bot.food} (not starving) — staying put, regen will heal`)
       return
     }
 
-    // Step 3: No food in inventory and food bar is low. Go to the bread chest.
-    // But refuse to traverse the pen door at critical HP — the walk is too risky.
+    // Step 3: No food in inventory. Go to kitchen chest — baked potatoes first,
+    // bread only in an emergency (no potatoes AND health not full).
     if (inPen() && bot.health <= 6) {
       logEvent('food-safety', `HP=${bot.health} in pen — too risky to traverse, waiting`)
       foodSafetyWindowCooldownUntil = Date.now() + 60_000
       return
     }
 
-    logEvent('food-safety', `no food in inventory, heading to bread chest`)
+    logEvent('food-safety', `no food in inventory, heading to kitchen chest`)
     await ensureInsideHouse()
     await pathTo(HARVEST_WAYPOINTS.kitchen_chest, 2, 8000)
     const win = await openChest()
     let pulled = 0
+    let pulledName = ''
     try {
       const containerSize = win.slots.length - 36
-      const src = win.slots[CHEST_SLOTS.bread]
-      if (src && src.name === 'bread' && src.count > 0) {
-        const take = Math.min(src.count, 16)
-        const empty = findEmptyInvSlotInWindow(win, containerSize)
-        if (empty) {
-          await twoClick(CHEST_SLOTS.bread, empty.windowSlot)
-          pulled = take
+      for (let s = 0; s < containerSize && pulled < 32; s++) {
+        const it = win.slots[s]
+        if (it && it.name === 'baked_potato' && it.count > 0) {
+          const take = Math.min(it.count, 32 - pulled)
+          try { await win.withdraw(it.type, it.metadata, take); pulled += take; pulledName = 'baked_potato' } catch (_) { break }
+        }
+      }
+      if (pulled === 0 && bot.health < 20) {
+        for (let s = 0; s < containerSize && pulled < 16; s++) {
+          const it = win.slots[s]
+          if (it && it.name === 'bread' && it.count > 0) {
+            const take = Math.min(it.count, 16 - pulled)
+            try { await win.withdraw(it.type, it.metadata, take); pulled += take; pulledName = 'bread' } catch (_) { break }
+          }
         }
       }
     } finally { win.close() }
     if (pulled === 0) {
-      logEvent('food-safety', 'no bread in chest — backing off 5 minutes')
-      foodSafetyWindowCooldownUntil = Date.now() + 300_000
+      logEvent('food-safety', 'no food in chest — trying field harvest')
+      await tryFoodSafetyFieldHarvest()
       return
     }
-    logEvent('food-safety', `withdrew ${pulled} bread, eating`)
+    logEvent('food-safety', `withdrew ${pulled} ${pulledName}, eating`)
     foodSafetyWindowCooldownUntil = 0
-    for (let i = 0; i < 4 && bot.food < 18; i++) {
+    for (let i = 0; i < 4 && bot.food < 20; i++) {
       try { await eatSomething(); await sleep(500) } catch (_) { break }
     }
     logEvent('food-safety', `after eating: HP=${bot.health} food=${bot.food}`)
@@ -3777,6 +3834,50 @@ async function tryFoodSafety () {
     if (e.name !== 'AbortError') logEvent('food-safety', `error: ${e.message}`)
   } finally {
     foodSafetyBusy = false
+  }
+}
+
+async function tryFoodSafetyFieldHarvest () {
+  if (isBedtime() || !(bot.time?.isDay)) {
+    logEvent('food-safety', 'field harvest skipped — not daytime')
+    foodSafetyWindowCooldownUntil = Date.now() + 60_000
+    return
+  }
+
+  logEvent('food-safety', 'no food in chest — heading to potato field')
+
+  try {
+    await runHarvestPotatoesRightClick({ user: 'food-safety', then: 'bake', maxTiles: 42 })
+  } catch (e) {
+    logEvent('food-safety', `field harvest failed: ${e.message}`)
+    foodSafetyWindowCooldownUntil = Date.now() + 120_000
+    return
+  }
+
+  if (countOnHand('potato') > 0 && bot.food < 20) {
+    logEvent('food-safety', `eating raw potatoes (${countOnHand('potato')} on hand, food=${bot.food})`)
+    for (let i = 0; i < 20 && bot.food < 20; i++) {
+      const item = bot.inventory.items().find(it => it.name === 'potato')
+      if (!item) break
+      try {
+        await bot.equip(item, 'hand')
+        bot.activateItem()
+        await sleep(1800)
+        try { bot.deactivateItem() } catch (_) {}
+      } catch (_) { break }
+    }
+    await clearHand().catch(() => {})
+    logEvent('food-safety', `after eating raw: food=${bot.food}, remaining=${countOnHand('potato')}`)
+  }
+
+  const remaining = countOnHand('potato')
+  if (remaining > 0) {
+    logEvent('food-safety', `baking ${remaining} remaining raw potatoes`)
+    try {
+      await runBakePotatoes({ user: 'food-safety' })
+    } catch (e) {
+      logEvent('food-safety', `bake failed: ${e.message}`)
+    }
   }
 }
 
@@ -3843,21 +3944,15 @@ async function tryCollectBake () {
   }
 }
 
-// Dawn maintenance: keep baked potatoes stocked (harvest + bake if low),
-// and deposit excess if over 32. Wheat is not restocked — it accumulates
-// naturally from sustain harvests. Checked on the 5s timer, acts at dawn only.
 const RESTOCK_MIN = 32
 let restockBusy = false
-let restockLastDay = -1
+let restockCooldownUntil = 0
 
 async function tryRestockSupplies () {
   if (restockBusy || foodSafetyBusy) return
   if (taskBusy() || goInsideBusy || autoSleepBusy || penTraversalBusy) return
   if (!bot.entity || !bot.world || bot.isSleeping || isBedtime()) return
-  const t = bot.time?.timeOfDay
-  if (typeof t !== 'number' || t > 1000) return
-  const day = bot.time?.day
-  if (day === restockLastDay) return
+  if (Date.now() < restockCooldownUntil) return
   if (bot.currentWindow) return
   if (Date.now() < foodSafetyWindowCooldownUntil) return
 
@@ -3866,7 +3961,6 @@ async function tryRestockSupplies () {
   const needsOverflow = baked > 128
   if (!needsRestock && !needsOverflow) return
 
-  restockLastDay = day
   restockBusy = true
   try {
     if (baked > 128) {
@@ -3917,6 +4011,7 @@ async function tryRestockSupplies () {
   } catch (e) {
     if (e.name !== 'AbortError') logEvent('restock', `error: ${e.message}`)
   } finally {
+    restockCooldownUntil = Date.now() + 600_000
     restockBusy = false
   }
 }
@@ -4826,9 +4921,11 @@ async function runShearSheep () {
 // slots 0-4 are the result + 2x2 craft grid.
 const KITCHEN_CHEST = { x: -266, y: 67, z: 569 }
 const CHEST_APPROACH_POS = { x: -267, y: 65, z: 570 }
-const CHEST_SLOTS = { bread: 24, dough: 25, water: 16, salt: 7, flour: 26, bowl: 17, bakeware: 8, iron: 18 }
+const CHEST_SLOTS = { dough: 25, water: 16, salt: 7, flour: 26, bowl: 17, bakeware: 8, iron: 18 }
 
 async function openChest () {
+  await ensureInsideHouse()
+  await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 8000)
   const b = bot.blockAt(new Vec3(KITCHEN_CHEST.x, KITCHEN_CHEST.y, KITCHEN_CHEST.z))
   if (!b) throw new Error('kitchen chest block not loaded')
   return bot.openContainer(b)
@@ -5016,6 +5113,7 @@ async function runBake (mode = 'both') {
   if (!taskCheck.allowed) { bot.chat(`Busy with ${taskCheck.current} — one thing at a time.`); return }
   try {
     // -- 1. Move near the chest so clicks reach (pathfinder safe indoors). --
+    await ensureInsideHouse()
     bot.pathfinder.setGoal(new goals.GoalNear(
       CHEST_APPROACH_POS.x, CHEST_APPROACH_POS.y, CHEST_APPROACH_POS.z, 1,
     ))
@@ -5233,19 +5331,15 @@ async function runBake (mode = 'both') {
       await sleep(400)
     }
 
-    // Stash bread into chest slot 15 up to one full stack; keep extras on hand.
     let deposited = 0
     try {
       const b = bot.blockAt(new Vec3(KITCHEN_CHEST.x, KITCHEN_CHEST.y, KITCHEN_CHEST.z))
       const win = await bot.openContainer(b)
       try {
-        const current = win.slots[CHEST_SLOTS.bread]
-        const alreadyInSlot = current && current.name === 'bread' ? current.count : 0
-        const room = Math.max(0, 64 - alreadyInSlot)
         const breads = bot.inventory.items().filter(i => i.name === 'bread')
         for (const it of breads) {
-          if (room - deposited <= 0) break
-          const take = Math.min(it.count, room - deposited)
+          if (deposited >= 64) break
+          const take = Math.min(it.count, 64 - deposited)
           try {
             await win.deposit(it.type, it.metadata, take)
             deposited += take
@@ -5280,6 +5374,7 @@ const EDIBLE_FOODS = [
   'cooked_mutton', 'cooked_rabbit', 'cooked_cod', 'cooked_salmon', 'cooked_fish',
   'mushroom_stew', 'rabbit_stew', 'beetroot_soup', 'apple', 'carrot',
   'golden_carrot', 'melon', 'cookie', 'pumpkin_pie',
+  'potato',
 ]
 // Eat one real food item and VERIFY it registered. autoEat is unreliable here —
 // its eat() resolves on the finish animation without the server applying hunger —
@@ -5969,7 +6064,19 @@ const CHAT_INTENTS = {
     hint: 'tell a story, share a memory, or talk at length about a topic (args.topic = what to talk about)',
     run: (user, args) => runTellStory(user, args.topic || 'something from your past'),
   },
-  keep_fire: { hint: 'start the autonomous keep-the-fire-going farm loop', run: (user) => runSustainFarm(user) },
+  keep_fire: { hint: 'start the autonomous keep-the-fire-going farm loop (only when explicitly asked to START keeping the fire — never for questions like "who is keeping the fire?" or "are you keeping the fire?")', run: (user) => runSustainFarm(user) },
+  check_fire: {
+    hint: 'answer a question about fire duty status — "who is keeping the fire?", "are you on fire duty?", "is anyone tending the fire?"',
+    run: async () => {
+      if (sustainState.active) {
+        const role = sustainState.role === 'solo' ? 'both fields' : `the ${sustainState.role} field`
+        bot.chat(`I am — covering ${role}.`)
+      } else {
+        await sleep(4000 + Math.random() * 3000)
+        bot.chat("Not me, not right now.")
+      }
+    },
+  },
   stop: {
     hint: 'stop the current activity (also: halt, knock it off, that is enough)',
     run: (user) => { const rule = CHAT_HANDLERS.find(r => r.name === 'stop'); return rule.handler(user, '') },

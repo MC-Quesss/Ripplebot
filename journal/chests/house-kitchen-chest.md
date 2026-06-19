@@ -13,9 +13,13 @@ confirmed: true
 # House Kitchen Chest
 
 Right of [[house-bed]]. Holds the [[../recipes/bread|bread]]-baking ingredients and
-tools (a Pam's HarvestCraft two-stage recipe), plus iron and finished bread. The bot
-drives it by **fixed slot index** because every ingredient/tool reports as `unknown`
-in mineflayer's registry — see [[../items/wheat]] context and the bake procedure.
+tools (a Pam's HarvestCraft two-stage recipe), plus iron, bread, and baked potatoes.
+
+**Slot rule:** Only modded items that report as `unknown` in mineflayer's registry get
+fixed slot indices. Vanilla items (bread, baked_potato, iron_ingot, etc.) can land in
+any slot and must be found by **scanning all container slots by item name**, never by
+hardcoded index. The fixed indices are only needed because the bot literally cannot
+tell modded items apart except by position.
 
 - **Block coords:** (-266, 67, 569)
 - **Approach:** pathfind to (-267, 65, 570) range=1 — still reaches the new block (~2.4 blocks, verified 2026-05-30).
@@ -46,20 +50,26 @@ live state before relying on a count; the slot *roles* are stable, the *amounts*
 Mirrors `CHEST_SLOTS` in `bot.js`. A single 27-slot chest is a 3-row × 9-column grid
 (row 0 = 0–8, row 1 = 9–17, row 2 = 18–26).
 
+### Fixed-slot items (modded `unknown` — identified by position only)
+
 | Slot | Item | Notes |
 |---|---|---|
-| 6 | **pot** | salt-making station, user-managed. **DO NOT TOUCH** — not in `CHEST_SLOTS`. Moved from slot 0 → 6 by the user 2026-05-30 (verified in-session: slot 0 empty, slot 6 = `unknown`×1). |
+| 6 | **pot** | salt-making station, user-managed. **DO NOT TOUCH** — not in `CHEST_SLOTS`. |
 | 7 | salt | user keeps topped up (`unknown`) |
 | 8 | bakeware | reusable, returns here after craft (`unknown`) |
 | 16 | water | fresh water, user keeps topped up (`unknown`) |
 | 17 | mixing bowl | reusable, returns here after craft (`unknown`) |
-| 18 | iron | iron ingots (vanilla `iron_ingot`) |
-| 24 | bread | finished-loaf storage (vanilla `bread`) |
 | 25 | dough | intermediate storage (`unknown`) |
 | 26 | flour | wheat flour, user keeps topped up (`unknown`) |
 
-Only **iron (18)** and **bread (24)** are bot-visible by name; the rest are identified
-purely by slot index.
+### Vanilla items (no fixed slot — scan by name)
+
+Bread, baked potatoes, iron ingots, and any other vanilla item can be in **any slot**.
+The bot finds them by scanning all container slots for matching `item.name`. Never
+hardcode a slot index for a vanilla item.
+
+Iron is in `CHEST_SLOTS` as a legacy convenience for shear crafting (the user stages it
+at slot 18 by convention) but this is a soft expectation, not a hard contract.
 
 ## Update 2026-05-30 — double → single, re-mapped
 
@@ -72,7 +82,7 @@ is vanilla and visible), then the modded item was swapped in. Verified slot-by-s
 `bot.js` changes (same session):
 - `KITCHEN_CHEST` and `HARVEST_WAYPOINTS.kitchen_chest`: (-267,67,569) → (-266,67,569).
 - `CHEST_SLOTS`: `{bread:15,dough:21,water:22,salt:23,flour:24,bowl:25,bakeware:26,iron:45}`
-  → `{bread:24,dough:25,water:16,salt:7,flour:26,bowl:17,bakeware:8,iron:18}`.
+  → `{dough:25,water:16,salt:7,flour:26,bowl:17,bakeware:8,iron:18}` (bread removed 2026-06-19 — vanilla items found by name scan, not fixed slot).
 - Approach coords left at (-267,65,570) — still in reach.
 
 ### Prior history (pre-2026-05-30, double chest)
