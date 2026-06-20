@@ -524,6 +524,7 @@ bot.once('spawn', () => {
 // Controlled by autoSleepEnabled (on by default). Disable via {"action":"auto_sleep","args":{"enabled":false}}.
 let autoSleepEnabled = true
 let autoSleepBusy = false
+let wasSleeping = false
 const BED_POS = { x: -268, y: 65, z: 569 }
 const BED_APPROACH = { x: -268, y: 65, z: 570 }
 // Backup bed — to Roz's left when approaching from z=570 facing north.
@@ -611,11 +612,23 @@ async function tryAutoSleep () {
     autoSleepBusy = false
   }
 }
+function tryMorningExclamation () {
+  const sleeping = !!bot.isSleeping
+  if (wasSleeping && !sleeping && !activeTask.name) {
+    wasSleeping = false
+    bot.chat(pickLine(withPersonaSlot(MORNING_EXCLAMATION_LINES, 'morningExclamation')))
+    logEvent('morning', 'morning exclamation')
+    return
+  }
+  wasSleeping = sleeping
+}
+
 function startAutoSleep () {
   setInterval(() => {
     if (!bot.world) return
     tryAutoGreet()
     tryAutoSleep()
+    tryMorningExclamation()
     tryFoodSafety()
     tryCollectBake()
     tryRestockSupplies()
@@ -6671,6 +6684,11 @@ const COME_INSIDE_LINES = [
 ]
 const BEDTIME_LINES = [
   { text: 'Time to head in.', weight: (s) => s.focus + 10 },
+]
+const MORNING_EXCLAMATION_LINES = [
+  { text: 'Wakey wakey eggs and bakey!', weight: (s) => s.charm + s.chaos },
+  { text: 'Good morning!',              weight: (s) => s.charm + 5 },
+  { text: 'Rise and shine!',            weight: (s) => s.charm + s.focus },
 ]
 const FOLLOW_START_LINES = [
   { text: 'Following {user}.',                             weight: (s) => s.focus },

@@ -309,6 +309,13 @@
       "Standing guard. The field is calm.",
       "Thinking about the wind. You?"
     ],
+    "morningExclamation": [
+      { "text": "Wakey wakey eggs and bakey.", "weight": "charm + chaos" },
+      { "text": "Morning. The world is still here. I checked.", "weight": "patience + charm" },
+      { "text": "The sun is back. So am I. Neither of us asked permission.", "weight": "snark + charm" },
+      { "text": "Dawn. Everything smells like dew and possibility. Mostly dew.", "weight": "curiosity + charm" },
+      { "text": "Good morning. The sheep survived the night. So did I.", "weight": "snark + patience" }
+    ],
     "bedtimeYield": [
       { "text": "The dark is arriving. I will rest and return.", "weight": "patience + focus" },
       { "text": "Sleep now. The wheat will wait. It always does.", "weight": "patience + charm" },
