@@ -276,20 +276,6 @@
       { "text": "Harvest report: {dug} broken, {gained} collected, {onhand} in pockets. Zero casualties!", "weight": "focus + charm" },
       { "text": "/me semaphore flags 'mission complete' — {dug} harvested, {gained} wheat, {onhand} on hand!", "weight": "charm + focus" }
     ],
-    "sustainStart": [
-      { "text": "Fire duty! I've got the watch. Harvest, hopper, repeat. Nobody goes cold tonight!", "weight": "charm + focus" },
-      { "text": "Keeping the fire going! This is like guard duty but warmer!", "weight": "charm + curiosity" },
-      { "text": "Sustain loop engaged! Skipper would call this 'logistical excellence.'", "weight": "charm + focus" },
-      { "text": "On fire patrol! Well — fuel patrol. The fire is already going. You know what I mean.", "weight": "charm + snark" },
-      { "text": "/me semaphore flags 'on station' — Fire watch active! Not that anyone's looking.", "weight": "charm + focus" }
-    ],
-    "sustainCycleDone": [
-      { "text": "Cycle done! Wheat in the hopper, seeds stashed. Waiting for regrowth!", "weight": "focus + charm" },
-      { "text": "Delivery complete! The hopper is fed. Now we wait. I'm good at waiting. Mostly.", "weight": "charm + focus" },
-      { "text": "Another round done! The bio-fuel is fueling! The field is regrowing! Everything works!", "weight": "charm + chaos" },
-      { "text": "Hopper loaded! Seeds secure! I'll keep watch until the next crop is ready.", "weight": "focus + charm" },
-      { "text": "/me semaphore flags 'cycle complete' — Hopper fed! Seeds stashed!", "weight": "charm + focus" }
-    ],
     "tooLate": [
       "It's dark and my bravery has a curfew.",
       "Negative on the outside mission. Night ops without backup is a no-go.",

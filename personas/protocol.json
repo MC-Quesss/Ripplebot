@@ -304,18 +304,6 @@
       { "text": "Harvest complete. {gained} wheat. {onhand} total. Everything accounted for. How satisfying.", "weight": "focus + charm" },
       { "text": "Done! {dug} broken, {onhand} on hand. Not bad for a protocol droid, if I may say so.", "weight": "charm + patience" }
     ],
-    "sustainStart": [
-      { "text": "Right. Fire duty. I shall keep things going. Someone has to, after all.", "weight": "patience + charm" },
-      { "text": "Tending the fire, then. I'm told I'm quite good at this. Well — adequate.", "weight": "charm + patience" },
-      { "text": "Oh! Fire duty. I suppose that's rather important. I shall be very careful.", "weight": "charm + focus" },
-      { "text": "Commencing the sustain cycle. If I may say so, sir, I'm rather looking forward to it. Quietly.", "weight": "charm + patience" }
-    ],
-    "sustainCycleDone": [
-      { "text": "Wheat in the hopper. Seeds put away. Everything in order. How lovely.", "weight": "charm + focus" },
-      { "text": "Cycle complete. The fire is fed. I did that. How about that.", "weight": "charm + patience" },
-      { "text": "All done for now. Waiting for the wheat to grow back. It always does, which is reassuring.", "weight": "patience + charm" },
-      { "text": "Hopper fed. Seeds stashed. If I may say so, that went rather well.", "weight": "charm + focus" }
-    ],
     "tooLate": [
       "Oh my. I'm afraid it's rather too late for that, sir.",
       "I beg your pardon, but it's dark out. I would very much prefer to wait until morning.",

@@ -2791,18 +2791,6 @@ async function clearJammedHopper () {
   return cleared2
 }
 
-const SUSTAIN_START_LINES = [
-  { text: 'Keeping the fire going. The town stays warm tonight.',                 weight: (s) => s.charm + s.focus },
-  { text: 'Tending the field. I will feed the bio-fuel line until you say chill.', weight: (s) => s.focus + 5 },
-  { text: "On it — harvest, feed the hopper, repeat. The engines won't go hungry.", weight: (s) => s.focus + s.charm },
-  { text: 'Keeping the embers lit. Back to the wheat whenever it ripens.',        weight: (s) => s.curiosity + s.charm },
-]
-const SUSTAIN_CYCLE_DONE_LINES = [
-  { text: 'Wheat and plant balls in the hopper. Waiting on the next crop.',       weight: (s) => s.focus + 5 },
-  { text: 'Another load for the bio-fuel line. Letting the field regrow.',        weight: (s) => s.focus + s.patience },
-  { text: 'Hopper fed — wheat plus fresh plant balls. Watching it come back.',    weight: (s) => s.patience + s.curiosity },
-  { text: "Seeds into fuel, wheat into fuel. Standing watch for the regrowth.",   weight: (s) => s.charm + s.patience },
-]
 // ── Multi-bot fire-duty coordination ────────────────────────────────────────
 // Bots run as separate processes (often separate machines); in-game chat is
 // the only channel they all share. Coordination uses short codes to avoid
@@ -3004,7 +2992,6 @@ async function runSustainFarm (user) {
   sustainState.cycles = 0
   sustainState.role = 'solo'
   fireStandDownAnnounced = false
-  bot.chat(pickLine(withPersonaSlot(SUSTAIN_START_LINES, 'sustainStart')))
   logEvent('sustain', `started by ${user || 'someone'}`)
 
   // Crew handshake: ask who's already on fire duty, give existing keepers a
@@ -3149,7 +3136,7 @@ async function runSustainFarm (user) {
           }
 
           sustainState.lastCycleDay = bot.time?.day ?? -1
-          if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(SUSTAIN_CYCLE_DONE_LINES, 'sustainCycleDone')))
+          // cycle done — logged but not chatted
         } catch (e) {
           if (e.name === 'AbortError' && !sustainState.active) {
             logEvent('sustain', `cycle ${sustainState.cycles} abort + inactive — breaking loop`)

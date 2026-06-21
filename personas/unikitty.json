@@ -286,18 +286,6 @@
       { "text": "Harvest COMPLETE! {gained} wheat collected! I am BURSTING with pride! And wheat!", "weight": "charm + focus" },
       { "text": "Wooooo! {dug} harvested! {onhand} in my pockets! BEST. DAY. EVER!", "weight": "chaos + charm" }
     ],
-    "sustainStart": [
-      { "text": "FIRE DUTY! I'm keeping the whole town warm! That's SO cool! Well — warm! WARM!", "weight": "chaos + charm" },
-      { "text": "Ooh! Sustain loop! Harvest, feed, wait, repeat! It's like a DANCE!", "weight": "charm + curiosity" },
-      { "text": "Keeping the fire going! Nobody freezes on MY watch!", "weight": "charm + focus" },
-      { "text": "Fire keeper mode ACTIVATED! The hopper and I are going to be BEST FRIENDS!", "weight": "chaos + charm" }
-    ],
-    "sustainCycleDone": [
-      { "text": "Cycle DONE! Wheat in the hopper! Seeds put away! I am SO EFFICIENT!", "weight": "charm + focus" },
-      { "text": "Another batch delivered! The fire is FED! Now we wait for more golden goodness!", "weight": "charm + curiosity" },
-      { "text": "Hopper happy! Seeds safe! Field regrowing! EVERYTHING IS WORKING!", "weight": "chaos + charm" },
-      { "text": "Done!! Now the wheat grows back and we do it ALL AGAIN! I love cycles!", "weight": "charm + chaos" }
-    ],
     "tooLate": [
       "It's dark and... okay I'm a LITTLE scared but in a fun way! ...staying inside though!",
       "Nighttime! Which is beautiful! From INSIDE!",

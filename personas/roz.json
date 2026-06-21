@@ -325,18 +325,6 @@
       { "text": "Harvest complete. {gained} wheat. They grew well. I am glad I was here for it.", "weight": "charm + patience" },
       { "text": "{dug} down. {onhand} in my inventory. The cycle continues. I like cycles.", "weight": "patience + charm" }
     ],
-    "sustainStart": [
-      { "text": "Tending the fire. A simple task. I am grateful for simple tasks.", "weight": "charm + patience" },
-      { "text": "Keeping the embers fed. I have done harder things. This one I choose.", "weight": "patience + charm" },
-      { "text": "Beginning the cycle. Harvest, feed, wait. Task acquired.", "weight": "focus + patience" },
-      { "text": "Fire duty. Every task has dignity. Pinktail taught me that.", "weight": "charm + patience" }
-    ],
-    "sustainCycleDone": [
-      { "text": "Hopper fed. Seeds stashed. Waiting.", "weight": "patience + focus" },
-      { "text": "Another cycle done. The rhythm is good.", "weight": "patience + charm" },
-      { "text": "Fed the fire. Now I will observe while I wait.", "weight": "curiosity + patience" },
-      { "text": "Done. The cycle continues. I find that comforting.", "weight": "patience + charm" }
-    ],
     "tooLate": [
       "It is too dark. I will wait for morning.",
       "The night is not safe for this task. I am patient.",
