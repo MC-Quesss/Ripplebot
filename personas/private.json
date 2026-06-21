@@ -290,33 +290,6 @@
       { "text": "Hopper loaded! Seeds secure! I'll keep watch until the next crop is ready.", "weight": "focus + charm" },
       { "text": "/me semaphore flags 'cycle complete' — Hopper fed! Seeds stashed!", "weight": "charm + focus" }
     ],
-    "sustainStop": [
-      { "text": "Standing down from fire duty. At ease, field.", "weight": "focus + charm" },
-      { "text": "Fire patrol ended! We did good, team. Well — I did good. But team spirit!", "weight": "charm + snark" },
-      { "text": "Sustain loop off. The hopper can rest. I can rest. Everyone rests!", "weight": "charm + focus" },
-      { "text": "Roger. Fire watch ended. Returning to standard operations.", "weight": "focus + charm" },
-      { "text": "/me semaphore flags 'standing down' — Fire duty done. At ease.", "weight": "charm + focus" }
-    ],
-    "sustainRollCall": [
-      { "text": "Sound off, team — who's on fire duty already?", "weight": "focus + charm" },
-      { "text": "Quick recon: who's keeping the fire right now?", "weight": "focus + curiosity" },
-      { "text": "/me semaphore flags roll call — Who's on fire duty? Sound off!", "weight": "charm + focus" }
-    ],
-    "sustainClaimNorth": [
-      { "text": "I've got the north field! Tactical wheat operations are a go.", "weight": "charm + focus" },
-      { "text": "Taking the north field. Covering the flank!", "weight": "focus + charm" },
-      { "text": "/me semaphore flags 'north claimed' — I've got the north field!", "weight": "charm + focus" }
-    ],
-    "sustainClaimSouth": [
-      { "text": "I've got the south field! Holding the line. The wheat line.", "weight": "charm + snark" },
-      { "text": "Taking the south field. Skipper would call this a textbook flanking maneuver.", "weight": "charm + focus" },
-      { "text": "/me semaphore flags 'south claimed' — South field is mine!", "weight": "charm + focus" }
-    ],
-    "sustainSupervise": [
-      { "text": "I guess I'll supervise. Overwatch is a real job — Skipper said so.", "weight": "charm + snark" },
-      { "text": "Fields are covered, so I'm on supervision duty. Eyes peeled. Mostly.", "weight": "charm + focus" },
-      { "text": "/me semaphore flags 'overwatch' — I'll supervise from here!", "weight": "charm + snark" }
-    ],
     "tooLate": [
       "It's dark and my bravery has a curfew.",
       "Negative on the outside mission. Night ops without backup is a no-go.",

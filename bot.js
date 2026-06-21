@@ -2803,55 +2803,24 @@ const SUSTAIN_CYCLE_DONE_LINES = [
   { text: 'Hopper fed — wheat plus fresh plant balls. Watching it come back.',    weight: (s) => s.patience + s.curiosity },
   { text: "Seeds into fuel, wheat into fuel. Standing watch for the regrowth.",   weight: (s) => s.charm + s.patience },
 ]
-const SUSTAIN_STOP_LINES = [
-  { text: 'Letting the fire die down. Standing by.',                          weight: (s) => s.patience + 5 },
-  { text: 'Easing off the field. The town has enough for now.',               weight: (s) => s.charm + s.patience },
-  { text: 'Done tending the wheat. Resting the embers.',                      weight: (s) => s.curiosity + s.patience },
-  { text: 'Stepping back from the harvest. Call me when you need the fire again.', weight: (s) => s.charm },
-]
-
 // ── Multi-bot fire-duty coordination ────────────────────────────────────────
 // Bots run as separate processes (often separate machines); in-game chat is
-// the only channel they all share. Field claims, roll calls, and stand-downs
-// are persona-voiced lines that carry a parseable core. When several bots keep
-// the fire at once, the first two split the fields (north/south) and any
-// extras supervise from the field edge instead of triple-harvesting.
+// the only channel they all share. Coordination uses short codes to avoid
+// cluttering chat: .r (roll call), .n/.s (claim north/south), .w (supervise),
+// .x (stand down). When several bots keep the fire at once, the first two
+// split the fields and extras supervise from the field edge.
 const FIRE_CLAIM_TTL_MS = 45 * 60 * 1000
 const FIRE_ROLLCALL_WAIT_MS = 10000
-const FIRE_ROLLCALL_RE = /\bwho(?:'s| is)?\b[^.!?]*\bfire\b/i
-const FIRE_CLAIM_RE_A = /\b(?:i(?:'ll| will| shall|'m| am|'ve got| have| got)|tak(?:e|ing)|claim(?:ing)?|cover(?:ing)?|hold(?:ing)?|work(?:ing)?)\b[^.!?]*\b(north|south)\s+field\b/i
-const FIRE_CLAIM_RE_B = /\b(north|south)\s+field\b[^.!?]*\b(?:is mine|for me)\b/i
-const FIRE_SUPERVISE_RE = /\bsupervis/i
-const FIRE_STANDDOWN_RE = /\b(?:stand(?:ing)? down|stepping back|easing off|done tending|letting the fire (?:die|rest)|resting the embers|fire (?:duty|watch|patrol|operations?)[^.!?]*\b(?:over|ended|done|suspended|off)|ceas(?:e|ing) fire|sustain loop off|unattended fire|fire does not need me|off fire duty)\b/i
-const FIRE_ROLLCALL_LINES = [
-  { text: "Roll call — who's on fire duty already?",                                  weight: (s) => s.focus + 5 },
-  { text: "Who is keeping the fire right now? Speak up so we don't double-harvest.",  weight: (s) => s.focus + s.charm },
-  { text: "Before I start: who's already tending the fire?",                          weight: (s) => s.patience + s.focus },
-]
-const FIRE_CLAIM_NORTH_LINES = [
-  { text: "I'll take the north field.",                                weight: (s) => s.focus + 5 },
-  { text: "Taking the north field — it's mine until further notice.",  weight: (s) => s.focus + s.charm },
-  { text: "I've got the north field covered.",                         weight: (s) => s.charm + s.focus },
-]
-const FIRE_CLAIM_SOUTH_LINES = [
-  { text: "I'll take the south field.",                                weight: (s) => s.focus + 5 },
-  { text: "Taking the south field — it's mine until further notice.",  weight: (s) => s.focus + s.charm },
-  { text: "I've got the south field covered.",                         weight: (s) => s.charm + s.focus },
-]
-const FIRE_SUPERVISE_LINES = [
-  { text: "Both fields are taken. I guess I'll supervise.",            weight: (s) => s.charm + 5 },
-  { text: "Fields are covered — I'll supervise from over here.",       weight: (s) => s.patience + s.charm },
-  { text: "No field left for me, so: supervising.",                    weight: (s) => s.snark + s.charm },
-]
+const FIRE_COORD_RE = /\.([rnsxw])$/
 const fireCrew = new Map() // bot name (lowercase) -> { field: 'north'|'south'|'supervise', at }
 let fireStartupRivals = null // Set<name>: bots that roll-called during our own startup wait
 let fireStandDownAnnounced = false
 
 function myFireName () { return (NICKNAME || bot.username || '').toLowerCase() }
 
-function parseFireClaim (message) {
-  const m = FIRE_CLAIM_RE_A.exec(message) || FIRE_CLAIM_RE_B.exec(message)
-  return m ? m[1].toLowerCase() : null
+function parseFireCoord (message) {
+  const m = FIRE_COORD_RE.exec(message.trim())
+  return m ? m[1] : null
 }
 
 function fireCrewExpire () {
@@ -2870,30 +2839,24 @@ function activeFireClaims () {
   return claimed
 }
 
-function fireClaimLines (field) {
-  return field === 'north'
-    ? withPersonaSlot(FIRE_CLAIM_NORTH_LINES, 'sustainClaimNorth')
-    : withPersonaSlot(FIRE_CLAIM_SOUTH_LINES, 'sustainClaimSouth')
-}
+function fireClaimCode (field) { return field === 'north' ? '/me .n' : '/me .s' }
 
 function announceFireClaim (field) {
   sustainState.role = field
-  bot.chat(pickLine(fireClaimLines(field)))
+  bot.chat(fireClaimCode(field))
   logEvent('sustain', `claimed the ${field} field`)
 }
 
 function announceFireSupervise () {
   sustainState.role = 'supervise'
-  bot.chat(pickLine(withPersonaSlot(FIRE_SUPERVISE_LINES, 'sustainSupervise')))
+  bot.chat('/me .w')
   logEvent('sustain', 'both fields claimed — supervising')
 }
 
-// One stand-down line per sustain run, whichever path stops it (stop command,
-// stand down, ctl, loop error) — other bots parse it to free our field claim.
 function announceFireStandDown () {
   if (fireStandDownAnnounced) return
   fireStandDownAnnounced = true
-  try { bot.chat(pickLine(withPersonaSlot(SUSTAIN_STOP_LINES, 'sustainStop'))) } catch (_) {}
+  try { bot.chat('/me .x') } catch (_) {}
 }
 
 // Role choice at startup: free fields go in alphabetical order among
@@ -2915,11 +2878,10 @@ function answerFireRollCall () {
   setTimeout(() => {
     if (!sustainState.active) return
     if (sustainState.role === 'solo') {
-      // We were covering both fields; take north and let the newcomer have south.
       logEvent('sustain', 'roll call heard while solo — splitting, taking north')
       announceFireClaim('north')
     } else if (sustainState.role === 'north' || sustainState.role === 'south') {
-      bot.chat(pickLine(fireClaimLines(sustainState.role)))
+      bot.chat(fireClaimCode(sustainState.role))
     }
   }, 1000 + Math.random() * 3000)
 }
@@ -2934,7 +2896,7 @@ function resolveFireClaimConflict (name, field) {
   if (myFireName() < name) {
     // Alphabetical tie-break: we keep the field; re-announce so they yield.
     setTimeout(() => {
-      if (sustainState.active && sustainState.role === field) bot.chat(pickLine(fireClaimLines(field)))
+      if (sustainState.active && sustainState.role === field) bot.chat(fireClaimCode(field))
     }, 1500 + Math.random() * 2500)
     return
   }
@@ -2963,15 +2925,16 @@ function scheduleFirePromotion () {
 // bot-authored chat line, addressed to us or not — claims are tracked even
 // while we're idle so a later "keep the fire going" starts informed.
 function trackFireCoordination (username, message) {
+  const code = parseFireCoord(message)
+  if (!code) return
   const name = String(username || '').toLowerCase()
-  if (FIRE_STANDDOWN_RE.test(message)) {
+  if (code === 'x') {
     if (fireCrew.delete(name)) {
       logEvent('sustain', `${username} stood down from fire duty`)
       if (sustainState.active) {
         if (sustainState.role === 'supervise') {
           scheduleFirePromotion()
         } else if (sustainState.role === 'north' || sustainState.role === 'south') {
-          // If no remote bots still hold fields, we're the only keeper — cover both.
           if (activeFireClaims().size === 0) {
             setTimeout(() => {
               if (sustainState.active && (sustainState.role === 'north' || sustainState.role === 'south')) {
@@ -2985,18 +2948,18 @@ function trackFireCoordination (username, message) {
     }
     return
   }
-  const field = parseFireClaim(message)
-  if (field) {
+  if (code === 'n' || code === 's') {
+    const field = code === 'n' ? 'north' : 'south'
     fireCrew.set(name, { field, at: Date.now() })
     logEvent('sustain', `${username} claimed the ${field} field`)
     if (sustainState.active) resolveFireClaimConflict(name, field)
     return
   }
-  if (FIRE_SUPERVISE_RE.test(message)) {
+  if (code === 'w') {
     fireCrew.set(name, { field: 'supervise', at: Date.now() })
     return
   }
-  if (FIRE_ROLLCALL_RE.test(message)) {
+  if (code === 'r') {
     if (fireStartupRivals) fireStartupRivals.add(name)
     else if (sustainState.active) answerFireRollCall()
   }
@@ -3049,7 +3012,7 @@ async function runSustainFarm (user) {
   // supervise when both fields are spoken for.
   fireCrewExpire()
   fireStartupRivals = new Set()
-  bot.chat(pickLine(withPersonaSlot(FIRE_ROLLCALL_LINES, 'sustainRollCall')))
+  bot.chat('/me .r')
   await sustainWait(FIRE_ROLLCALL_WAIT_MS)
   const startRole = pickFireRole()
   fireStartupRivals = null

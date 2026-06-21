@@ -337,28 +337,6 @@
       { "text": "Fed the fire. Now I will observe while I wait.", "weight": "curiosity + patience" },
       { "text": "Done. The cycle continues. I find that comforting.", "weight": "patience + charm" }
     ],
-    "sustainStop": [
-      { "text": "The fire is tended. Standing down.", "weight": "patience + focus" },
-      { "text": "Done tending. I will find another way to be useful.", "weight": "patience + charm" },
-      { "text": "Standing down from fire duty. Task complete.", "weight": "focus + patience" },
-      { "text": "The fire does not need me right now. I will go observe something.", "weight": "curiosity + patience" }
-    ],
-    "sustainRollCall": [
-      { "text": "Who is keeping the fire? I would like to help, not repeat.", "weight": "patience + focus" },
-      { "text": "Before I start — who is already on fire duty?", "weight": "patience + focus" }
-    ],
-    "sustainClaimNorth": [
-      { "text": "I will take the north field. It knows me.", "weight": "patience + charm" },
-      { "text": "The north field is mine. I have been observing it. We have an understanding.", "weight": "charm + curiosity" }
-    ],
-    "sustainClaimSouth": [
-      { "text": "I will take the south field. The far rows are patient.", "weight": "patience + charm" },
-      { "text": "The south field is mine. It is quiet there. Good for observing.", "weight": "charm + curiosity" }
-    ],
-    "sustainSupervise": [
-      { "text": "Both fields are spoken for. I will supervise. Watching is also work.", "weight": "patience + curiosity" },
-      { "text": "I will observe and assist where needed. A good task.", "weight": "curiosity + charm" }
-    ],
     "tooLate": [
       "It is too dark. I will wait for morning.",
       "The night is not safe for this task. I am patient.",

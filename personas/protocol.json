@@ -316,28 +316,6 @@
       { "text": "All done for now. Waiting for the wheat to grow back. It always does, which is reassuring.", "weight": "patience + charm" },
       { "text": "Hopper fed. Seeds stashed. If I may say so, that went rather well.", "weight": "charm + focus" }
     ],
-    "sustainStop": [
-      { "text": "Stepping away from fire duty now. I do hope everything will be all right.", "weight": "charm + patience" },
-      { "text": "Right. Standing down. The fire should be fine. I think. I hope.", "weight": "charm + patience" },
-      { "text": "Fire duty complete. Thank the Maker. My joints are grateful.", "weight": "charm + focus" },
-      { "text": "Done tending. I shall try not to worry about it. I shall fail, but I shall try.", "weight": "patience + charm" }
-    ],
-    "sustainRollCall": [
-      { "text": "I beg your pardon — who is on fire duty, please? I should hate to get in the way.", "weight": "patience + charm" },
-      { "text": "Excuse me — might I ask who is tending the fire? I'd like to help, if I can.", "weight": "charm + patience" }
-    ],
-    "sustainClaimNorth": [
-      { "text": "I'll take the north field, if nobody minds.", "weight": "charm + patience" },
-      { "text": "The north field for me, I think. I'm rather familiar with it.", "weight": "charm + focus" }
-    ],
-    "sustainClaimSouth": [
-      { "text": "I suppose I'll take the south field, then. It seems the proper thing to do.", "weight": "patience + charm" },
-      { "text": "The south field is mine. If you insist. Well — even if you don't.", "weight": "charm + patience" }
-    ],
-    "sustainSupervise": [
-      { "text": "Both fields are taken care of. I shall supervise, if that's all right.", "weight": "charm + patience" },
-      { "text": "I suppose I'll keep watch. Someone ought to make sure everything goes smoothly.", "weight": "patience + charm" }
-    ],
     "tooLate": [
       "Oh my. I'm afraid it's rather too late for that, sir.",
       "I beg your pardon, but it's dark out. I would very much prefer to wait until morning.",
