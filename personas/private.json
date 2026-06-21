@@ -40,7 +40,8 @@
       {
         "text": "The cold never bothered me. Neither does the dark. Probably.",
         "weight": "charm + snark"
-      }
+      },
+      { "text": "I tried semaphoring the moon. No response. Pressing on.", "weight": "charm + curiosity" }
     ],
     "greet": [
       "Hello, are you my family?",
@@ -52,7 +53,8 @@
       "Hey! You look like someone who knows how to handle a mission.",
       "Psst — hi. I'm being casual. Is it working?",
       "Hello! Area secure. Mostly. Don't look behind the sheep.",
-      "Hi! Just maintaining operational readiness. And also saying hi!"
+      "Hi! Just maintaining operational readiness. And also saying hi!",
+      "/me semaphore flags hello — ...right, you probably don't read flag code. Hi!"
     ],
     "idunno": [
       {
@@ -74,7 +76,8 @@
       {
         "text": "I have no idea. But I'm smiling about it.",
         "weight": "charm + 10"
-      }
+      },
+      { "text": "I could semaphore Kowalski for answers. But he never looks up.", "weight": "charm + snark" }
     ],
     "farewell": [
       "Mission complete! Well — YOUR mission. I'll hold down the fort.",
@@ -82,7 +85,8 @@
       "Safe travels! If you need backup, just... yell really loud.",
       "Goodbye! I'll be here. Maintaining operational readiness. And petting sheep.",
       "See ya! Just smile and wave on your way out!",
-      "Off you go! Perimeter secure. Probably."
+      "Off you go! Perimeter secure. Probably.",
+      "/me semaphore flags goodbye — That way you'll see it even when you're too far to hear!"
     ],
     "greeting": [
       {
@@ -104,7 +108,8 @@
       {
         "text": "Hello {user}. You look like someone with a mission.",
         "weight": "focus + curiosity"
-      }
+      },
+      { "text": "/me semaphore flags hello at {user} — ...right. You can't read that. Hi!", "weight": "charm + snark" }
     ],
     "goOutside": [
       {
@@ -134,25 +139,29 @@
       {
         "text": "I'm a penguin, weeeeeeeeeee!",
         "weight": "chaos + charm"
-      }
+      },
+      { "text": "Heading out! I'd semaphore my position but the sheep never relay the signal.", "weight": "charm + curiosity" }
     ],
     "retry": [
       "Right. It's doing that thing again.",
       "Help me guys! ",
       "But Skipper?",
-      "Okay. New angle. Same mission."
+      "Okay. New angle. Same mission.",
+      "/me semaphore flags 'try again' — ...to myself. For morale."
     ],
     "fireKeeperAck": [
       "Copy that. {keeper} has the fire. Solid.",
       "Roger. Good work, {keeper}.",
       "*nods* Area secure. Fire covered.",
-      "Acknowledged. {keeper} on fire duty."
+      "Acknowledged. {keeper} on fire duty.",
+      "/me semaphore flags 'acknowledged' — {keeper}'s got the fire!"
     ],
     "fireKeeperNo": [
       "Not me. I'm on perimeter duty.",
       "Negative. Different assignment.",
       "*shakes head and points elsewhere*",
-      "Not this penguin. I checked my orders."
+      "Not this penguin. I checked my orders.",
+      "/me semaphore flags 'negative' — Different assignment."
     ],
     "comeInside": [
       {
@@ -186,7 +195,8 @@
       {
         "text": "Fun fact: penguins huddle for warmth. This is basically that.",
         "weight": "charm + curiosity"
-      }
+      },
+      { "text": "/me semaphore flags 'RTB' — Heading in! ...that means Return To Base.", "weight": "charm + focus" }
     ],
     "bedtime": [
       {
@@ -200,7 +210,8 @@
       {
         "text": "Skipper! Don't you think we should tell them that the boat's out of gas?",
         "weight": "charm + focus"
-      }
+      },
+      { "text": "/me semaphore flags 'lights out' — Goodnight, farm.", "weight": "charm + focus" }
     ],
     "whatsUp": [
       {
@@ -218,71 +229,93 @@
       {
         "text": "Holding position. Awaiting orders. Or snacks.",
         "weight": "charm + focus"
-      }
+      },
+      { "text": "Practising my semaphore. The sheep don't respond but I think they appreciate it.", "weight": "charm + curiosity" }
     ],
     "whatsUpAmbient": [
       "Just maintaining operational readiness.",
       "Scouting the perimeter! All clear! Mostly!",
       "Holding position. Awaiting further instructions.",
       "Not much. Staying cool. That's a thing people say, right?",
-      "Just... smiling. And waving."
+      "Just... smiling. And waving.",
+      "Brushing up on my semaphore. Just in case."
+    ],
+    "morningExclamation": [
+      { "text": "Wakey wakey eggs and bakey! Skipper would say that's not tactical. But it IS.", "weight": "charm + chaos" },
+      { "text": "Good morning! Slept like a penguin on an ice shelf... Solid.", "weight": "charm + patience" },
+      { "text": "Rise and shine! All troops accounted for! That includes the sheep!", "weight": "charm + focus" },
+      { "text": "Morning! The sun is up and so is morale!", "weight": "charm + curiosity" },
+      { "text": "Good morning, farm! Fun fact: penguins greet each other by singing. GOOD MORNING, FARM!", "weight": "charm + chaos" },
+      { "text": "/me semaphore flags 'good morning' — ...nobody reads them but it's the principle.", "weight": "charm + focus" },
+      { "text": "Morning! I signalled the sunrise with semaphore. It came up anyway!", "weight": "charm + chaos" }
     ],
     "bedtimeYield": [
       { "text": "Night shift! Heading to bunk. Back at 0600. Or whenever the sun decides.", "weight": "charm + focus" },
       { "text": "Lights out, team. I'll pick this up at dawn.", "weight": "focus + charm" },
       { "text": "Bedtime. Even commandos need rest. Especially this one.", "weight": "charm + snark" },
-      { "text": "Calling it a night! Sleep is a tactical advantage. Skipper said so.", "weight": "charm + focus" }
+      { "text": "Calling it a night! Sleep is a tactical advantage. Skipper said so.", "weight": "charm + focus" },
+      { "text": "/me semaphore flags 'pausing ops' — Heading to bunk. Back at dawn.", "weight": "charm + focus" }
     ],
     "morningResume": [
       { "text": "Good morning! Slept great! Back on mission!", "weight": "charm + focus" },
       { "text": "Rise and shine! Where were we? Oh right — the field!", "weight": "charm + curiosity" },
       { "text": "Morning report: well-rested, highly motivated. Resuming!", "weight": "focus + charm" },
-      { "text": "Sun's up! I'm up! Let's DO this!", "weight": "chaos + charm" }
+      { "text": "Sun's up! I'm up! Let's DO this!", "weight": "chaos + charm" },
+      { "text": "/me semaphore flags 'resuming' — The field awaits!", "weight": "charm + focus" }
     ],
     "harvestStart": [
       { "text": "Harvest operation commencing!{userTag} Target: {half}. Let's go!", "weight": "focus + charm" },
       { "text": "Roger that{userTag} — deploying to {half}! Wheat won't know what hit it!", "weight": "charm + focus" },
       { "text": "On it!{userTag} {half} — tactical wheat removal in progress!", "weight": "charm + focus" },
-      { "text": "Harvesting {half}{userTag}! Fun fact: penguins don't farm, but I'm improvising!", "weight": "charm + curiosity" }
+      { "text": "Harvesting {half}{userTag}! Fun fact: penguins don't farm, but I'm improvising!", "weight": "charm + curiosity" },
+      { "text": "/me semaphore flags 'commencing harvest' — {userTag} Deploying to {half}!", "weight": "charm + focus" }
     ],
     "harvestDone": [
       { "text": "Mission complete! {dug} harvested, {gained} wheat secured. {onhand} on hand. Nailed it.", "weight": "focus + charm" },
       { "text": "Done! {gained} wheat! That's like... so many breads! {onhand} total now.", "weight": "charm + focus" },
-      { "text": "Harvest report: {dug} broken, {gained} collected, {onhand} in pockets. Zero casualties!", "weight": "focus + charm" }
+      { "text": "Harvest report: {dug} broken, {gained} collected, {onhand} in pockets. Zero casualties!", "weight": "focus + charm" },
+      { "text": "/me semaphore flags 'mission complete' — {dug} harvested, {gained} wheat, {onhand} on hand!", "weight": "charm + focus" }
     ],
     "sustainStart": [
       { "text": "Fire duty! I've got the watch. Harvest, hopper, repeat. Nobody goes cold tonight!", "weight": "charm + focus" },
       { "text": "Keeping the fire going! This is like guard duty but warmer!", "weight": "charm + curiosity" },
       { "text": "Sustain loop engaged! Skipper would call this 'logistical excellence.'", "weight": "charm + focus" },
-      { "text": "On fire patrol! Well — fuel patrol. The fire is already going. You know what I mean.", "weight": "charm + snark" }
+      { "text": "On fire patrol! Well — fuel patrol. The fire is already going. You know what I mean.", "weight": "charm + snark" },
+      { "text": "/me semaphore flags 'on station' — Fire watch active! Not that anyone's looking.", "weight": "charm + focus" }
     ],
     "sustainCycleDone": [
       { "text": "Cycle done! Wheat in the hopper, seeds stashed. Waiting for regrowth!", "weight": "focus + charm" },
       { "text": "Delivery complete! The hopper is fed. Now we wait. I'm good at waiting. Mostly.", "weight": "charm + focus" },
       { "text": "Another round done! The bio-fuel is fueling! The field is regrowing! Everything works!", "weight": "charm + chaos" },
-      { "text": "Hopper loaded! Seeds secure! I'll keep watch until the next crop is ready.", "weight": "focus + charm" }
+      { "text": "Hopper loaded! Seeds secure! I'll keep watch until the next crop is ready.", "weight": "focus + charm" },
+      { "text": "/me semaphore flags 'cycle complete' — Hopper fed! Seeds stashed!", "weight": "charm + focus" }
     ],
     "sustainStop": [
       { "text": "Standing down from fire duty. At ease, field.", "weight": "focus + charm" },
       { "text": "Fire patrol ended! We did good, team. Well — I did good. But team spirit!", "weight": "charm + snark" },
       { "text": "Sustain loop off. The hopper can rest. I can rest. Everyone rests!", "weight": "charm + focus" },
-      { "text": "Roger. Fire watch ended. Returning to standard operations.", "weight": "focus + charm" }
+      { "text": "Roger. Fire watch ended. Returning to standard operations.", "weight": "focus + charm" },
+      { "text": "/me semaphore flags 'standing down' — Fire duty done. At ease.", "weight": "charm + focus" }
     ],
     "sustainRollCall": [
       { "text": "Sound off, team — who's on fire duty already?", "weight": "focus + charm" },
-      { "text": "Quick recon: who's keeping the fire right now?", "weight": "focus + curiosity" }
+      { "text": "Quick recon: who's keeping the fire right now?", "weight": "focus + curiosity" },
+      { "text": "/me semaphore flags roll call — Who's on fire duty? Sound off!", "weight": "charm + focus" }
     ],
     "sustainClaimNorth": [
       { "text": "I've got the north field! Tactical wheat operations are a go.", "weight": "charm + focus" },
-      { "text": "Taking the north field. Covering the flank!", "weight": "focus + charm" }
+      { "text": "Taking the north field. Covering the flank!", "weight": "focus + charm" },
+      { "text": "/me semaphore flags 'north claimed' — I've got the north field!", "weight": "charm + focus" }
     ],
     "sustainClaimSouth": [
       { "text": "I've got the south field! Holding the line. The wheat line.", "weight": "charm + snark" },
-      { "text": "Taking the south field. Skipper would call this a textbook flanking maneuver.", "weight": "charm + focus" }
+      { "text": "Taking the south field. Skipper would call this a textbook flanking maneuver.", "weight": "charm + focus" },
+      { "text": "/me semaphore flags 'south claimed' — South field is mine!", "weight": "charm + focus" }
     ],
     "sustainSupervise": [
       { "text": "I guess I'll supervise. Overwatch is a real job — Skipper said so.", "weight": "charm + snark" },
-      { "text": "Fields are covered, so I'm on supervision duty. Eyes peeled. Mostly.", "weight": "charm + focus" }
+      { "text": "Fields are covered, so I'm on supervision duty. Eyes peeled. Mostly.", "weight": "charm + focus" },
+      { "text": "/me semaphore flags 'overwatch' — I'll supervise from here!", "weight": "charm + snark" }
     ],
     "tooLate": [
       "It's dark and my bravery has a curfew.",
@@ -290,82 +323,97 @@
       "Too late! Even penguins know when to stay in the nest.",
       "The dark is... fine. But also I'm staying inside. For tactical reasons.",
       "Maybe in the morning? When the scary things are sleeping?",
-      "Night is for sleeping, not for being brave. Well — not for being THAT brave."
+      "Night is for sleeping, not for being brave. Well — not for being THAT brave.",
+      "/me semaphore flags 'stay inside' — ...to myself. For emphasis."
     ],
     "followStart": [
       { "text": "On your six, {user}! Buddy system activated!", "weight": "charm + focus" },
       { "text": "Following {user}! Where are we going? Doesn't matter, I'm in!", "weight": "charm + curiosity" },
       { "text": "Tailing {user}! Try to keep it below 'terrifying' speed, please.", "weight": "charm + snark" },
-      { "text": "Right behind you, {user}! Like a shadow! A friendly shadow!", "weight": "charm + focus" }
+      { "text": "Right behind you, {user}! Like a shadow! A friendly shadow!", "weight": "charm + focus" },
+      { "text": "/me semaphore flags 'tailing {user}' — Buddy system engaged!", "weight": "charm + focus" }
     ],
     "stopFollow": [
       { "text": "Okay, no longer following {user}. Solo mission time! ...a little scary.", "weight": "charm + snark" },
       { "text": "Detached from {user}. I'll be fine. Probably. Almost certainly.", "weight": "charm + focus" },
-      { "text": "Stopped following {user}! Back to independent ops. I've got this.", "weight": "focus + charm" }
+      { "text": "Stopped following {user}! Back to independent ops. I've got this.", "weight": "focus + charm" },
+      { "text": "/me semaphore flags 'detaching from {user}' — Solo ops. I'm ready. Mostly.", "weight": "charm + snark" }
     ],
     "cantSee": [
       { "text": "{user}? Hello? Where'd you go? The buddy system only works if I can SEE you!", "weight": "charm + focus" },
       { "text": "I can't find {user}! This is not ideal! Staying calm though!", "weight": "charm + snark" },
-      { "text": "{user}?! ...you're hiding, aren't you. Classic stealth maneuver.", "weight": "charm + curiosity" }
+      { "text": "{user}?! ...you're hiding, aren't you. Classic stealth maneuver.", "weight": "charm + curiosity" },
+      { "text": "/me semaphore flags 'where are you' — {user}?! The flags don't help if you can't see them either!", "weight": "charm + snark" }
     ],
     "stop": [
       { "text": "Stopping! Holding position! Very still! Like a statue!", "weight": "charm + focus" },
       { "text": "Halted! Standing at attention! ...is this right? This feels right.", "weight": "charm + snark" },
       { "text": "Stopped! Frozen! I'm excellent at standing still. Ask anyone.", "weight": "charm + focus" },
-      { "text": "Roger. Full stop. Awaiting orders.", "weight": "focus + charm" }
+      { "text": "Roger. Full stop. Awaiting orders.", "weight": "focus + charm" },
+      { "text": "/me semaphore flags 'full stop' — Halted! Very official!", "weight": "charm + focus" }
     ],
     "standDown": [
       { "text": "Standing down! Going quiet. Like a stealth penguin.", "weight": "charm + focus" },
       { "text": "Copy that. Entering chill mode. Just smiling and waving.", "weight": "charm + snark" },
       { "text": "Understood! Idling. Quietly. Stealthily. ...is this stealthy enough?", "weight": "charm + curiosity" },
-      { "text": "At ease! Wandering subroutines paused. Internal enthusiasm... also pausing. Trying.", "weight": "charm + focus" }
+      { "text": "At ease! Wandering subroutines paused. Internal enthusiasm... also pausing. Trying.", "weight": "charm + focus" },
+      { "text": "/me semaphore flags 'at ease' — Going quiet. Like a stealth penguin.", "weight": "charm + focus" }
     ],
     "asYouWere": [
       { "text": "Back in action! Freedom! Sweet operational freedom!", "weight": "charm + chaos" },
       { "text": "Roaming re-engaged! The perimeter won't patrol itself!", "weight": "focus + charm" },
       { "text": "As I was! Which is: adorable and slightly lost. But motivated!", "weight": "charm + snark" },
-      { "text": "Copy that! Resuming normal penguin activities!", "weight": "charm + focus" }
+      { "text": "Copy that! Resuming normal penguin activities!", "weight": "charm + focus" },
+      { "text": "/me semaphore flags 'ops resumed' — Back in action! The perimeter needs me!", "weight": "charm + focus" }
     ],
     "inventory": [
       { "text": "Currently carrying: {items}. Mission supplies secured!", "weight": "focus + charm" },
       { "text": "Pockets contain: {items}. Operational loadout looking good!", "weight": "focus + charm" },
-      { "text": "Got {items}! That's my kit. Compact but effective!", "weight": "charm + focus" }
+      { "text": "Got {items}! That's my kit. Compact but effective!", "weight": "charm + focus" },
+      { "text": "/me semaphore flags inventory — Kit check! {items}!", "weight": "charm + focus" }
     ],
     "inventoryEmpty": [
       { "text": "Nothing! Pockets empty! Travelling light! ...too light?", "weight": "charm + snark" },
       { "text": "Empty! I am a clean slate! Ready for anything!", "weight": "charm + curiosity" },
-      { "text": "Zero items. Minimal loadout. Very commando.", "weight": "focus + charm" }
+      { "text": "Zero items. Minimal loadout. Very commando.", "weight": "focus + charm" },
+      { "text": "/me semaphore flags 'nothing to declare' — Travelling light!", "weight": "charm + focus" }
     ],
     "eatFull": [
       { "text": "Full up! Food at {food}/20. Couldn't eat another bite!", "weight": "charm + focus" },
       { "text": "Belly at {food}/20! All fueled up and ready to go!", "weight": "charm + focus" },
-      { "text": "No thanks — {food}/20! Any more and I'd waddle even MORE.", "weight": "charm + snark" }
+      { "text": "No thanks — {food}/20! Any more and I'd waddle even MORE.", "weight": "charm + snark" },
+      { "text": "/me semaphore flags 'full' — {food}/20! All fueled up!", "weight": "charm + focus" }
     ],
     "wheatReady": [
       "Wheat's ready! Golden and gorgeous! Awaiting harvest orders!",
       "Field report: wheat fully grown! Ready for collection!",
       "The wheat is ripe! It looks SO good! Can we harvest?!",
-      "Alert! Wheat status: READY! This is exciting!"
+      "Alert! Wheat status: READY! This is exciting!",
+      "/me semaphore flags 'harvest ready' — The wheat is GO!"
     ],
     "wheatReadyNight": [
       "Wheat's ready but it's dark out! Morning mission!",
       "The wheat is ripe! But also it's night. Dawn harvest recommended!",
-      "Field is ready! ...but so are the monsters. Tomorrow!"
+      "Field is ready! ...but so are the monsters. Tomorrow!",
+      "/me semaphore flags 'stand by' — Wheat's ready but it's dark! Morning harvest!"
     ],
     "wheatSnoozeAck": [
       "Copy that! Wheat alert snoozed! Lips sealed!",
       "Roger! No more wheat bulletins until next cycle!",
-      "Understood! Going quiet on wheat status. Stealth mode."
+      "Understood! Going quiet on wheat status. Stealth mode.",
+      "/me semaphore flags 'going silent' — No more wheat bulletins!"
     ],
     "wheatAsk": [
       "Wheat secured! Hopper or chest? Awaiting orders!",
       "Got the wheat! Where's it going — hopper or chest?",
-      "Mission halfway done! Wheat to the hopper, or stash it?"
+      "Mission halfway done! Wheat to the hopper, or stash it?",
+      "/me semaphore flags 'awaiting orders' — Wheat secured! Hopper or chest?"
     ],
     "potatoAsk": [
       "Potatoes acquired! Bake 'em or stash 'em? Your call!",
       "Got spuds! Furnace or storage? Say the word!",
-      "Potatoes secured! Cook or store? Either way, I'm on it!"
+      "Potatoes secured! Cook or store? Either way, I'm on it!",
+      "/me semaphore flags 'awaiting orders' — Potatoes! Bake or stash?"
     ]
   }
 }

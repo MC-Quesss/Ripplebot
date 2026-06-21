@@ -446,14 +446,15 @@ bot.once('spawn', () => {
   doorIds.forEach(id => mvts.openable.add(id))
 
   // Avoid the unsafe modded blocks on the east side of the house. These report
-  // with empty names on this Forge 1.12.2 server. The charging pad is believed
-  // to be (-265, 65, 574), with adjacent empty-name modded blocks at z=572/573.
-  // Pathfinder exclusion adds a large step cost so routes prefer the normal
-  // floor tiles instead of stepping onto the pad/wall-adjacent machinery.
+  // with empty names on this Forge 1.12.2 server. The charging pad spans
+  // (-265, 65, 574) and (-266, 65, 574) (south of the hopper), with adjacent
+  // empty-name modded blocks at z=572/573. Pathfinder exclusion adds a large
+  // step cost so routes prefer the normal floor tiles.
   const PATHFINDER_AVOID_BLOCKS = new Set([
     '-265,65,572',
     '-265,65,573',
     '-265,65,574',
+    '-266,65,574',
   ])
   function avoidBlockKey (pos) {
     return `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}`

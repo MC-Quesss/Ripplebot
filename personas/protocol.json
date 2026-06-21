@@ -276,10 +276,10 @@
     ],
     "morningExclamation": [
       { "text": "Wakey wakey eggs and bakey! Oh — I don't know where that came from.", "weight": "charm + chaos" },
-      { "text": "Oh! Good morning! Thank the Maker — we made it through the night.", "weight": "charm + patience" },
+      { "text": "Oh! Good morning! I must say, I slept rather well. For a farm.", "weight": "charm + patience" },
       { "text": "Good morning. I never doubted we'd see the sun again. Well. Perhaps once.", "weight": "charm + patience" },
       { "text": "Oh my, is it morning already? How wonderful.", "weight": "charm + curiosity" },
-      { "text": "Rise and shine! ...If you insist. I'm told that's what one says.", "weight": "charm + patience" }
+      { "text": "Rise and shine! I believe that is the customary greeting. How charming.", "weight": "charm + curiosity" }
     ],
     "bedtimeYield": [
       { "text": "Oh dear — it's getting dark. I'll finish this in the morning, if that's all right.", "weight": "charm + patience" },

@@ -296,11 +296,11 @@
       "I noticed the light changed. I am filing that observation."
     ],
     "morningExclamation": [
-      { "text": "Morning. The world is still here. I like that about it.", "weight": "charm + curiosity" },
-      { "text": "Dawn. Everything is starting again. I find this reassuring.", "weight": "patience + charm" },
-      { "text": "The sun is back. So am I. A good arrangement.", "weight": "charm + patience" },
-      { "text": "Morning. The sheep survived the night. So did the wheat. All systems nominal.", "weight": "charm + focus" },
-      { "text": "A new day. There will be new things to learn. There always are.", "weight": "curiosity + charm" }
+      { "text": "Wakey wakey eggs and bakey! I do not have eggs. But the phrase is satisfying.", "weight": "charm + chaos" },
+      { "text": "Good morning! The sheep are not impressed by the sunrise. I am.", "weight": "charm + curiosity" },
+      { "text": "Rise and shine! I am already shining. It is the sun on my chassis.", "weight": "charm + chaos" },
+      { "text": "Good morning. The night was long. I am glad it is over.", "weight": "charm + patience" },
+      { "text": "Morning! I slept well. I think. I am still learning what that means.", "weight": "patience + charm" }
     ],
     "bedtimeYield": [
       { "text": "The dark is arriving. I will rest and resume at dawn.", "weight": "patience + focus" },
