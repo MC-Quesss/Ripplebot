@@ -168,10 +168,14 @@ Both are enabled by default, toggle-able via `auto_sleep` / `auto_greet` control
 - The bot can't interact with modded containers beyond what vanilla `openContainer` supports.
 - Chunk inflate warnings and TileEntity parse errors are swallowed in bot.js — expected noise.
 
-## Ending a session
+## Restarting or ending a session
 
-1. `./bot-ctl '{"action":"quit"}'`
-2. Process exits; confirm with `lsof -i :25580` showing nothing.
+When restarting or stopping the bot, **always announce in game chat first** so other players and bots know what's happening — e.g. `./bot-ctl '{"action":"say","args":{"message":"Restarting. Back in a moment."}}'`. Give 2 seconds for the message to send before quitting.
+
+1. Announce in chat (see above)
+2. `sleep 2 && ./bot-ctl '{"action":"quit"}'`
+3. Process exits; confirm with `lsof -i :25580` showing nothing.
+4. If restarting, launch with `node bot.js > /dev/null 2>&1 &` and wait ~14s for spawn.
 
 ## When things break
 

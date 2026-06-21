@@ -6401,6 +6401,17 @@ bot.on('whisper', (username, message) => {
   logEvent('whisper', `<${username}> ${message}`)
 })
 
+// /me action messages don't fire the 'chat' event — they arrive via 'messagestr'
+// as "* PlayerName .r". Parse the username and route to fire coordination.
+const ACTION_COORD_RE = /^\* (\w+) (\.([rnsxw]))$/
+bot.on('messagestr', (msg) => {
+  const m = ACTION_COORD_RE.exec(msg)
+  if (!m) return
+  const username = m[1]
+  if (username === bot.username || (nickRe && nickRe.test(username))) return
+  if (looksLikeBot(username)) trackFireCoordination(username, m[2])
+})
+
 // ── Tier-1 reflexes ───────────────────────────────────────────────────────
 
 // Anti-stack: if standing still and another entity is in the same block, nudge away.
