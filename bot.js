@@ -618,7 +618,7 @@ function tryMorningExclamation () {
   const t = bot.time || {}
   if (!bot.isSleeping && t.isDay && (t.timeOfDay ?? 0) < 11500 && !activeTask.name) {
     wasSleeping = false
-    bot.chat(pickLine(withPersonaSlot(MORNING_EXCLAMATION_LINES, 'morningExclamation')))
+    if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(MORNING_EXCLAMATION_LINES, 'morningExclamation')))
     logEvent('morning', 'morning exclamation')
   }
 }
@@ -1119,7 +1119,7 @@ function waitForMorning () {
 
 async function yieldToBedtime (myGen) {
   activeTask.sleeping = true
-  bot.chat(pickLine(withPersonaSlot(BEDTIME_YIELD_LINES, 'bedtimeYield')))
+  if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(BEDTIME_YIELD_LINES, 'bedtimeYield')))
   logEvent('task', `${activeTask.name} yielding to bedtime`)
 
   if (!insideHouse()) {
@@ -1155,7 +1155,7 @@ async function yieldToBedtime (myGen) {
   if (myGen !== undefined) checkAbort(myGen)
 
   activeTask.sleeping = false
-  bot.chat(pickLine(withPersonaSlot(MORNING_RESUME_LINES, 'morningResume')))
+  if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(MORNING_RESUME_LINES, 'morningResume')))
   logEvent('task', `${activeTask.name} resuming after sleep (inside=${insideHouse()})`)
 
   if (insideHouse()) {
@@ -1824,7 +1824,11 @@ function speakExpressive (kind, line, { me = false } = {}) {
 // Rolling tail of recent chat — fed to the LLM so generated lines react to
 // what is actually being said, and can PASS when the topic has moved on.
 const recentChat = []
+let lastChatActivityAt = 0
+const BANAL_PLATITUDE_QUIET_MS = 30_000
+function banalPlatitudesOk () { return Date.now() - lastChatActivityAt >= BANAL_PLATITUDE_QUIET_MS }
 function rememberRecentChat (username, message) {
+  lastChatActivityAt = Date.now()
   recentChat.push(`<${username}> ${message}`)
   if (recentChat.length > 8) recentChat.shift()
 }
@@ -3181,7 +3185,7 @@ async function runSustainFarm (user) {
           }
 
           sustainState.lastCycleDay = bot.time?.day ?? -1
-          bot.chat(pickLine(withPersonaSlot(SUSTAIN_CYCLE_DONE_LINES, 'sustainCycleDone')))
+          if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(SUSTAIN_CYCLE_DONE_LINES, 'sustainCycleDone')))
         } catch (e) {
           if (e.name === 'AbortError' && !sustainState.active) {
             logEvent('sustain', `cycle ${sustainState.cycles} abort + inactive — breaking loop`)
@@ -4202,7 +4206,7 @@ async function runGoOutsideOnce (activity) {
   }
   const act = activity || 'stuff'
   const itself = act === 'potatoes' ? 'themselves' : 'itself'
-  bot.chat(pickLine(withPersonaSlot(GO_OUTSIDE_LINES, 'goOutside'), { activity: act, itself }))
+  if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(GO_OUTSIDE_LINES, 'goOutside'), { activity: act, itself }))
   const startDeaths = deathCount
   // Suppress lookAt for the whole traversal — a background yaw change mid-walk
   // is what drove the bot east into the furnace on prior runs.
@@ -4270,7 +4274,7 @@ async function runGoOutsideOnce (activity) {
 async function runGoInsideOnce () {
   if (insideHouse()) { bot.chat("I'm already inside."); return }
   const startDeaths = deathCount
-  bot.chat(pickLine(isBedtime() ? withPersonaSlot(BEDTIME_LINES, 'bedtime') : withPersonaSlot(COME_INSIDE_LINES, 'comeInside')))
+  if (banalPlatitudesOk()) bot.chat(pickLine(isBedtime() ? withPersonaSlot(BEDTIME_LINES, 'bedtime') : withPersonaSlot(COME_INSIDE_LINES, 'comeInside')))
   suppressLookAt(20000)
 
   // 1. Get onto outside_orientation. If pathfinding fails or doesn't arrive
@@ -4431,7 +4435,7 @@ async function runGoOutside (activity) {
     }
     logEvent('go-outside', `attempt 1 failed gracefully (${err.message}); retrying`)
     sendEmote('facepalm')
-    bot.chat(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
+    if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
     await sleep(500)
     // Reset to the inside pad before retry — runGoOutsideOnce starts from
     // HOUSE_CENTER, and we may be stranded in the door jamb after the snag.
@@ -4450,7 +4454,7 @@ async function runGoInside () {
     for (let attempt = 1; attempt <= 4; attempt++) {
       try {
         await runGoInsideOnce()
-        sendEmote('headbang')
+        sendEmote(attempt === 1 ? 'headbang' : 'shrug')
         return
       } catch (err) {
         const hpDelta = startHP - (bot.health ?? 20)
@@ -4466,7 +4470,7 @@ async function runGoInside () {
           throw err
         }
         sendEmote('facepalm')
-        bot.chat(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
+        if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
         await sleep(500)
         await resetToHouseSide(OUTSIDE_ORIENTATION)
       }
@@ -4591,7 +4595,7 @@ async function runEnterPen ({ allowNight = false } = {}) {
     if (!isGracefulDoorFailure(err, hpDelta, deathDelta)) throw err
     logEvent('enter-pen', `attempt 1 failed (${err.message}); retrying`)
     sendEmote('facepalm')
-    bot.chat(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
+    if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
     await ensurePenDoorClosed()
     await sleep(500)
     await pathTo({ x: -278, y: 64, z: 571 }, 0, 6000).catch(() => {})
@@ -4715,7 +4719,7 @@ async function runLeavePen () {
         throw err
       }
       sendEmote('facepalm')
-      bot.chat(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
+      if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
       await ensurePenDoorClosed()
       await sleep(500)
       await pathTo(PEN_INSIDE, 0, 6000).catch(() => {})
@@ -5902,6 +5906,18 @@ const CHAT_HANDLERS = [
         logEvent('sustain-error', e.message)
         bot.chat(`Couldn't keep the fire going: ${e.message}`)
       })
+    },
+  },
+  {
+    name: 'check_fire',
+    pattern: /\b(who(?:'s| is)?|are you|is anyone|anyone)\b.*\b(fire|keeping.+fire|fire.+duty|tending)\b/i,
+    handler: () => {
+      if (sustainState.active) {
+        const role = sustainState.role === 'solo' ? 'both fields' : `the ${sustainState.role} field`
+        bot.chat(`I am — covering ${role}.`)
+      } else {
+        setTimeout(() => bot.chat('Not me, not right now.'), 4000 + Math.random() * 3000)
+      }
     },
   },
   {
