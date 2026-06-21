@@ -602,6 +602,7 @@ async function tryAutoSleep () {
       await new Promise(r => setTimeout(r, 1000))
       if (bot.isSleeping) {
         logEvent('auto-sleep', `in ${b.label} bed`)
+        wasSleeping = true
         break
       }
       logEvent('auto-sleep', `${b.label} bed not entered — trying next`)
@@ -613,14 +614,13 @@ async function tryAutoSleep () {
   }
 }
 function tryMorningExclamation () {
-  const sleeping = !!bot.isSleeping
-  if (wasSleeping && !sleeping && !activeTask.name) {
+  if (!wasSleeping) return
+  const t = bot.time || {}
+  if (!bot.isSleeping && t.isDay && (t.timeOfDay ?? 0) < 11500 && !activeTask.name) {
     wasSleeping = false
     bot.chat(pickLine(withPersonaSlot(MORNING_EXCLAMATION_LINES, 'morningExclamation')))
     logEvent('morning', 'morning exclamation')
-    return
   }
-  wasSleeping = sleeping
 }
 
 function startAutoSleep () {
@@ -6787,7 +6787,27 @@ bot.on('playerLeft', (player) => {
   if (!player || player.username === bot.username) return
   logEvent('player-left', player.username)
   const line = pickFarewell()
-  setTimeout(() => bot.chat(line), 800) // small beat so it doesn't feel robotic
+  setTimeout(() => bot.chat(line), 800)
+
+  // Clean up fire-duty claim so remaining keepers can expand coverage
+  const name = String(player.username).toLowerCase()
+  if (fireCrew.delete(name)) {
+    logEvent('sustain', `${player.username} left the game — clearing fire claim`)
+    if (sustainState.active) {
+      if (sustainState.role === 'supervise') {
+        scheduleFirePromotion()
+      } else if (sustainState.role === 'north' || sustainState.role === 'south') {
+        if (activeFireClaims().size === 0) {
+          setTimeout(() => {
+            if (sustainState.active && (sustainState.role === 'north' || sustainState.role === 'south')) {
+              logEvent('sustain', 'only keeper remaining — expanding to solo coverage')
+              sustainState.role = 'solo'
+            }
+          }, 2000 + Math.random() * 2000)
+        }
+      }
+    }
+  }
 })
 let deathCount = 0
 bot.on('death', () => {
