@@ -6769,22 +6769,22 @@ bot.on('playerLeft', (player) => {
 
   // Clean up fire-duty claim so remaining keepers can expand coverage
   const name = String(player.username).toLowerCase()
-  if (fireCrew.delete(name)) {
-    logEvent('sustain', `${player.username} left the game — clearing fire claim`)
-    if (sustainState.active) {
-      if (sustainState.role === 'supervise') {
-        scheduleFirePromotion()
-      } else if (sustainState.role === 'north' || sustainState.role === 'south') {
-        if (activeFireClaims().size === 0) {
-          setTimeout(() => {
-            if (sustainState.active && (sustainState.role === 'north' || sustainState.role === 'south')) {
-              logEvent('sustain', 'only keeper remaining — expanding to solo coverage')
-              sustainState.role = 'solo'
-            }
-          }, 2000 + Math.random() * 2000)
+  const hadClaim = fireCrew.delete(name)
+  if (hadClaim) logEvent('sustain', `${player.username} left the game — clearing fire claim`)
+
+  // Promote to solo if we're on a half-field and no other keeper remains,
+  // even if the leaving player's claim had already expired via TTL.
+  if (sustainState.active && (sustainState.role === 'north' || sustainState.role === 'south') && looksLikeBot(player.username)) {
+    if (activeFireClaims().size === 0) {
+      setTimeout(() => {
+        if (sustainState.active && (sustainState.role === 'north' || sustainState.role === 'south') && activeFireClaims().size === 0) {
+          logEvent('sustain', 'only keeper remaining — expanding to solo coverage')
+          sustainState.role = 'solo'
         }
-      }
+      }, 2000 + Math.random() * 2000)
     }
+  } else if (hadClaim && sustainState.active && sustainState.role === 'supervise') {
+    scheduleFirePromotion()
   }
 })
 let deathCount = 0
