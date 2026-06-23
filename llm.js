@@ -71,7 +71,7 @@ async function logLoadedModels () {
 
 async function warmUpModel () {
   const t0 = Date.now()
-  log('llm', `[diag] warming up model "${LLM_MODEL}" — sending probe request...`)
+  log('llm', `[diag] warming up model "${LLM_MODEL}"…`)
   try {
     const res = await fetchWithTimeout(`${LLM_URL}/v1/chat/completions`, {
       method: 'POST',
@@ -96,7 +96,6 @@ async function warmUpModel () {
     const elapsed = Date.now() - t0
     log('llm', `[diag] model warm-up failed after ${elapsed}ms (${e.message})`)
   }
-  await logLoadedModels()
 }
 
 // Start the generator: initial health probe + periodic recheck. logFn is the
