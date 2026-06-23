@@ -2250,6 +2250,7 @@ async function repairBareWheatTilesFromFieldVisit ({ announce = true, limit = 10
 
 let proactiveRepairBusy = false
 setInterval(async () => {
+  if (!rawState.spawned) return
   if (proactiveRepairBusy) return
   if (activeTask.name) return
   if (isBedtime()) return
@@ -2992,6 +2993,42 @@ async function sustainWaitUntilSafe (reason) {
   return true
 }
 
+// Self-healing inventory housekeeping: if the bot is carrying excess wheat or
+// craftable seeds while the sustain loop is active, deposit them. Runs each
+// poll so a failed deposit, a server crash, or manually-added items are handled.
+async function sustainHousekeep () {
+  const wheat = countOnHand('wheat')
+  const seeds = countOnHand('wheat_seeds')
+  const excessWheat = wheat > SUSTAIN_KEEP_WHEAT
+  const craftableSeeds = seeds >= 8
+  if (!excessWheat && !craftableSeeds) return false
+
+  logEvent('sustain', `housekeep: wheat=${wheat} (keep ${SUSTAIN_KEEP_WHEAT}) seeds=${seeds}`)
+  try {
+    await ensureInsideHouse()
+    await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+
+    if (excessWheat) {
+      const r = await depositQuickMove('wheat', HOPPER, { keep: SUSTAIN_KEEP_WHEAT })
+      logEvent('sustain', `housekeep wheat deposit: deposited=${r.deposited} remaining=${r.remaining}`)
+    }
+
+    if (craftableSeeds) {
+      const craftResult = await craftPlantBalls({ keepSeeds: SUSTAIN_KEEP_SEEDS, maxBalls: SUSTAIN_MAX_PLANT_BALLS })
+      logEvent('sustain', `housekeep plant balls crafted: ${craftResult.crafted}; seeds remaining=${countOnHand('wheat_seeds')}`)
+      if (craftResult.crafted > 0) {
+        await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+        const r = await depositQuickMove('unknown', HOPPER, { keep: 0 })
+        logEvent('sustain', `housekeep plant ball deposit: deposited=${r.deposited} remaining=${r.remaining}`)
+      }
+    }
+    return true
+  } catch (e) {
+    logEvent('sustain', `housekeep failed: ${e.message}`)
+    return false
+  }
+}
+
 async function runSustainFarm (user) {
   if (sustainState.active) { bot.chat('Already keeping the fire going.'); return }
   sustainState.active = true
@@ -3018,13 +3055,18 @@ async function runSustainFarm (user) {
 
   let polls = 0
   let supervisePosted = false
-  let retryAfterInterrupt = false
   try {
     while (sustainState.active) {
       // Gate: wait for safe conditions (daytime, HP ok)
       if (!sustainSafe()) {
         if (!(await sustainWaitUntilSafe('unsafe conditions'))) break
         supervisePosted = false
+      }
+
+      // Self-healing: deposit any excess wheat/seeds left from a failed
+      // cycle, a restart, or items added to inventory externally.
+      if (!foodSafetyBusy && !taskBusy()) {
+        try { await sustainHousekeep() } catch (_) {}
       }
 
       // Supervisor: both fields are claimed by other bots. Stand by at the
@@ -3056,13 +3098,13 @@ async function runSustainFarm (user) {
       let harvestHalf, scan
       if (isFieldRole) {
         scan = scanKnownWheatFields(sustainState.role)
-        const ready = scan.maturePct >= 85 || (retryAfterInterrupt && scan.mature > 0)
+        const ready = scan.maturePct >= 85
         harvestHalf = ready ? `${sustainState.role}-field` : null
       } else {
         const northScan = scanKnownWheatFields('north')
         const southScan = scanKnownWheatFields('south')
-        const northReady = northScan.maturePct >= 85 || (retryAfterInterrupt && northScan.mature > 0)
-        const southReady = southScan.maturePct >= 85 || (retryAfterInterrupt && southScan.mature > 0)
+        const northReady = northScan.maturePct >= 85
+        const southReady = southScan.maturePct >= 85
         if (northReady && southReady) {
           harvestHalf = 'all'
           scan = { maturePct: (northScan.maturePct + southScan.maturePct) / 2, mature: northScan.mature + southScan.mature, expected: northScan.expected + southScan.expected, loaded: northScan.loaded + southScan.loaded }
@@ -3077,9 +3119,7 @@ async function runSustainFarm (user) {
       }
 
       if (harvestHalf && !foodSafetyBusy) {
-        if (retryAfterInterrupt) logEvent('sustain', `resuming interrupted cycle — ${scan.mature} mature tiles remaining`)
         logEvent('sustain', `triggering cycle: half=${harvestHalf} maturePct=${scan.maturePct.toFixed(0)}% mature=${scan.mature} inside=${insideHouse()}`)
-        retryAfterInterrupt = false
         sustainState.cycles++
         logEvent('sustain', `field ready (mature=${scan.mature}/${scan.expected}, ${scan.maturePct.toFixed(0)}%) — cycle ${sustainState.cycles}`)
 
@@ -3150,8 +3190,6 @@ async function runSustainFarm (user) {
             break
           }
           logEvent('sustain', `cycle ${sustainState.cycles} failed (recoverable): ${e.message} [type=${e.name} active=${sustainState.active}]`)
-          retryAfterInterrupt = true
-          logEvent('sustain', `cycle failed — will retry when field reaches 85% again`)
           try { if (!followTarget && !insideHouse()) await runGoInside() } catch (_) {}
         }
         // Clear food-safety cooldown so tryFoodSafety can run during the poll wait.
@@ -5870,7 +5908,7 @@ const CHAT_HANDLERS = [
   },
   {
     name: 'inventory',
-    pattern: /\b(what (do you have|you got)|whatcha got|what('?s| is) in (your|the) (pockets|inventory|bag|bags)|inventory|inv|pockets)\b/i,
+    pattern: /\b(what (do you have|you got)|whatcha got|what('?s| is) in (your|the) (pockets|inventory|bag|bags)|(check|show me) (your )?(pockets|inventory)|inventory|inv)\b/i,
     handler: (_user) => {
       sendEmote('think')
       const items = (bot.inventory?.items() || [])
@@ -6549,6 +6587,7 @@ bot.on('entityHurt', (entity) => {
 // vaporize them with /kill. The bots are op; no need to retreat.
 let hostileKillBusy = false
 setInterval(async () => {
+  if (!rawState.spawned) return
   if (hostileKillBusy) return
   const hostiles = hostilesNearby(16)
   if (!hostiles.length) return
