@@ -1209,6 +1209,13 @@ async function clearHand () {
 }
 
 const TRASH_ITEMS = new Set(['poisonous_potato'])
+
+// Items with their own deposit/craft routines — everything else that's not
+// 'unknown' and not trash is "junk" and can be stashed via stash_junk.
+const ROUTINE_ITEMS = new Set([
+  'wheat', 'wheat_seeds', 'bread', 'baked_potato', 'potato',
+  'shears', 'iron_ingot', 'iron_ore',
+])
 async function tossTrash () {
   const trash = bot.inventory.items().filter(i => TRASH_ITEMS.has(i.name))
   if (!trash.length) return
@@ -5429,6 +5436,75 @@ async function runStashUnknown () {
   logEvent('stash', `deposited=${deposited} remaining=${remaining}`)
 }
 
+function getJunkItems (filterNames) {
+  const inv = bot.inventory.items()
+  if (filterNames && filterNames.length) {
+    return inv.filter(i => filterNames.includes(i.name))
+  }
+  return inv.filter(i => i.name !== 'unknown' && !TRASH_ITEMS.has(i.name) && !ROUTINE_ITEMS.has(i.name))
+}
+
+const STASH_JUNK_LINES = [
+  { text: 'Time to empty my pockets. Some of this has been in there a while.',  weight: (s) => s.charm + s.snark },
+  { text: 'Stashing the junk. My inventory has standards, and these items do not meet them.', weight: (s) => s.snark + s.focus },
+  { text: 'Pockets need emptying. I have been carrying things I do not remember acquiring.', weight: (s) => s.curiosity + s.charm },
+  { text: 'Junk in the trunk. Depositing now.',                                              weight: (s) => s.focus },
+  { text: 'Time for an inventory audit. Some of this is deeply suspect.',                    weight: (s) => s.snark + s.curiosity },
+]
+const STASH_JUNK_DONE_LINES = [
+  { text: 'Stashed {deposited}. Pockets feel lighter. Emotionally, too.',       weight: (s) => s.charm + s.snark },
+  { text: 'Deposited {deposited}. My inventory has been cleansed.',             weight: (s) => s.focus + s.charm },
+  { text: '{deposited} items stashed. I feel more aerodynamic already.',        weight: (s) => s.curiosity + s.snark },
+]
+const STASH_JUNK_EMPTY_LINES = [
+  { text: 'No junk to stash. My pockets are pristine.',                         weight: (s) => s.focus + s.charm },
+  { text: 'Pockets are clean. Nothing suspect on me.',                          weight: (s) => s.snark },
+  { text: 'I checked — no junk. I am offended you assumed otherwise.',          weight: (s) => s.snark + s.curiosity },
+]
+
+async function runStashJunk (filterNames) {
+  const junk = getJunkItems(filterNames)
+  if (!junk.length) {
+    bot.chat(pickLine(withPersonaSlot(STASH_JUNK_EMPTY_LINES, 'stashJunkEmpty')))
+    return
+  }
+
+  const label = filterNames?.length
+    ? filterNames.join(', ')
+    : junk.map(i => `${i.count}× ${i.name}`).join(', ')
+  bot.chat(pickLine(withPersonaSlot(STASH_JUNK_LINES, 'stashJunk')))
+  logEvent('stash-junk', `starting: ${label}`)
+
+  await ensureInsideHouse()
+  await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+
+  const chestBlock = bot.blockAt(new Vec3(
+    HARVEST_WAYPOINTS.kitchen_chest.x,
+    HARVEST_WAYPOINTS.kitchen_chest.y,
+    HARVEST_WAYPOINTS.kitchen_chest.z,
+  ))
+  if (!chestBlock) throw new Error('kitchen chest not reachable')
+
+  const win = await bot.openContainer(chestBlock)
+  let deposited = 0
+  let remaining = 0
+  try {
+    const refreshedJunk = getJunkItems(filterNames)
+    for (const it of refreshedJunk) {
+      try {
+        await win.deposit(it.type, it.metadata, it.count)
+        deposited += it.count
+      } catch (e) {
+        logEvent('stash-junk', `deposit fail ${it.name}: ${e.message}`)
+        remaining += it.count
+      }
+    }
+  } finally { win.close() }
+
+  bot.chat(pickLine(withPersonaSlot(STASH_JUNK_DONE_LINES, 'stashJunkDone'), { deposited }))
+  logEvent('stash-junk', `deposited=${deposited} remaining=${remaining}`)
+}
+
 async function runStashWheat () {
   const onHand = bot.inventory.items().filter(i => i.name === 'wheat').reduce((s, i) => s + i.count, 0)
   if (!onHand) { bot.chat('No wheat in my pockets.'); return }
@@ -5992,7 +6068,14 @@ const CHAT_INTENTS = {
   bake_bread: { hint: 'bake bread (mixes dough first if needed)', run: () => runBake('both') },
   mix_dough: { hint: 'mix wheat into dough only, no baking', run: () => runBake('dough') },
   stash_wheat: { hint: 'deposit carried wheat into the hopper', run: () => runStashWheat() },
-  stash_unknown: { hint: 'stash unknown/junk/modded items', run: () => runStashUnknown() },
+  stash_unknown: { hint: 'stash unknown/modded items with no name', run: () => runStashUnknown() },
+  stash_junk: {
+    hint: 'stash junk items (rotten flesh, bones, etc.) into the kitchen chest; args.items optional array to deposit only specific items',
+    run: (_user, args) => {
+      const filterNames = Array.isArray(args.items) ? args.items.map(i => String(i).toLowerCase().replace(/\s+/g, '_')) : null
+      return runStashJunk(filterNames)
+    },
+  },
   deposit_items: {
     hint: 'deposit specific items; args.items array from: bread, wheat, seeds, baked_potato',
     run: (_user, args) => {
@@ -7534,6 +7617,11 @@ function handleCommand (cmd) {
     }
     case 'stash_unknown': {
       runStashUnknown().catch(e => logEvent('stash-error', e.message))
+      return { ok: true, started: true }
+    }
+    case 'stash_junk': {
+      const filterNames = Array.isArray(args && args.items) ? args.items : null
+      runStashJunk(filterNames).catch(e => logEvent('stash-junk-error', e.message))
       return { ok: true, started: true }
     }
     case 'stash_wheat': {
