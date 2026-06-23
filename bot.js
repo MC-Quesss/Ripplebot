@@ -445,23 +445,14 @@ bot.once('spawn', () => {
   const doorIds = Object.values(mcData.blocksByName).filter(b => /door/.test(b.name) && !/iron/.test(b.name)).map(b => b.id)
   doorIds.forEach(id => mvts.openable.add(id))
 
-  // Avoid the unsafe modded blocks on the east side of the house. These report
-  // with empty names on this Forge 1.12.2 server. The charging pad spans
-  // (-265, 65, 574) and (-266, 65, 574) (south of the hopper), with adjacent
-  // empty-name modded blocks at z=572/573. Pathfinder exclusion adds a large
-  // step cost so routes prefer the normal floor tiles.
-  const PATHFINDER_AVOID_BLOCKS = new Set([
-    '-265,65,572',
-    '-265,65,573',
-    '-265,65,574',
-    '-266,65,574',
-  ])
-  function avoidBlockKey (pos) {
-    return `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}`
-  }
+  // Modded blocks report empty names on this Forge 1.12.2 server and often
+  // have invisible collision that traps the bot (charging pads, pipes, etc.).
+  // Penalise ALL empty-name blocks so the pathfinder routes around them.
+  const PASSABLE_EMPTY_NAME = new Set(['-271,65,572'])
   mvts.exclusionAreasStep.push((block) => {
-    if (!block || !block.position) return 0
-    return PATHFINDER_AVOID_BLOCKS.has(avoidBlockKey(block.position)) ? 100 : 0
+    if (!block || !block.position || block.name) return 0
+    const k = `${Math.floor(block.position.x)},${Math.floor(block.position.y)},${Math.floor(block.position.z)}`
+    return PASSABLE_EMPTY_NAME.has(k) ? 0 : Infinity
   })
 
   bot.pathfinder.setMovements(mvts)
@@ -619,7 +610,7 @@ function tryMorningExclamation () {
   const t = bot.time || {}
   if (!bot.isSleeping && t.isDay && (t.timeOfDay ?? 0) < 11500 && !activeTask.name) {
     wasSleeping = false
-    if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(MORNING_EXCLAMATION_LINES, 'morningExclamation')))
+    bot.chat(pickLine(withPersonaSlot(MORNING_EXCLAMATION_LINES, 'morningExclamation')))
     logEvent('morning', 'morning exclamation')
   }
 }
@@ -1280,12 +1271,46 @@ async function depositQuickMove (itemName, target, { keep = 0, maxRounds = 8, se
         guard++
         const stack = win.items().find(i => i.name === itemName && i.slot >= win.inventoryStart)
         if (!stack) break
-        if (countOnHand(itemName) - stack.count < keep) break // whole-stack move would dip below keep
-        try {
-          await bot.clickWindow(stack.slot, 0, 1) // mode 1 = quick-move; server places it
-        } catch (e) {
-          logEvent('deposit-qm', `quick-move rejected (${itemName}) round ${rounds}: ${e.message}`)
-          break
+        if (countOnHand(itemName) - stack.count >= keep) {
+          // Whole-stack quick-move won't dip below keep — use it.
+          try {
+            await bot.clickWindow(stack.slot, 0, 1) // mode 1 = quick-move
+          } catch (e) {
+            logEvent('deposit-qm', `quick-move rejected (${itemName}) round ${rounds}: ${e.message}`)
+            break
+          }
+        } else {
+          // Stack is larger than we want to move — split manually.
+          // Pick up stack, right-click to put back `keep` items one at a time,
+          // then place the remainder into an empty container slot.
+          const toKeep = keep - (countOnHand(itemName) - stack.count)
+          try {
+            await bot.clickWindow(stack.slot, 0, 0) // pick up whole stack
+            for (let k = 0; k < toKeep; k++) {
+              await bot.clickWindow(stack.slot, 1, 0) // right-click puts back 1
+              await sleep(50)
+            }
+            // Place remainder into an empty container slot
+            const containerSlots = win.slots.length - 36
+            let placed = false
+            for (let j = 0; j < containerSlots; j++) {
+              if (!win.slots[j]) {
+                await bot.clickWindow(j, 0, 0)
+                placed = true
+                break
+              }
+            }
+            if (!placed) {
+              // No empty slot — put items back and bail
+              await bot.clickWindow(stack.slot, 0, 0)
+              logEvent('deposit-qm', `no empty container slot for partial deposit (${itemName})`)
+              break
+            }
+          } catch (e) {
+            logEvent('deposit-qm', `partial deposit failed (${itemName}) round ${rounds}: ${e.message}`)
+            try { await bot.clickWindow(-999, 0, 0) } catch (_) {} // drop cursor
+            break
+          }
         }
         await sleep(settleMs)
       }
@@ -2994,9 +3019,12 @@ async function sustainWaitUntilSafe (reason) {
 }
 
 // Self-healing inventory housekeeping: if the bot is carrying excess wheat or
-// craftable seeds while the sustain loop is active, deposit them. Runs each
-// poll so a failed deposit, a server crash, or manually-added items are handled.
+// craftable seeds while the sustain loop is active, deposit them. Backs off
+// for 5 minutes after a failed or zero-progress attempt so it doesn't fight
+// other commands (go outside, follow, etc.).
+let sustainHousekeepCooldownUntil = 0
 async function sustainHousekeep () {
+  if (Date.now() < sustainHousekeepCooldownUntil) return false
   const wheat = countOnHand('wheat')
   const seeds = countOnHand('wheat_seeds')
   const excessWheat = wheat > SUSTAIN_KEEP_WHEAT
@@ -3008,23 +3036,32 @@ async function sustainHousekeep () {
     await ensureInsideHouse()
     await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
 
+    let progress = false
     if (excessWheat) {
       const r = await depositQuickMove('wheat', HOPPER, { keep: SUSTAIN_KEEP_WHEAT })
       logEvent('sustain', `housekeep wheat deposit: deposited=${r.deposited} remaining=${r.remaining}`)
+      if (r.deposited > 0) progress = true
     }
 
     if (craftableSeeds) {
       const craftResult = await craftPlantBalls({ keepSeeds: SUSTAIN_KEEP_SEEDS, maxBalls: SUSTAIN_MAX_PLANT_BALLS })
       logEvent('sustain', `housekeep plant balls crafted: ${craftResult.crafted}; seeds remaining=${countOnHand('wheat_seeds')}`)
       if (craftResult.crafted > 0) {
+        progress = true
         await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
         const r = await depositQuickMove('unknown', HOPPER, { keep: 0 })
         logEvent('sustain', `housekeep plant ball deposit: deposited=${r.deposited} remaining=${r.remaining}`)
       }
     }
-    return true
+
+    if (!progress) {
+      logEvent('sustain', 'housekeep made no progress — backing off 5 min')
+      sustainHousekeepCooldownUntil = Date.now() + 5 * 60 * 1000
+    }
+    return progress
   } catch (e) {
-    logEvent('sustain', `housekeep failed: ${e.message}`)
+    logEvent('sustain', `housekeep failed: ${e.message} — backing off 5 min`)
+    sustainHousekeepCooldownUntil = Date.now() + 5 * 60 * 1000
     return false
   }
 }
@@ -6142,6 +6179,7 @@ const CHAT_INTENTS = {
   },
   sleep: { hint: 'go to bed now', run: () => { bot.chat('Heading to bed.'); return tryAutoSleep() } },
   check_furnace: { hint: 'report what is cooking in the furnace', run: () => reportFurnace() },
+  look_at_sun: { hint: 'look up at the sun and gaze for a moment', run: () => lookAtSun() },
   follow: {
     hint: 'start following the speaker (or args.player if they name someone else)',
     run: (user, args) => {
@@ -6294,6 +6332,24 @@ function buildClaudeBrainSystemPrompt () {
 }
 
 
+function buildClaudeChatHistory () {
+  const myNames = new Set([NICKNAME, bot.username].filter(Boolean).map(n => n.toLowerCase()))
+  const history = []
+  for (const line of recentChat) {
+    const m = line.match(/^<([^>]+)>\s+(.*)$/)
+    if (!m) continue
+    const role = myNames.has(m[1].toLowerCase()) ? 'assistant' : 'user'
+    const content = line
+    const prev = history[history.length - 1]
+    if (prev && prev.role === role) {
+      prev.content += '\n' + content
+    } else {
+      history.push({ role, content })
+    }
+  }
+  return history
+}
+
 async function routeChat (username, message, { namedMe, fromBot }) {
   if (fromBot && !botExchangeAllows(username)) return
 
@@ -6325,9 +6381,11 @@ async function routeChat (username, message, { namedMe, fromBot }) {
       (namedMe ? 'This message is addressed to you.' : 'This message was said to the room.') +
       (fromBot ? ' The speaker is another robot.' : ' The speaker is a human player.')
     )
+    const chatHistory = buildClaudeChatHistory()
     const result = await claude.brainChat({
       systemPrompt: buildClaudeBrainSystemPrompt(),
       userMessage: expressiveCtx,
+      chatHistory,
     })
     if (!result) {
       logEvent('claude', 'brainChat returned null — falling back to local')
@@ -6570,6 +6628,44 @@ bot.on('physicsTick', () => {
 // Stubs kept so any legacy ctl/action calls still answer cleanly.
 let lookAtEnabled = false
 function suppressLookAt (_ms) { /* no-op */ }
+
+function sunYawPitch () {
+  const t = bot.time?.timeOfDay ?? 6000
+  if (t >= 12000) return null // sun is below the horizon
+  const progress = t / 12000 // 0 at sunrise → 1 at sunset
+  const elevation = Math.sin(Math.PI * progress)
+  const pitch = Math.asin(elevation) // positive = viewer looks up
+  // east (-π/2) at sunrise → west (π/2) at sunset
+  const yaw = -Math.PI / 2 + Math.PI * progress
+  return { yaw, pitch }
+}
+
+async function lookAtSun () {
+  const sun = sunYawPitch()
+  if (!sun) return false
+  logEvent('look-sun', `gazing at sun yaw=${sun.yaw.toFixed(2)} pitch=${sun.pitch.toFixed(2)}`)
+  bot.pathfinder.setGoal(null)
+  const pos = bot.entity.position
+  const serverPitch = -sun.pitch // server convention is inverted from viewer
+  const end = Date.now() + 7000
+  while (Date.now() < end) {
+    bot.look(sun.yaw, sun.pitch, true) // viewer: positive = up
+    client.write('position_look', {
+      x: pos.x, y: pos.y, z: pos.z,
+      yaw: sun.yaw * 180 / Math.PI, pitch: serverPitch * 180 / Math.PI,
+      onGround: true,
+    }) // server head: negative = up
+    await sleep(200)
+  }
+  bot.look(sun.yaw, 0, true)
+  client.write('position_look', {
+    x: pos.x, y: pos.y, z: pos.z,
+    yaw: sun.yaw * 180 / Math.PI, pitch: 0,
+    onGround: true,
+  })
+  logEvent('look-sun', 'gaze complete')
+  return true
+}
 
 // React to damage: flee-lite. If something hurts us, stop whatever we're doing,
 // log a sentiment so the user sees it, and let auto-sleep/etc take over.
@@ -6985,6 +7081,12 @@ function handleCommand (cmd) {
     case 'look': {
       bot.look(Number(args.yaw ?? 0), Number(args.pitch ?? 0), true)
       return { ok: true }
+    }
+    case 'look_at_sun': {
+      const sun = sunYawPitch()
+      if (!sun) return { ok: false, error: 'sun is below the horizon' }
+      lookAtSun().catch(() => {})
+      return { ok: true, ...sun }
     }
     case 'control': {
       // args: { state: 'forward'|'back'|'left'|'right'|'jump'|'sprint'|'sneak', value: bool, duration_ms?: number }

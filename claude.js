@@ -33,11 +33,15 @@ function parseJson (text) {
   try { return JSON.parse(s) } catch { return null }
 }
 
-async function brainChat ({ systemPrompt, userMessage, maxTokens = 1024 }) {
+async function brainChat ({ systemPrompt, userMessage, chatHistory = [], maxTokens = 1024, temperature = 0.8 }) {
   if (!CLAUDE_API_KEY) return null
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), CLAUDE_TIMEOUT_MS)
   try {
+    const messages = [
+      ...chatHistory,
+      { role: 'user', content: userMessage },
+    ]
     const res = await fetch(CLAUDE_API_URL, {
       method: 'POST',
       headers: {
@@ -48,8 +52,9 @@ async function brainChat ({ systemPrompt, userMessage, maxTokens = 1024 }) {
       body: JSON.stringify({
         model: CLAUDE_MODEL,
         max_tokens: maxTokens,
+        temperature,
         system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }],
+        messages,
       }),
       signal: controller.signal,
     })
