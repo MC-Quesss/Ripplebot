@@ -6522,6 +6522,12 @@ bot.on('chat', (username, message) => {
   if (!fromBot) resetBotExchange()
   logEvent('chat', `<${username}> ${message}`)
 
+  // Wheat-alert snooze: any non-bot player acknowledging the alert silences it.
+  if (!fromBot && wheatReadyState.ready && !wheatReadyState.snoozed &&
+      /\b(got it|we know|i know|i hear you|heard you|enough|ok ok|okay okay|we get it|yes we know|yeah we know)\b/i.test(message)) {
+    snoozeWheatReadyAlerts(username)
+  }
+
   // Reflex tier: deterministic commands, only when addressed by name. Safety
   // commands (stop, stand down) live here so they never wait on inference.
   // When following a player, anything they say is implicitly addressed to us.
