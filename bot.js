@@ -6220,6 +6220,10 @@ const CHAT_INTENTS = {
     hint: 'stop the current activity (also: halt, knock it off, that is enough)',
     run: (user) => { const rule = CHAT_HANDLERS.find(r => r.name === 'stop'); return rule.handler(user, '') },
   },
+  wheat_snooze: {
+    hint: 'acknowledge the wheat-ready alerts — player says they heard, they know, got it, enough about the wheat, ok ok, etc.',
+    run: (user) => { snoozeWheatReadyAlerts(user); return Promise.resolve() },
+  },
 }
 
 // ── Storytelling ─────────────────────────────────────────────────────────────
