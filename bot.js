@@ -2649,14 +2649,22 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
 
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+
+  // Each cycle: open bench fresh, place 8, close, reopen, take output, clear grid, close.
+  // Closing between place and take ensures the server processes the recipe.
+  // Every click pair (pick up → put down) is verified so we never leave items on cursor.
   let crafted = 0
   for (let i = 0; i < craftable; i++) {
+    // ── Phase 1: place 8 ingredients in the ring ──
     let win
     try { win = await openBench() } catch (e) {
       logEvent('craft', `bench open fail: ${e.message}`)
       break
     }
-    await sleep(200)
+    await sleep(250)
+
+    // First clear any leftovers from a prior crash/desync
+    await benchClearGrid(win)
 
     const seedStack = win.items().find(it => it.name === ingredient && it.slot >= BENCH_PLAYER_INV_START)
     if (!seedStack || seedStack.count < 8) {
@@ -2664,45 +2672,19 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
       logEvent('craft', `no ${ingredient} stack >= 8 in bench window`)
       break
     }
-    const srcSlot = seedStack.slot
 
     try {
-      await bot.clickWindow(srcSlot, 0, 0)
-      await sleep(150)
-      for (const slot of BENCH_RING_SLOTS) {
-        await bot.clickWindow(slot, 1, 0)
-        await sleep(100)
+      // Right-click the source 8 times to place one-at-a-time onto ring slots.
+      // This avoids picking up the whole stack — cursor stays empty between slots.
+      for (const ringSlot of BENCH_RING_SLOTS) {
+        await bot.clickWindow(seedStack.slot, 1, 0) // right-click = pick up 1
+        await sleep(120)
+        await bot.clickWindow(ringSlot, 0, 0) // left-click = deposit on grid
+        await sleep(120)
       }
-      // Put remaining back — find a safe destination (original slot or
-      // any slot holding the same ingredient, or an empty slot).
-      let putBack = -1
-      const cur = win.slots[srcSlot]
-      if (!cur || cur.name === ingredient) {
-        putBack = srcSlot
-      } else {
-        for (let s = BENCH_PLAYER_INV_START; s < win.slots.length; s++) {
-          const it = win.slots[s]
-          if (it && it.name === ingredient && it.count < 64) { putBack = s; break }
-        }
-        if (putBack < 0) {
-          for (let s = BENCH_PLAYER_INV_START; s < win.slots.length; s++) {
-            if (!win.slots[s]) { putBack = s; break }
-          }
-        }
-      }
-      if (putBack >= 0) {
-        await bot.clickWindow(putBack, 0, 0)
-      } else {
-        await bot.clickWindow(srcSlot, 0, 0)
-      }
-      await sleep(150)
     } catch (e) {
       logEvent('craft', `ring placement error: ${e.message}`)
-      try {
-        for (let s = BENCH_PLAYER_INV_START; s < win.slots.length; s++) {
-          if (!win.slots[s]) { await bot.clickWindow(s, 0, 0); break }
-        }
-      } catch (_) {}
+      await benchSafeCursorDump(win)
       win.close()
       break
     }
@@ -2710,118 +2692,73 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
     win.close()
     await sleep(600)
 
+    // ── Phase 2: take the output and clear the grid ──
     let win2
     try { win2 = await openBench() } catch (e) {
       logEvent('craft', `bench reopen fail: ${e.message}`)
       break
     }
-    await sleep(200)
+    await sleep(250)
 
     const output = win2.slots[BENCH_OUTPUT_SLOT]
     if (!output) {
       logEvent('craft', `no output at slot ${BENCH_OUTPUT_SLOT} after reopen (ball #${i + 1})`)
+      // Clear the grid so ingredients don't stay on the bench
+      await benchClearGrid(win2)
       win2.close()
       break
     }
 
     try {
-      await bot.clickWindow(BENCH_OUTPUT_SLOT, 0, 0)
-      await sleep(150)
-      let dest = -1
-      for (let s = BENCH_PLAYER_INV_START; s < win2.slots.length; s++) {
-        const it = win2.slots[s]
-        if (it && it.name === 'unknown' && it.count < 64) { dest = s; break }
-      }
-      if (dest < 0) {
-        for (let s = BENCH_PLAYER_INV_START; s < win2.slots.length; s++) {
-          if (!win2.slots[s]) { dest = s; break }
-        }
-      }
-      if (dest < 0) {
-        await bot.clickWindow(-999, 0, 0)
-        logEvent('craft', 'inventory full, dropped plant ball')
-        win2.close()
-        break
-      }
-      await bot.clickWindow(dest, 0, 0)
-      await sleep(150)
-      // Clear leftover ingredients from grid (modded bench doesn't auto-clear)
-      for (let s = 0; s <= 8; s++) {
-        const leftover = win2.slots[s]
-        if (!leftover || leftover.count === 0) continue
-        await bot.clickWindow(s, 0, 0)
-        await sleep(100)
-        let clearDest = -1
-        for (let d = BENCH_PLAYER_INV_START; d < win2.slots.length; d++) {
-          const it = win2.slots[d]
-          if (it && it.name === leftover.name && it.count + leftover.count <= 64) { clearDest = d; break }
-        }
-        if (clearDest < 0) {
-          for (let d = BENCH_PLAYER_INV_START; d < win2.slots.length; d++) {
-            if (!win2.slots[d]) { clearDest = d; break }
-          }
-        }
-        if (clearDest >= 0) {
-          await bot.clickWindow(clearDest, 0, 0)
-          await sleep(100)
-        } else {
-          await bot.clickWindow(s, 0, 0)
-          await sleep(100)
-        }
-      }
+      // Shift-click the output to move it straight to inventory
+      await bot.clickWindow(BENCH_OUTPUT_SLOT, 0, 1)
+      await sleep(200)
     } catch (e) {
       logEvent('craft', `take output error: ${e.message}`)
-      // Try to put cursor items in an empty slot instead of dropping
-      try {
-        for (let s = BENCH_PLAYER_INV_START; s < win2.slots.length; s++) {
-          if (!win2.slots[s]) { await bot.clickWindow(s, 0, 0); break }
-        }
-      } catch (_) {}
+      await benchSafeCursorDump(win2)
       win2.close()
       break
     }
+
+    // Clear grid leftovers (modded bench doesn't auto-clear on output take)
+    await benchClearGrid(win2)
+
     win2.close()
-    await sleep(200)
+    await sleep(250)
     crafted++
-  }
-  // Clean leftover ingredients off the bench grid
-  try {
-    const cleanWin = await openBench()
-    await sleep(200)
-    for (let s = 0; s <= 8; s++) {
-      const item = cleanWin.slots[s]
-      if (item && item.count > 0) {
-        try {
-          await bot.clickWindow(s, 0, 0)
-          await sleep(150)
-          let dest = -1
-          for (let d = BENCH_PLAYER_INV_START; d < cleanWin.slots.length; d++) {
-            const it = cleanWin.slots[d]
-            if (it && it.name === item.name && it.count + item.count <= 64) { dest = d; break }
-          }
-          if (dest < 0) {
-            for (let d = BENCH_PLAYER_INV_START; d < cleanWin.slots.length; d++) {
-              if (!cleanWin.slots[d]) { dest = d; break }
-            }
-          }
-          if (dest >= 0) {
-            await bot.clickWindow(dest, 0, 0)
-            await sleep(150)
-          } else {
-            await bot.clickWindow(s, 0, 0)
-            await sleep(150)
-          }
-        } catch (_) {}
-      }
-    }
-    cleanWin.close()
-    await sleep(200)
-  } catch (e) {
-    logEvent('craft', `bench cleanup failed: ${e.message}`)
   }
 
   logEvent('craft', `crafted ${crafted} plant balls, ${ingredient} remaining: ${countOnHand(ingredient)}`)
   return { crafted }
+}
+
+async function benchClearGrid (win) {
+  for (let s = 0; s <= 8; s++) {
+    const item = win.slots[s]
+    if (!item || item.count === 0) continue
+    try {
+      await bot.clickWindow(s, 0, 1) // shift-click to inventory
+      await sleep(150)
+    } catch (_) {
+      // Shift-click failed — try manual move
+      try {
+        await bot.clickWindow(s, 0, 0)
+        await sleep(100)
+        await benchSafeCursorDump(win)
+      } catch (__) {}
+    }
+  }
+}
+
+async function benchSafeCursorDump (win) {
+  for (let s = BENCH_PLAYER_INV_START; s < win.slots.length; s++) {
+    if (!win.slots[s]) {
+      try { await bot.clickWindow(s, 0, 0); await sleep(100) } catch (_) {}
+      return
+    }
+  }
+  // No empty slot — put back where we got it
+  try { await bot.clickWindow(BENCH_PLAYER_INV_START, 0, 0); await sleep(100) } catch (_) {}
 }
 
 // "Keep the fire going" — autonomous sustain loop. Watches the wheat field;
@@ -2920,7 +2857,7 @@ const fireCrew = new Map() // bot name (lowercase) -> { field: 'north'|'south'|'
 let fireStartupRivals = null // Set<name>: bots that roll-called during our own startup wait
 let fireStandDownAnnounced = false
 
-function myFireName () { return (NICKNAME || bot.username || '').toLowerCase() }
+function myFireName () { return (bot.username || NICKNAME || '').toLowerCase() }
 
 const RPS_WORD_TO_CODE = { rock: 'r', paper: 'p', scissors: 's' }
 function parseFireCoord (message) {
@@ -3053,7 +2990,7 @@ const RPS_THROW_WAIT_MS = 12000
 const RPS_NAMES = { r: 'rock', p: 'paper', s: 'scissors' }
 let rpsState = null // { round, myThrow, rival, resolve }
 let rpsChallengeResolve = null // resolve function for incoming .d acceptance
-let rpsAccepted = false // set true when we receive a .d challenge
+let rpsAccepted = null // set to challenger's name when we receive a .d challenge
 let rpsReadyResolve = null // resolve function for rival's .g ready signal
 
 function rpsWinner (a, b) {
@@ -3104,7 +3041,10 @@ async function runRpsAcceptor (rival) {
 
 async function runRpsMatch (rival, isChallenger) {
   // Each bot goes to a different spot so they face each other.
-  const mySpot = myFireName() < rival ? RPS_SPOT_NORTH : RPS_SPOT_SOUTH
+  // Compare real usernames so both bots agree on who goes where.
+  const myUsername = (bot.username || '').toLowerCase()
+  const rivalUsername = rival.toLowerCase()
+  const mySpot = myUsername < rivalUsername ? RPS_SPOT_NORTH : RPS_SPOT_SOUTH
   try {
     if (insideHouse()) await runGoOutside()
     await pathTo(mySpot, 1, 15000)
@@ -3127,7 +3067,7 @@ async function runRpsMatch (rival, isChallenger) {
     return null
   }
 
-  // Both ready — face each other and salute in sync
+  // Both ready — face each other and salute (the agreement to begin)
   await sleep(500)
   await lookAtPlayer(rival)
   await sleep(300)
@@ -3139,10 +3079,24 @@ async function runRpsMatch (rival, isChallenger) {
 
     await lookAtPlayer(rival)
 
-    if (isChallenger) bot.chat('Rock, paper, scissors, shoot!')
-    await sleep(1500)
+    // Challenger chants, then both sync with .g before throwing
+    if (isChallenger) {
+      bot.chat('Rock, paper, scissors, shoot!')
+      await sleep(1000)
+    }
+    // Sync point: both signal ready-to-throw and wait for rival
+    const throwSync = new Promise(resolve => { rpsReadyResolve = resolve })
+    bot.chat('/me .g')
+    const synced = await Promise.race([throwSync, sleep(15000).then(() => false)])
+    rpsReadyResolve = null
+    if (!synced) {
+      logEvent('rps', `round ${round}: rival didn't sync — aborting`)
+      return null
+    }
+
+    // Both throw simultaneously
     sendEmote('point')
-    await sleep(500)
+    await sleep(400)
 
     const throws = ['r', 'p', 's']
     const myThrow = throws[Math.floor(Math.random() * 3)]
@@ -3259,8 +3213,9 @@ function trackFireCoordination (username, message) {
       logEvent('rps', `${username} accepted our challenge`)
       rpsChallengeResolve(true)
     } else if (sustainState.active && (sustainState.role === 'north' || sustainState.role === 'south') && !sustainState.potatoRole) {
-      rpsAccepted = true
+      rpsAccepted = name
       logEvent('rps', `${username} challenged us to RPS`)
+      sustainWake()
     }
     return
   }
@@ -3281,9 +3236,18 @@ function trackFireCoordination (username, message) {
   }
 }
 
+let sustainWakeResolve = null
 async function sustainWait (ms) {
   const steps = Math.max(1, Math.round(ms / 1000))
-  for (let i = 0; i < steps && sustainState.active; i++) await sleep(1000)
+  for (let i = 0; i < steps && sustainState.active && !rpsAccepted; i++) {
+    await new Promise(resolve => {
+      sustainWakeResolve = resolve
+      setTimeout(() => { sustainWakeResolve = null; resolve() }, 1000)
+    })
+  }
+}
+function sustainWake () {
+  if (sustainWakeResolve) sustainWakeResolve()
 }
 
 // "Safe to act" gate for the sustain loop. Daytime, HP reasonable, not following.
@@ -3532,6 +3496,52 @@ async function runSustainFarm (user) {
         }
       }
 
+      // 2-bot potato tiebreak: RPS BEFORE wheat so tasks can be split.
+      if (isFieldRole && sustainState.potatoRole === 'theirs') {
+        const pCheck = scanKnownPotatoField()
+        if (pCheck.maturePct < SUSTAIN_POTATO_MATURITY_PCT) sustainState.potatoRole = null
+      }
+      if (isFieldRole && !sustainState.potatoRole && !foodSafetyBusy && !taskBusy() && sustainSafe()) {
+        if (rpsAccepted) {
+          const challenger = rpsAccepted
+          rpsAccepted = null
+          await runRpsAcceptor(challenger)
+        } else {
+          const pScan = scanKnownPotatoField()
+          if (pScan.potatoes > 0 && pScan.maturePct >= SUSTAIN_POTATO_MATURITY_PCT && !activeFireClaims().has('potatoes')) {
+            logEvent('sustain', 'potatoes ready, no potato keeper — challenging for RPS')
+            await runRpsChallenger()
+          }
+        }
+        if (sustainState.potatoRole === 'mine') {
+          logEvent('sustain', 'won RPS — harvesting potatoes')
+          try {
+            await runHarvestPotatoesRightClick({ user: 'sustain', then: 'bake' })
+            if (!sustainState.active) break
+            const bakedInChest = await countBakedInChest()
+            if (bakedInChest >= 0 && bakedInChest < 64) {
+              const toBake = Math.min(64, countOnHand('potato') - SUSTAIN_KEEP_RAW_POTATO)
+              if (toBake > 0) {
+                logEvent('sustain', `chest has ${bakedInChest} baked — loading ${toBake} raw into furnace`)
+                await runBakePotatoesSustain(toBake)
+              }
+            }
+            if (!sustainState.active) break
+            const rawCount = countOnHand('potato')
+            if (rawCount > SUSTAIN_KEEP_RAW_POTATO) {
+              await ensureInsideHouse()
+              await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+              const r = await depositQuickMove('potato', HOPPER, { keep: SUSTAIN_KEEP_RAW_POTATO })
+              logEvent('sustain', `raw potato deposit: deposited=${r.deposited} remaining=${r.remaining}`)
+            }
+          } catch (e) {
+            logEvent('sustain', `post-RPS potato cycle failed: ${e.message}`)
+            try { if (!followTarget && !insideHouse()) await runGoInside() } catch (_) {}
+          }
+          sustainState.potatoRole = null
+        }
+      }
+
       if (harvestHalf && !foodSafetyBusy) {
         logEvent('sustain', `triggering cycle: half=${harvestHalf} maturePct=${scan.maturePct.toFixed(0)}% mature=${scan.mature} inside=${insideHouse()}`)
         sustainState.cycles++
@@ -3667,54 +3677,7 @@ async function runSustainFarm (user) {
           }
         }
 
-        // Reset potato claim once the field has been harvested (winner finished).
-        if (isFieldRole && sustainState.potatoRole === 'theirs') {
-          const pCheck = scanKnownPotatoField()
-          if (pCheck.maturePct < SUSTAIN_POTATO_MATURITY_PCT) sustainState.potatoRole = null
-        }
-
-        // 2-bot potato tiebreak: accept a pending challenge, or challenge if
-        // potatoes are ready and nobody has potato duty yet.
-        if (isFieldRole && !sustainState.potatoRole && !foodSafetyBusy && !taskBusy() && sustainSafe()) {
-          const rival = rpsRivalName()
-          if (rpsAccepted && rival) {
-            rpsAccepted = false
-            await runRpsAcceptor(rival)
-          } else if (!rpsAccepted) {
-            const pScan = scanKnownPotatoField()
-            if (pScan.potatoes > 0 && pScan.maturePct >= SUSTAIN_POTATO_MATURITY_PCT && !activeFireClaims().has('potatoes')) {
-              logEvent('sustain', 'potatoes ready, no potato keeper — challenging for RPS')
-              await runRpsChallenger()
-            }
-          }
-          if (sustainState.potatoRole === 'mine') {
-            logEvent('sustain', 'won RPS — harvesting potatoes')
-            try {
-              await runHarvestPotatoesRightClick({ user: 'sustain', then: 'bake' })
-              if (!sustainState.active) break
-              const bakedInChest = await countBakedInChest()
-              if (bakedInChest >= 0 && bakedInChest < 64) {
-                const toBake = Math.min(64, countOnHand('potato') - SUSTAIN_KEEP_RAW_POTATO)
-                if (toBake > 0) {
-                  logEvent('sustain', `chest has ${bakedInChest} baked — loading ${toBake} raw into furnace`)
-                  await runBakePotatoesSustain(toBake)
-                }
-              }
-              if (!sustainState.active) break
-              const rawCount = countOnHand('potato')
-              if (rawCount > SUSTAIN_KEEP_RAW_POTATO) {
-                await ensureInsideHouse()
-                await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-                const r = await depositQuickMove('potato', HOPPER, { keep: SUSTAIN_KEEP_RAW_POTATO })
-                logEvent('sustain', `raw potato deposit: deposited=${r.deposited} remaining=${r.remaining}`)
-              }
-            } catch (e) {
-              logEvent('sustain', `post-RPS potato cycle failed: ${e.message}`)
-              try { if (!followTarget && !insideHouse()) await runGoInside() } catch (_) {}
-            }
-            sustainState.potatoRole = null
-          }
-        }
+        // (RPS tiebreak moved above harvestHalf check so it runs before wheat)
 
         // Solo mid-poll potato check — solo bot harvests potatoes between wheat cycles.
         if (sustainState.role === 'solo' && !foodSafetyBusy && !taskBusy() && sustainSafe()) {
