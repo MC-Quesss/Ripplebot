@@ -2664,19 +2664,45 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
       logEvent('craft', `no ${ingredient} stack >= 8 in bench window`)
       break
     }
+    const srcSlot = seedStack.slot
 
     try {
-      await bot.clickWindow(seedStack.slot, 0, 0)
+      await bot.clickWindow(srcSlot, 0, 0)
       await sleep(150)
       for (const slot of BENCH_RING_SLOTS) {
         await bot.clickWindow(slot, 1, 0)
         await sleep(100)
       }
-      await bot.clickWindow(seedStack.slot, 0, 0)
+      // Put remaining back — find a safe destination (original slot or
+      // any slot holding the same ingredient, or an empty slot).
+      let putBack = -1
+      const cur = win.slots[srcSlot]
+      if (!cur || cur.name === ingredient) {
+        putBack = srcSlot
+      } else {
+        for (let s = BENCH_PLAYER_INV_START; s < win.slots.length; s++) {
+          const it = win.slots[s]
+          if (it && it.name === ingredient && it.count < 64) { putBack = s; break }
+        }
+        if (putBack < 0) {
+          for (let s = BENCH_PLAYER_INV_START; s < win.slots.length; s++) {
+            if (!win.slots[s]) { putBack = s; break }
+          }
+        }
+      }
+      if (putBack >= 0) {
+        await bot.clickWindow(putBack, 0, 0)
+      } else {
+        await bot.clickWindow(srcSlot, 0, 0)
+      }
       await sleep(150)
     } catch (e) {
       logEvent('craft', `ring placement error: ${e.message}`)
-      try { await bot.clickWindow(-999, 0, 0) } catch (_) {}
+      try {
+        for (let s = BENCH_PLAYER_INV_START; s < win.slots.length; s++) {
+          if (!win.slots[s]) { await bot.clickWindow(s, 0, 0); break }
+        }
+      } catch (_) {}
       win.close()
       break
     }
@@ -2745,7 +2771,12 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
       }
     } catch (e) {
       logEvent('craft', `take output error: ${e.message}`)
-      try { await bot.clickWindow(-999, 0, 0) } catch (_) {}
+      // Try to put cursor items in an empty slot instead of dropping
+      try {
+        for (let s = BENCH_PLAYER_INV_START; s < win2.slots.length; s++) {
+          if (!win2.slots[s]) { await bot.clickWindow(s, 0, 0); break }
+        }
+      } catch (_) {}
       win2.close()
       break
     }
@@ -2759,14 +2790,14 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
     await sleep(200)
     for (let s = 0; s <= 8; s++) {
       const item = cleanWin.slots[s]
-      if (item && item.name === ingredient) {
+      if (item && item.count > 0) {
         try {
           await bot.clickWindow(s, 0, 0)
           await sleep(150)
           let dest = -1
           for (let d = BENCH_PLAYER_INV_START; d < cleanWin.slots.length; d++) {
             const it = cleanWin.slots[d]
-            if (it && it.name === ingredient && it.count + item.count <= 64) { dest = d; break }
+            if (it && it.name === item.name && it.count + item.count <= 64) { dest = d; break }
           }
           if (dest < 0) {
             for (let d = BENCH_PLAYER_INV_START; d < cleanWin.slots.length; d++) {
@@ -2818,7 +2849,7 @@ async function feedHopperOneAtATime (waitMs) {
 
   for (let fed = 0; fed < 7; fed++) {
     if (!sustainState.active) return false
-    const fuelName = countOnHand('wheat') >= 1 ? 'wheat' : (countOnHand('potato') >= 1 ? 'potato' : null)
+    const fuelName = countOnHand('potato') >= 1 ? 'potato' : null
     if (!fuelName) {
       logEvent('sustain-hopper', `out of fuel after ${fed} fed`)
       return false
@@ -2857,7 +2888,7 @@ async function feedHopperOneAtATime (waitMs) {
 }
 
 async function clearJammedHopper () {
-  if (countOnHand('wheat') < 1 && countOnHand('potato') < 1) {
+  if (countOnHand('potato') < 1) {
     logEvent('sustain-hopper', 'no fuel on hand to clear jam')
     return false
   }
@@ -2884,7 +2915,7 @@ async function clearJammedHopper () {
 // split the fields and extras supervise from the field edge.
 const FIRE_CLAIM_TTL_MS = 45 * 60 * 1000
 const FIRE_ROLLCALL_WAIT_MS = 10000
-const FIRE_COORD_RE = /\.([rnsxwpd]|\d[rps])$/
+const FIRE_COORD_RE = /\.([rnsxwpdg]|\d[rps])$/
 const fireCrew = new Map() // bot name (lowercase) -> { field: 'north'|'south'|'potatoes'|'supervise', at }
 let fireStartupRivals = null // Set<name>: bots that roll-called during our own startup wait
 let fireStandDownAnnounced = false
@@ -3016,6 +3047,7 @@ const RPS_NAMES = { r: 'rock', p: 'paper', s: 'scissors' }
 let rpsState = null // { round, myThrow, rival, resolve }
 let rpsChallengeResolve = null // resolve function for incoming .d acceptance
 let rpsAccepted = false // set true when we receive a .d challenge
+let rpsReadyResolve = null // resolve function for rival's .g ready signal
 
 function rpsWinner (a, b) {
   if (a === b) return 'tie'
@@ -3073,16 +3105,24 @@ async function runRpsMatch (rival) {
     return null
   }
 
-  // Wait for rival to arrive (within 5 blocks), then face and salute
-  for (let w = 0; w < 20; w++) {
-    const key = Object.keys(bot.players).find(k => k.toLowerCase() === rival)
-    const re = key && bot.players[key]?.entity
-    if (re && bot.entity && re.position.distanceTo(bot.entity.position) < 5) break
-    await sleep(1000)
+  // Signal ready and wait for rival's ready signal
+  const readyPromise = new Promise(resolve => { rpsReadyResolve = resolve })
+  await lookAtPlayer(rival)
+  bot.chat('/me .g')
+  const rivalReady = await Promise.race([
+    readyPromise,
+    sleep(20000).then(() => false)
+  ])
+  rpsReadyResolve = null
+  if (!rivalReady) {
+    logEvent('rps', 'rival never signalled ready — aborting')
+    return null
   }
+
+  // Both ready — face each other and salute together
   await lookAtPlayer(rival)
   sendEmote('salute')
-  await sleep(3000)
+  await sleep(2500)
 
   for (let round = 1; round <= 10; round++) {
     if (!sustainState.active) return null
@@ -3204,13 +3244,19 @@ function trackFireCoordination (username, message) {
     return
   }
   if (code === 'd') {
-    // RPS challenge/accept
     if (rpsChallengeResolve) {
       logEvent('rps', `${username} accepted our challenge`)
       rpsChallengeResolve(true)
     } else if (sustainState.active && (sustainState.role === 'north' || sustainState.role === 'south') && !sustainState.potatoRole) {
       rpsAccepted = true
       logEvent('rps', `${username} challenged us to RPS`)
+    }
+    return
+  }
+  if (code === 'g') {
+    if (rpsReadyResolve) {
+      logEvent('rps', `${username} is ready`)
+      rpsReadyResolve(true)
     }
     return
   }
@@ -3412,10 +3458,9 @@ async function runSustainFarm (user) {
                 const win = await bot.openContainer(hopperBlock)
                 const slots = win.slots.slice(0, win.slots.length - 36)
                 const hasBalls = slots.some(s => s && s.name === 'unknown')
-                const hasWheat = slots.some(s => s && s.name === 'wheat')
-                const hasPotato = slots.some(s => s && s.name === 'potato')
+                const hasFuel = slots.some(s => s && (s.name === 'wheat' || s.name === 'potato'))
                 win.close()
-                if (hasBalls && !hasWheat && !hasPotato) {
+                if (hasBalls && !hasFuel) {
                   logEvent('sustain-hopper', 'plant balls jammed — feeding potato to clear')
                   await clearJammedHopper()
                 }
@@ -3591,9 +3636,8 @@ async function runSustainFarm (user) {
             logEvent('sustain', `waiting (mature=${scan.mature}/${scan.expected} potato=${pS.mature}/${pS.potatoes}(${pS.maturePct.toFixed(0)}%) loaded=${scan.loaded})`)
           }
         }
-        // Jam-watch duty belongs to one keeper (solo or north) so two bots
-        // never feed clearing wheat into the hopper at the same time.
-        if (polls % SUSTAIN_HOPPER_CHECK_INTERVAL === 0 && (sustainState.role === 'solo' || isFieldRole) && sustainSafe() && !foodSafetyBusy && (countOnHand('wheat') >= 1 || countOnHand('potato') >= 1)) {
+        // Jam-watch: feed a raw potato to push stuck plantballs through.
+        if (polls % SUSTAIN_HOPPER_CHECK_INTERVAL === 0 && (sustainState.role === 'solo' || isFieldRole) && sustainSafe() && !foodSafetyBusy && countOnHand('potato') >= 1) {
           try {
             const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
             if (hopperBlock) {
@@ -3602,11 +3646,11 @@ async function runSustainFarm (user) {
               const win = await bot.openContainer(hopperBlock)
               const slots = win.slots.slice(0, win.slots.length - 36)
               const hasBalls = slots.some(s => s && s.name === 'unknown')
-              const hasWheat = slots.some(s => s && s.name === 'wheat')
+              const hasFuel = slots.some(s => s && (s.name === 'wheat' || s.name === 'potato'))
               win.close()
               const currentDay = bot.time?.day ?? -1
-              if (hasBalls && !hasWheat && currentDay > sustainState.lastCycleDay) {
-                logEvent('sustain-hopper', `plant balls jammed — feeding wheat to clear (day ${currentDay}, last cycle day ${sustainState.lastCycleDay})`)
+              if (hasBalls && !hasFuel && currentDay > sustainState.lastCycleDay) {
+                logEvent('sustain-hopper', `plant balls jammed — feeding potato to clear (day ${currentDay}, last cycle day ${sustainState.lastCycleDay})`)
                 await clearJammedHopper()
               }
             }
@@ -7078,7 +7122,7 @@ bot.on('whisper', (username, message) => {
 
 // /me action messages don't fire the 'chat' event — they arrive via 'messagestr'
 // as "* PlayerName .r". Parse the username and route to fire coordination.
-const ACTION_COORD_RE = /^\* (\w+) (\.([rnsxwpd]|\d[rps]))$/
+const ACTION_COORD_RE = /^\* (\w+) (\.([rnsxwpdg]|\d[rps]))$/
 bot.on('messagestr', (msg) => {
   const m = ACTION_COORD_RE.exec(msg)
   if (!m) return
