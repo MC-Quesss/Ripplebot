@@ -2915,16 +2915,20 @@ async function clearJammedHopper () {
 // split the fields and extras supervise from the field edge.
 const FIRE_CLAIM_TTL_MS = 45 * 60 * 1000
 const FIRE_ROLLCALL_WAIT_MS = 10000
-const FIRE_COORD_RE = /\.([rnsxwpdg]|\d[rps])$/
+const FIRE_COORD_RE = /(?:\.([rnsxwpdg])|shoots (rock|paper|scissors))$/
 const fireCrew = new Map() // bot name (lowercase) -> { field: 'north'|'south'|'potatoes'|'supervise', at }
 let fireStartupRivals = null // Set<name>: bots that roll-called during our own startup wait
 let fireStandDownAnnounced = false
 
 function myFireName () { return (NICKNAME || bot.username || '').toLowerCase() }
 
+const RPS_WORD_TO_CODE = { rock: 'r', paper: 'p', scissors: 's' }
 function parseFireCoord (message) {
   const m = FIRE_COORD_RE.exec(message.trim())
-  return m ? m[1] : null
+  if (!m) return null
+  if (m[1]) return m[1]
+  if (m[2]) return 'throw:' + RPS_WORD_TO_CODE[m[2]]
+  return null
 }
 
 function fireCrewExpire () {
@@ -3041,7 +3045,10 @@ function scheduleFirePromotion () {
 // of the south wheat field. Salute, chant "Rock, paper, scissors, shoot!",
 // point, and reveal throws via `.{round}{r|p|s}`. First winner takes potato
 // duty; ties replay. Winner headbangs, loser weeps.
-const RPS_MEET_POINT = HARVEST_WAYPOINTS.field_center
+// Two meet points — alphabetically first bot takes north spot, second takes south.
+// 4 blocks apart in the south wheat field so they face each other.
+const RPS_SPOT_NORTH = { x: -283, y: 64, z: 560 }
+const RPS_SPOT_SOUTH = { x: -283, y: 64, z: 564 }
 const RPS_THROW_WAIT_MS = 12000
 const RPS_NAMES = { r: 'rock', p: 'paper', s: 'scissors' }
 let rpsState = null // { round, myThrow, rival, resolve }
@@ -3086,22 +3093,23 @@ async function runRpsChallenger () {
     return null
   }
 
-  return runRpsMatch(rival)
+  return runRpsMatch(rival, true)
 }
 
 async function runRpsAcceptor (rival) {
   logEvent('rps', `accepting ${rival}'s RPS challenge`)
   bot.chat('/me .d')
-  return runRpsMatch(rival)
+  return runRpsMatch(rival, false)
 }
 
-async function runRpsMatch (rival) {
-  // Meet in the south field center
+async function runRpsMatch (rival, isChallenger) {
+  // Each bot goes to a different spot so they face each other.
+  const mySpot = myFireName() < rival ? RPS_SPOT_NORTH : RPS_SPOT_SOUTH
   try {
     if (insideHouse()) await runGoOutside()
-    await pathTo(RPS_MEET_POINT, 2, 15000)
+    await pathTo(mySpot, 1, 15000)
   } catch (e) {
-    logEvent('rps', `failed to reach meet point: ${e.message}`)
+    logEvent('rps', `failed to reach meet spot: ${e.message}`)
     return null
   }
 
@@ -3119,8 +3127,10 @@ async function runRpsMatch (rival) {
     return null
   }
 
-  // Both ready — face each other and salute together
+  // Both ready — face each other and salute in sync
+  await sleep(500)
   await lookAtPlayer(rival)
+  await sleep(300)
   sendEmote('salute')
   await sleep(2500)
 
@@ -3129,16 +3139,17 @@ async function runRpsMatch (rival) {
 
     await lookAtPlayer(rival)
 
-    bot.chat('Rock, paper, scissors, shoot!')
-    await sleep(800)
+    if (isChallenger) bot.chat('Rock, paper, scissors, shoot!')
+    await sleep(1500)
     sendEmote('point')
+    await sleep(500)
 
     const throws = ['r', 'p', 's']
     const myThrow = throws[Math.floor(Math.random() * 3)]
     const throwPromise = new Promise(resolve => {
       rpsState = { round, myThrow, rival, resolve }
     })
-    bot.chat(`/me .${round}${myThrow}`)
+    bot.chat(`/me shoots ${RPS_NAMES[myThrow]}`)
     logEvent('rps', `round ${round}: threw ${RPS_NAMES[myThrow]}`)
 
     const rivalThrow = await Promise.race([
@@ -3260,13 +3271,10 @@ function trackFireCoordination (username, message) {
     }
     return
   }
-  // RPS throw: code like "1r", "2p", "3s"
-  const rpsMatch = code.match(/^(\d)([rps])$/)
-  if (rpsMatch) {
-    const round = parseInt(rpsMatch[1], 10)
-    const throw_ = rpsMatch[2]
-    if (rpsState && rpsState.round === round && name === rpsState.rival) {
-      logEvent('rps', `received ${name}'s round ${round} throw: ${RPS_NAMES[throw_]}`)
+  if (code.startsWith('throw:')) {
+    const throw_ = code[6]
+    if (rpsState && name === rpsState.rival) {
+      logEvent('rps', `received ${name}'s throw: ${RPS_NAMES[throw_]}`)
       rpsState.resolve(throw_)
     }
     return
@@ -7122,13 +7130,14 @@ bot.on('whisper', (username, message) => {
 
 // /me action messages don't fire the 'chat' event — they arrive via 'messagestr'
 // as "* PlayerName .r". Parse the username and route to fire coordination.
-const ACTION_COORD_RE = /^\* (\w+) (\.([rnsxwpdg]|\d[rps]))$/
+const ACTION_COORD_RE = /^\* (\w+) (\.([rnsxwpdg])|shoots (rock|paper|scissors))$/
 bot.on('messagestr', (msg) => {
   const m = ACTION_COORD_RE.exec(msg)
   if (!m) return
-  const username = m[1]
-  if (username === bot.username || (nickRe && nickRe.test(username))) return
-  if (looksLikeBot(username)) trackFireCoordination(username, m[2])
+  const rawName = m[1]
+  const username = resolveUsername(rawName) || rawName
+  if (username === bot.username || (nickRe && nickRe.test(rawName))) return
+  if (looksLikeBot(rawName) || looksLikeBot(username)) trackFireCoordination(username, m[2])
 })
 
 // ── Tier-1 reflexes ───────────────────────────────────────────────────────
