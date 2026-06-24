@@ -2568,38 +2568,31 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
     bot.chat(pickLine(withPersonaSlot(HARVEST_DONE_LINES, 'harvestDone'), { dug: totalHarvested, gained, onhand: wheatOnHand }))
     logEvent('harvest-rc', `activated=${totalActivated} harvested=${totalHarvested} gained=${gained} onhand=${wheatOnHand} kept-on-hand`)
 
-    // Wheat always goes to the hopper. No prompting.
-    if (wheatOnHand > 0 && !skipDeposit) {
+    // Wheat + seeds → craft into plant balls → hopper.
+    if (!skipDeposit && !keepSeeds) {
       try {
         await ensureInsideHouse()
         if (deathCount > startDeaths) throw new Error('died entering house')
         await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-        const r = await depositQuickMove('wheat', HOPPER, { keep: SUSTAIN_KEEP_WHEAT })
-        if (r.backedUp) {
-          logEvent('harvest-rc', `hopper backed up: deposited=${r.deposited} remaining=${r.remaining} rounds=${r.rounds}`)
-        } else {
-          logEvent('harvest-rc', `wheat → hopper: deposited=${r.deposited} kept=${r.remaining} (${r.rounds} rounds)`)
-        }
-      } catch (e) {
-        logEvent('harvest-rc', `hopper deposit failed: ${e.message} — keeping wheat`)
-      }
-    }
 
-    // Seeds always get crafted into plant balls and deposited to the hopper.
-    if (!keepSeeds) {
-      try {
-        if (countOnHand('wheat_seeds') >= 8) {
-          await ensureInsideHouse()
-          const craftResult = await craftPlantBalls({ keepCount: 0, maxBalls: Infinity })
-          logEvent('harvest-rc', `plant balls crafted: ${craftResult.crafted}; seeds remaining=${countOnHand('wheat_seeds')}`)
-          if (craftResult.crafted > 0) {
-            await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-            const ballResult = await depositQuickMove('unknown', HOPPER, { keep: 0 })
-            logEvent('harvest-rc', `plant balls → hopper: deposited=${ballResult.deposited}`)
-          }
+        if (countOnHand('wheat') >= 8) {
+          const wr = await craftPlantBalls({ ingredient: 'wheat', keepCount: 0, maxBalls: Infinity })
+          logEvent('harvest-rc', `plant balls from wheat: ${wr.crafted}; wheat remaining=${countOnHand('wheat')}`)
         }
+        if (countOnHand('wheat_seeds') >= 8) {
+          const sr = await craftPlantBalls({ keepCount: 0, maxBalls: Infinity })
+          logEvent('harvest-rc', `plant balls from seeds: ${sr.crafted}; seeds remaining=${countOnHand('wheat_seeds')}`)
+        }
+        const ballCount = countOnHand('unknown')
+        if (ballCount > 0) {
+          await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+          const r = await depositQuickMove('unknown', HOPPER, { keep: 0 })
+          logEvent('harvest-rc', `plant balls → hopper: deposited=${r.deposited}`)
+        }
+        const leftover = countOnHand('wheat')
+        if (leftover > 0) logEvent('harvest-rc', `${leftover} wheat left over (<8, keeping for next craft)`)
       } catch (e) {
-        logEvent('harvest-rc', `seed/plantball handling failed: ${e.message}`)
+        logEvent('harvest-rc', `post-harvest craft/deposit failed: ${e.message}`)
       }
     }
   } finally {
@@ -2720,6 +2713,30 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
       }
       await bot.clickWindow(dest, 0, 0)
       await sleep(150)
+      // Clear leftover ingredients from grid (modded bench doesn't auto-clear)
+      for (let s = 0; s <= 8; s++) {
+        const leftover = win2.slots[s]
+        if (!leftover || leftover.count === 0) continue
+        await bot.clickWindow(s, 0, 0)
+        await sleep(100)
+        let clearDest = -1
+        for (let d = BENCH_PLAYER_INV_START; d < win2.slots.length; d++) {
+          const it = win2.slots[d]
+          if (it && it.name === leftover.name && it.count + leftover.count <= 64) { clearDest = d; break }
+        }
+        if (clearDest < 0) {
+          for (let d = BENCH_PLAYER_INV_START; d < win2.slots.length; d++) {
+            if (!win2.slots[d]) { clearDest = d; break }
+          }
+        }
+        if (clearDest >= 0) {
+          await bot.clickWindow(clearDest, 0, 0)
+          await sleep(100)
+        } else {
+          await bot.clickWindow(s, 0, 0)
+          await sleep(100)
+        }
+      }
     } catch (e) {
       logEvent('craft', `take output error: ${e.message}`)
       try { await bot.clickWindow(-999, 0, 0) } catch (_) {}
@@ -2784,7 +2801,7 @@ const SUSTAIN_KEEP_SEEDS = 0
 const SUSTAIN_MAX_PLANT_BALLS = Number.POSITIVE_INFINITY
 const SUSTAIN_HOPPER_CHECK_INTERVAL = 6
 const SUSTAIN_KEEP_RAW_POTATO = 16
-const SUSTAIN_POTATO_MATURITY_PCT = 100
+const SUSTAIN_POTATO_MATURITY_PCT = 85
 const sustainState = { active: false, cycles: 0, startedBy: null, lastCycleDay: -1, role: null, potatoRole: null }
 
 async function feedHopperOneAtATime (waitMs) {
@@ -2844,12 +2861,10 @@ async function clearJammedHopper () {
     return true
   }
   logEvent('sustain-hopper', 'first pass failed — retrying with 30s waits')
-  logEvent('sustain-hopper', 'first pass failed — retrying with 30s waits')
   const cleared2 = await feedHopperOneAtATime(30000)
   if (cleared2) {
     logEvent('sustain-hopper', 'hopper cleared on second pass (30s waits)')
   } else {
-    logEvent('sustain-hopper', 'hopper still jammed after both passes — giving up')
     logEvent('sustain-hopper', 'hopper still jammed after both passes')
   }
   return cleared2
@@ -3112,9 +3127,7 @@ async function sustainHousekeep () {
 
     const remainingWheat = countOnHand('wheat')
     if (remainingWheat > 0) {
-      const r = await depositQuickMove('wheat', HOPPER, { keep: 0 })
-      logEvent('sustain', `housekeep wheat remainder deposit: deposited=${r.deposited}`)
-      if (r.deposited > 0) progress = true
+      logEvent('sustain', `housekeep: ${remainingWheat} wheat left over (<8, keeping for next craft)`)
     }
 
     if (excessPotatoes) {
@@ -3215,6 +3228,28 @@ async function runSustainFarm (user) {
           } else if (polls % 20 === 0 && pScan.potatoes > 0) {
             logEvent('sustain', `potatoes waiting (${pScan.mature}/${pScan.potatoes}, ${pScan.maturePct.toFixed(0)}%)`)
           }
+          // Hopper jam check — potato bot clears jams with raw potatoes
+          if (polls % SUSTAIN_HOPPER_CHECK_INTERVAL === 0 && sustainSafe() && !foodSafetyBusy && countOnHand('potato') > SUSTAIN_KEEP_RAW_POTATO) {
+            try {
+              const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
+              if (hopperBlock) {
+                await ensureInsideHouse()
+                await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+                const win = await bot.openContainer(hopperBlock)
+                const slots = win.slots.slice(0, win.slots.length - 36)
+                const hasBalls = slots.some(s => s && s.name === 'unknown')
+                const hasWheat = slots.some(s => s && s.name === 'wheat')
+                const hasPotato = slots.some(s => s && s.name === 'potato')
+                win.close()
+                if (hasBalls && !hasWheat && !hasPotato) {
+                  logEvent('sustain-hopper', 'plant balls jammed — feeding potato to clear')
+                  await clearJammedHopper()
+                }
+              }
+            } catch (e) {
+              logEvent('sustain-hopper', `check failed: ${e.message}`)
+            }
+          }
         }
         polls++
         await sustainWait(SUSTAIN_POLL_MS)
@@ -3314,8 +3349,7 @@ async function runSustainFarm (user) {
           }
           const remainingWheat = countOnHand('wheat')
           if (remainingWheat > 0) {
-            const wheatResult = await depositQuickMove('wheat', HOPPER, { keep: 0 })
-            logEvent('sustain', `wheat remainder deposit: deposited=${wheatResult.deposited} remaining=${wheatResult.remaining}`)
+            logEvent('sustain', `${remainingWheat} wheat left over (<8, keeping for next craft)`)
           }
 
           if (!sustainState.active) break
@@ -7242,14 +7276,14 @@ bot.on('playerLeft', (player) => {
   const hadClaim = fireCrew.delete(name)
   if (hadClaim) logEvent('sustain', `${player.username} left the game — clearing fire claim`)
 
-  // Promote to solo if we're on a half-field and no other keeper remains,
-  // even if the leaving player's claim had already expired via TTL.
-  if (sustainState.active && (sustainState.role === 'north' || sustainState.role === 'south') && looksLikeBot(player.username)) {
+  // Promote to solo if we're the only keeper remaining.
+  if (sustainState.active && sustainState.role !== 'solo' && looksLikeBot(player.username)) {
     if (activeFireClaims().size === 0) {
       setTimeout(() => {
-        if (sustainState.active && (sustainState.role === 'north' || sustainState.role === 'south') && activeFireClaims().size === 0) {
+        if (sustainState.active && sustainState.role !== 'solo' && activeFireClaims().size === 0) {
           logEvent('sustain', 'only keeper remaining — expanding to solo coverage')
           sustainState.role = 'solo'
+          sustainState.potatoRole = null
         }
       }, 2000 + Math.random() * 2000)
     }
