@@ -2863,8 +2863,8 @@ async function clearJammedHopper () {
 // split the fields and extras supervise from the field edge.
 const FIRE_CLAIM_TTL_MS = 45 * 60 * 1000
 const FIRE_ROLLCALL_WAIT_MS = 10000
-const FIRE_COORD_RE = /\.([rnsxwp]|[123][rps])$/
-const fireCrew = new Map() // bot name (lowercase) -> { field: 'north'|'south'|'supervise', at }
+const FIRE_COORD_RE = /\.([rnsxwp])$/
+const fireCrew = new Map() // bot name (lowercase) -> { field: 'north'|'south'|'potatoes'|'supervise', at }
 let fireStartupRivals = null // Set<name>: bots that roll-called during our own startup wait
 let fireStandDownAnnounced = false
 
@@ -2900,14 +2900,13 @@ function fireClaimCode (field) {
 
 function announceFireClaim (field) {
   if (field === 'potatoes') {
+    sustainState.role = 'potatoes'
     sustainState.potatoRole = 'mine'
-    bot.chat(fireClaimCode(field))
-    logEvent('sustain', 'claimed potato duty')
   } else {
     sustainState.role = field
-    bot.chat(fireClaimCode(field))
-    logEvent('sustain', `claimed the ${field} field`)
   }
+  bot.chat(fireClaimCode(field))
+  logEvent('sustain', `claimed ${field}`)
 }
 
 function announceFireSupervise () {
@@ -2941,26 +2940,19 @@ function answerFireRollCall () {
     if (sustainState.role === 'solo') {
       logEvent('sustain', 'roll call heard while solo — splitting, taking north')
       announceFireClaim('north')
-    } else if (sustainState.role === 'north' || sustainState.role === 'south') {
+    } else {
       bot.chat(fireClaimCode(sustainState.role))
-    } else if (sustainState.role === 'potatoes') {
-      bot.chat(fireClaimCode('potatoes'))
     }
-    if (sustainState.potatoRole === 'mine') bot.chat(fireClaimCode('potatoes'))
   }, 1000 + Math.random() * 3000)
 }
 
 function resolveFireClaimConflict (name, field) {
-  if (field === 'potatoes') {
-    if (sustainState.potatoRole !== 'mine') return
-    // Two bots both claim potatoes — RPS tiebreak
-    logEvent('sustain', `${name} also claims potatoes — starting RPS tiebreak`)
-    startRpsTiebreak(name)
-    return
-  }
   if (sustainState.role === 'solo') {
-    // Someone claimed a wheat field while we covered all — cede that half, keep potatoes.
-    announceFireClaim(field === 'north' ? 'south' : 'north')
+    // Someone claimed a field while we covered all — take the first free role.
+    const claimed = activeFireClaims()
+    const free = ['north', 'south', 'potatoes'].filter(f => !claimed.has(f))
+    if (free.length) announceFireClaim(free[0])
+    else announceFireSupervise()
     return
   }
   if (field !== sustainState.role) return
@@ -2972,8 +2964,9 @@ function resolveFireClaimConflict (name, field) {
   }
   setTimeout(() => {
     if (!sustainState.active || sustainState.role !== field) return
-    const other = field === 'north' ? 'south' : 'north'
-    if (!activeFireClaims().has(other)) announceFireClaim(other)
+    const claimed = activeFireClaims()
+    const free = ['north', 'south', 'potatoes'].filter(f => f !== field && !claimed.has(f))
+    if (free.length) announceFireClaim(free[0])
     else announceFireSupervise()
   }, 1000 + Math.random() * 2000)
 }
@@ -2984,9 +2977,8 @@ function scheduleFirePromotion () {
     const claimed = activeFireClaims()
     const free = ['north', 'south', 'potatoes'].filter(f => !claimed.has(f))
     if (free.length) {
-      const pick = free[0]
-      logEvent('sustain', `field freed — promoting from supervisor to ${pick}`)
-      announceFireClaim(pick)
+      logEvent('sustain', `role freed — promoting from supervisor to ${free[0]}`)
+      announceFireClaim(free[0])
     }
   }, 2000 + Math.random() * 4000)
 }
@@ -3003,23 +2995,20 @@ function trackFireCoordination (username, message) {
     if (fireCrew.delete(name)) {
       logEvent('sustain', `${username} stood down from fire duty`)
       if (sustainState.active) {
-        if (had && had.field === 'potatoes' && sustainState.potatoRole !== 'mine') {
+        if (had && had.field === 'potatoes') {
           logEvent('sustain', 'potato keeper left — claiming potatoes')
-          sustainState.potatoRole = 'mine'
-          bot.chat(fireClaimCode('potatoes'))
+          announceFireClaim('potatoes')
         }
         if (sustainState.role === 'supervise') {
           scheduleFirePromotion()
-        } else if (sustainState.role === 'north' || sustainState.role === 'south') {
-          if (activeFireClaims().size === 0) {
-            setTimeout(() => {
-              if (sustainState.active && (sustainState.role === 'north' || sustainState.role === 'south')) {
-                logEvent('sustain', 'only keeper remaining — expanding to solo coverage')
-                sustainState.role = 'solo'
-                sustainState.potatoRole = null
-              }
-            }, 2000 + Math.random() * 2000)
-          }
+        } else if (activeFireClaims().size === 0) {
+          setTimeout(() => {
+            if (sustainState.active && sustainState.role !== 'solo' && activeFireClaims().size === 0) {
+              logEvent('sustain', 'only keeper remaining — expanding to solo coverage')
+              sustainState.role = 'solo'
+              sustainState.potatoRole = null
+            }
+          }, 2000 + Math.random() * 2000)
         }
       }
     }
@@ -3034,7 +3023,7 @@ function trackFireCoordination (username, message) {
   }
   if (code === 'p') {
     fireCrew.set(name, { field: 'potatoes', at: Date.now() })
-    logEvent('sustain', `${username} claimed potato duty`)
+    logEvent('sustain', `${username} claimed potatoes`)
     if (sustainState.active) resolveFireClaimConflict(name, 'potatoes')
     return
   }
@@ -3047,102 +3036,6 @@ function trackFireCoordination (username, message) {
     else if (sustainState.active) answerFireRollCall()
     return
   }
-  // RPS codes: 1r, 1p, 1s, 2r, 2p, 2s, 3r, 3p, 3s
-  if (code.length === 2 && '123'.includes(code[0]) && 'rps'.includes(code[1])) {
-    handleRpsThrow(name, parseInt(code[0]), code[1])
-  }
-}
-
-// ── RPS tiebreak for potato duty ───────────────────────────────────────────
-// When two bots both claim potatoes, they play rock-paper-scissors over chat.
-// Codes: .1r / .1p / .1s (round 1), .2r / .2p / .2s (round 2), .3r / .3p / .3s.
-// Best-of-3 rounds. After 3 ties, alphabetical tiebreak.
-let rpsState = null // { rival, round, myThrows: [], theirThrows: [], wins: 0, losses: 0, waitTimer }
-
-function rpsRandomThrow () { return 'rps'[Math.floor(Math.random() * 3)] }
-
-function rpsResult (mine, theirs) {
-  if (mine === theirs) return 'tie'
-  if ((mine === 'r' && theirs === 's') || (mine === 'p' && theirs === 'r') || (mine === 's' && theirs === 'p')) return 'win'
-  return 'lose'
-}
-
-function startRpsTiebreak (rival) {
-  if (rpsState && rpsState.rival === rival) return
-  rpsState = { rival, round: 1, myThrows: [], theirThrows: [], wins: 0, losses: 0, waitTimer: null }
-  playRpsRound()
-}
-
-function playRpsRound () {
-  if (!rpsState || !sustainState.active) return
-  const throw_ = rpsRandomThrow()
-  rpsState.myThrows.push(throw_)
-  bot.chat(`/me .${rpsState.round}${throw_}`)
-  logEvent('sustain-rps', `round ${rpsState.round}: threw ${throw_}`)
-
-  // Wait for rival's throw — if they don't respond within 8s, we win by default
-  rpsState.waitTimer = setTimeout(() => {
-    if (!rpsState || !sustainState.active) return
-    logEvent('sustain-rps', `round ${rpsState.round} timeout — rival didn't throw, we win`)
-    rpsWin()
-  }, 8000)
-}
-
-function handleRpsThrow (name, round, throw_) {
-  if (!rpsState || name !== rpsState.rival) return
-  if (round !== rpsState.round) return
-  if (rpsState.theirThrows.length >= round) return
-
-  rpsState.theirThrows.push(throw_)
-  if (rpsState.waitTimer) { clearTimeout(rpsState.waitTimer); rpsState.waitTimer = null }
-
-  // If we haven't thrown this round yet (they were faster), throw now
-  if (rpsState.myThrows.length < round) {
-    const myThrow = rpsRandomThrow()
-    rpsState.myThrows.push(myThrow)
-    bot.chat(`/me .${round}${myThrow}`)
-    logEvent('sustain-rps', `round ${round}: threw ${myThrow} (responding)`)
-  }
-
-  const mine = rpsState.myThrows[round - 1]
-  const result = rpsResult(mine, throw_)
-  logEvent('sustain-rps', `round ${round}: ${mine} vs ${throw_} = ${result}`)
-
-  if (result === 'win') rpsState.wins++
-  else if (result === 'lose') rpsState.losses++
-
-  // Best of 3: first to 2 wins
-  if (rpsState.wins >= 2) { rpsWin(); return }
-  if (rpsState.losses >= 2) { rpsLose(); return }
-
-  // Move to next round
-  if (rpsState.round >= 3) {
-    // All 3 rounds played, still tied — alphabetical tiebreak
-    if (myFireName() < rpsState.rival) {
-      logEvent('sustain-rps', '3 rounds tied — alphabetical win')
-      rpsWin()
-    } else {
-      logEvent('sustain-rps', '3 rounds tied — alphabetical loss')
-      rpsLose()
-    }
-    return
-  }
-
-  rpsState.round++
-  setTimeout(() => playRpsRound(), 1000 + Math.random() * 2000)
-}
-
-function rpsWin () {
-  logEvent('sustain-rps', 'won potato duty')
-  sustainState.potatoRole = 'mine'
-  bot.chat(fireClaimCode('potatoes'))
-  rpsState = null
-}
-
-function rpsLose () {
-  logEvent('sustain-rps', 'lost potato duty — yielding')
-  sustainState.potatoRole = 'theirs'
-  rpsState = null
 }
 
 async function sustainWait (ms) {
@@ -3261,27 +3154,8 @@ async function runSustainFarm (user) {
   const startRole = pickFireRole()
   fireStartupRivals = null
   if (sustainState.active) {
-    if (startRole === 'potatoes') {
-      // Got potato duty as our primary — need a wheat field too or supervise wheat.
-      // For now: claim potatoes and supervise wheat (let other bots handle fields).
-      announceFireClaim('potatoes')
-      const wheatClaimed = activeFireClaims()
-      const freeWheat = ['north', 'south'].filter(f => !wheatClaimed.has(f))
-      if (freeWheat.length === 2) {
-        announceFireSupervise()
-        logEvent('sustain', 'potato keeper — no wheat field claimed, supervising wheat')
-      } else if (freeWheat.length === 1) {
-        announceFireClaim(freeWheat[0])
-      } else {
-        announceFireSupervise()
-      }
-    } else if (startRole === 'north' || startRole === 'south') {
+    if (startRole === 'north' || startRole === 'south' || startRole === 'potatoes') {
       announceFireClaim(startRole)
-      if (!activeFireClaims().has('potatoes')) {
-        sustainState.potatoRole = 'mine'
-        bot.chat(fireClaimCode('potatoes'))
-        logEvent('sustain', 'also claiming potatoes (unclaimed)')
-      }
     } else if (startRole === 'supervise') {
       announceFireSupervise()
     }
@@ -3304,14 +3178,56 @@ async function runSustainFarm (user) {
         try { await sustainHousekeep() } catch (_) {}
       }
 
-      // Supervisor: both wheat fields are claimed by other bots. Stand by at the
-      // field edge and watch for a freed field to promote into.
-      // A supervisor with potato duty still harvests potatoes.
+      // Potato-only role: this bot's only job is watching the potato field.
+      if (sustainState.role === 'potatoes') {
+        if (!foodSafetyBusy && !taskBusy()) {
+          const pScan = scanKnownPotatoField()
+          if (pScan.potatoes > 0 && pScan.maturePct >= SUSTAIN_POTATO_MATURITY_PCT) {
+            logEvent('sustain', `potatoes ready (${pScan.mature}/${pScan.potatoes}) — harvesting`)
+            sustainState.cycles++
+            try {
+              await runHarvestPotatoesRightClick({ user: 'sustain' })
+              if (!sustainState.active) break
+
+              const bakedInChest = await countBakedInChest()
+              if (bakedInChest >= 0 && bakedInChest < 64) {
+                const toBake = Math.min(64, countOnHand('potato') - SUSTAIN_KEEP_RAW_POTATO)
+                if (toBake > 0) {
+                  logEvent('sustain', `chest has ${bakedInChest} baked — loading ${toBake} raw into furnace`)
+                  await runBakePotatoesSustain(toBake)
+                }
+              }
+              if (!sustainState.active) break
+
+              const rawCount = countOnHand('potato')
+              if (rawCount > SUSTAIN_KEEP_RAW_POTATO) {
+                await ensureInsideHouse()
+                await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+                const r = await depositQuickMove('potato', HOPPER, { keep: SUSTAIN_KEEP_RAW_POTATO })
+                logEvent('sustain', `raw potato deposit: deposited=${r.deposited} remaining=${r.remaining}`)
+              }
+            } catch (e) {
+              if (e.name === 'AbortError' && !sustainState.active) break
+              logEvent('sustain', `potato cycle failed: ${e.message}`)
+              try { if (!followTarget && !insideHouse()) await runGoInside() } catch (_) {}
+            }
+            foodSafetyWindowCooldownUntil = 0
+          } else if (polls % 20 === 0 && pScan.potatoes > 0) {
+            logEvent('sustain', `potatoes waiting (${pScan.mature}/${pScan.potatoes}, ${pScan.maturePct.toFixed(0)}%)`)
+          }
+        }
+        polls++
+        await sustainWait(SUSTAIN_POLL_MS)
+        continue
+      }
+
+      // Supervisor: all three roles are claimed by other bots. Stand by at the
+      // field edge and watch for a freed role to promote into.
       if (sustainState.role === 'supervise') {
         const claimed = activeFireClaims()
-        const freed = ['north', 'south'].filter(f => !claimed.has(f))
+        const freed = ['north', 'south', 'potatoes'].filter(f => !claimed.has(f))
         if (freed.length) {
-          logEvent('sustain', `field freed — promoting from supervisor to ${freed[0]}`)
+          logEvent('sustain', `role freed — promoting from supervisor to ${freed[0]}`)
           announceFireClaim(freed[0])
         } else if (!supervisePosted && !foodSafetyBusy) {
           try {
@@ -3321,32 +3237,6 @@ async function runSustainFarm (user) {
             logEvent('sustain', 'supervising from the field edge')
           } catch (e) {
             logEvent('sustain', `supervise repositioning failed: ${e.message}`)
-          }
-        }
-        // Even while supervising wheat, handle potato duty if assigned
-        if (sustainState.potatoRole === 'mine' && !foodSafetyBusy && !taskBusy() && sustainSafe()) {
-          const pScan = scanKnownPotatoField()
-          if (pScan.potatoes > 0 && pScan.maturePct >= SUSTAIN_POTATO_MATURITY_PCT) {
-            logEvent('sustain', `supervisor: potatoes ready (${pScan.mature}/${pScan.potatoes}) — harvesting`)
-            try {
-              await runHarvestPotatoesRightClick({ user: 'sustain' })
-              if (!sustainState.active) break
-              const bakedInChest = await countBakedInChest()
-              if (bakedInChest >= 0 && bakedInChest < 64) {
-                const toBake = Math.min(64, countOnHand('potato') - SUSTAIN_KEEP_RAW_POTATO)
-                if (toBake > 0) await runBakePotatoesSustain(toBake)
-              }
-              if (!sustainState.active) break
-              const rawCount = countOnHand('potato')
-              if (rawCount > SUSTAIN_KEEP_RAW_POTATO) {
-                await ensureInsideHouse()
-                await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-                await depositQuickMove('potato', HOPPER, { keep: SUSTAIN_KEEP_RAW_POTATO })
-              }
-              supervisePosted = false
-            } catch (e) {
-              logEvent('sustain', `supervisor potato harvest failed: ${e.message}`)
-            }
           }
         }
         await sustainWait(SUSTAIN_POLL_MS)
@@ -3439,15 +3329,14 @@ async function runSustainFarm (user) {
             await sleep(500)
           }
 
-          // 6. Potato cycle — solo mode always does potatoes; multi-bot uses potatoRole.
-          if (sustainState.active && (sustainState.role === 'solo' || sustainState.potatoRole === 'mine')) {
+          // 6. Potato cycle — solo mode also handles potatoes after wheat.
+          if (sustainState.active && sustainState.role === 'solo') {
             const potatoScan = scanKnownPotatoField()
             if (potatoScan.potatoes > 0 && potatoScan.maturePct >= SUSTAIN_POTATO_MATURITY_PCT) {
               logEvent('sustain', `potatoes ready (${potatoScan.mature}/${potatoScan.potatoes} mature) — harvesting`)
               await runHarvestPotatoesRightClick({ user: 'sustain' })
               if (!sustainState.active) break
 
-              // Bake routing: check kitchen chest, load furnace if baked stock is low
               const bakedInChest = await countBakedInChest()
               if (bakedInChest >= 0 && bakedInChest < 64) {
                 const toBake = Math.min(64, countOnHand('potato') - SUSTAIN_KEEP_RAW_POTATO)
@@ -3458,7 +3347,6 @@ async function runSustainFarm (user) {
               }
               if (!sustainState.active) break
 
-              // Deposit excess raw potatoes to hopper (keep reserve)
               const rawCount = countOnHand('potato')
               if (rawCount > SUSTAIN_KEEP_RAW_POTATO) {
                 await ensureInsideHouse()
@@ -3466,8 +3354,6 @@ async function runSustainFarm (user) {
                 const potatoResult = await depositQuickMove('potato', HOPPER, { keep: SUSTAIN_KEEP_RAW_POTATO })
                 logEvent('sustain', `raw potato deposit: deposited=${potatoResult.deposited} remaining=${potatoResult.remaining}`)
               }
-            } else if (potatoScan.potatoes > 0) {
-              logEvent('sustain', `potatoes not ready (${potatoScan.mature}/${potatoScan.potatoes}, ${potatoScan.maturePct.toFixed(0)}%)`)
             }
           }
 
@@ -3521,9 +3407,8 @@ async function runSustainFarm (user) {
           }
         }
 
-        // Standalone potato check — potatoes mature on their own schedule,
-        // so harvest them even when wheat isn't ready.
-        if (!foodSafetyBusy && !taskBusy() && sustainSafe() && (sustainState.role === 'solo' || sustainState.potatoRole === 'mine')) {
+        // Solo mid-poll potato check — solo bot harvests potatoes between wheat cycles.
+        if (sustainState.role === 'solo' && !foodSafetyBusy && !taskBusy() && sustainSafe()) {
           const pScan = scanKnownPotatoField()
           if (pScan.potatoes > 0 && pScan.maturePct >= SUSTAIN_POTATO_MATURITY_PCT) {
             logEvent('sustain', `potatoes ready mid-poll (${pScan.mature}/${pScan.potatoes}) — harvesting`)
@@ -6936,7 +6821,7 @@ bot.on('whisper', (username, message) => {
 
 // /me action messages don't fire the 'chat' event — they arrive via 'messagestr'
 // as "* PlayerName .r". Parse the username and route to fire coordination.
-const ACTION_COORD_RE = /^\* (\w+) (\.([rnsxwp]|[123][rps]))$/
+const ACTION_COORD_RE = /^\* (\w+) (\.([rnsxwp]))$/
 bot.on('messagestr', (msg) => {
   const m = ACTION_COORD_RE.exec(msg)
   if (!m) return
