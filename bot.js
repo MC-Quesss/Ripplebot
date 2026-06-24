@@ -2884,7 +2884,7 @@ async function clearJammedHopper () {
 // split the fields and extras supervise from the field edge.
 const FIRE_CLAIM_TTL_MS = 45 * 60 * 1000
 const FIRE_ROLLCALL_WAIT_MS = 10000
-const FIRE_COORD_RE = /\.([rnsxwp]|\d[rps])$/
+const FIRE_COORD_RE = /\.([rnsxwpd]|\d[rps])$/
 const fireCrew = new Map() // bot name (lowercase) -> { field: 'north'|'south'|'potatoes'|'supervise', at }
 let fireStartupRivals = null // Set<name>: bots that roll-called during our own startup wait
 let fireStandDownAnnounced = false
@@ -3005,14 +3005,17 @@ function scheduleFirePromotion () {
 }
 
 // ── Rock Paper Scissors for 2-bot potato tiebreak ───────────────────────────
-// When exactly 2 bots hold north/south and potatoes mature, they meet in the
-// middle of the south wheat field. Salute, chant "Rock, paper, scissors,
-// shoot!", point, and reveal throws via `.{round}{r|p|s}`. First winner takes
-// potato duty; ties replay. Winner headbangs, loser weeps.
-const RPS_SOUTH_FIELD_CENTER = HARVEST_WAYPOINTS.field_center
-const RPS_THROW_WAIT_MS = 8000
+// When exactly 2 bots hold north/south and potatoes mature, one bot sends a
+// challenge (`.d`), the other accepts (`.d` back), and they meet in the middle
+// of the south wheat field. Salute, chant "Rock, paper, scissors, shoot!",
+// point, and reveal throws via `.{round}{r|p|s}`. First winner takes potato
+// duty; ties replay. Winner headbangs, loser weeps.
+const RPS_MEET_POINT = HARVEST_WAYPOINTS.field_center
+const RPS_THROW_WAIT_MS = 12000
 const RPS_NAMES = { r: 'rock', p: 'paper', s: 'scissors' }
 let rpsState = null // { round, myThrow, rival, resolve }
+let rpsChallengeResolve = null // resolve function for incoming .d acceptance
+let rpsAccepted = false // set true when we receive a .d challenge
 
 function rpsWinner (a, b) {
   if (a === b) return 'tie'
@@ -3027,43 +3030,69 @@ function rpsRivalName () {
   return null
 }
 
-async function runRps () {
+function lookAtPlayer (name) {
+  const key = Object.keys(bot.players).find(k => k.toLowerCase() === name)
+  const entity = key && bot.players[key]?.entity
+  if (entity) return bot.lookAt(entity.position.offset(0, 1.6, 0)).catch(() => {})
+}
+
+async function runRpsChallenger () {
   const rival = rpsRivalName()
   if (!rival) { logEvent('rps', 'no rival found — skipping'); return null }
   logEvent('rps', `challenging ${rival} for potato duty`)
 
-  // Meet in the south field center
-  try {
-    if (insideHouse()) await runGoOutside()
-    await pathTo(RPS_SOUTH_FIELD_CENTER, 2, 15000)
-  } catch (e) {
-    logEvent('rps', `failed to reach field center: ${e.message}`)
+  // Send challenge and wait for rival to accept
+  const acceptPromise = new Promise(resolve => { rpsChallengeResolve = resolve })
+  bot.chat('/me .d')
+  const accepted = await Promise.race([
+    acceptPromise,
+    sleep(15000).then(() => false)
+  ])
+  rpsChallengeResolve = null
+  if (!accepted) {
+    logEvent('rps', 'rival did not accept challenge — aborting')
     return null
   }
 
-  // Face the rival and salute
-  const rivalEntity = bot.players[Object.keys(bot.players).find(
-    k => k.toLowerCase() === rival
-  )]?.entity
-  if (rivalEntity) await bot.lookAt(rivalEntity.position.offset(0, 1.6, 0)).catch(() => {})
+  return runRpsMatch(rival)
+}
+
+async function runRpsAcceptor (rival) {
+  logEvent('rps', `accepting ${rival}'s RPS challenge`)
+  bot.chat('/me .d')
+  return runRpsMatch(rival)
+}
+
+async function runRpsMatch (rival) {
+  // Meet in the south field center
+  try {
+    if (insideHouse()) await runGoOutside()
+    await pathTo(RPS_MEET_POINT, 2, 15000)
+  } catch (e) {
+    logEvent('rps', `failed to reach meet point: ${e.message}`)
+    return null
+  }
+
+  // Wait for rival to arrive (within 5 blocks), then face and salute
+  for (let w = 0; w < 20; w++) {
+    const key = Object.keys(bot.players).find(k => k.toLowerCase() === rival)
+    const re = key && bot.players[key]?.entity
+    if (re && bot.entity && re.position.distanceTo(bot.entity.position) < 5) break
+    await sleep(1000)
+  }
+  await lookAtPlayer(rival)
   sendEmote('salute')
-  await sleep(2000)
+  await sleep(3000)
 
   for (let round = 1; round <= 10; round++) {
     if (!sustainState.active) return null
 
-    // Face rival again before each round
-    const re = bot.players[Object.keys(bot.players).find(
-      k => k.toLowerCase() === rival
-    )]?.entity
-    if (re) await bot.lookAt(re.position.offset(0, 1.6, 0)).catch(() => {})
+    await lookAtPlayer(rival)
 
-    // Chant
     bot.chat('Rock, paper, scissors, shoot!')
     await sleep(800)
     sendEmote('point')
 
-    // Pick a throw and announce it
     const throws = ['r', 'p', 's']
     const myThrow = throws[Math.floor(Math.random() * 3)]
     const throwPromise = new Promise(resolve => {
@@ -3072,7 +3101,6 @@ async function runRps () {
     bot.chat(`/me .${round}${myThrow}`)
     logEvent('rps', `round ${round}: threw ${RPS_NAMES[myThrow]}`)
 
-    // Wait for rival's throw
     const rivalThrow = await Promise.race([
       throwPromise,
       sleep(RPS_THROW_WAIT_MS).then(() => null)
@@ -3173,6 +3201,17 @@ function trackFireCoordination (username, message) {
   if (code === 'r') {
     if (fireStartupRivals) fireStartupRivals.add(name)
     else if (sustainState.active) answerFireRollCall()
+    return
+  }
+  if (code === 'd') {
+    // RPS challenge/accept
+    if (rpsChallengeResolve) {
+      logEvent('rps', `${username} accepted our challenge`)
+      rpsChallengeResolve(true)
+    } else if (sustainState.active && (sustainState.role === 'north' || sustainState.role === 'south') && !sustainState.potatoRole) {
+      rpsAccepted = true
+      logEvent('rps', `${username} challenged us to RPS`)
+    }
     return
   }
   // RPS throw: code like "1r", "2p", "3s"
@@ -3554,7 +3593,7 @@ async function runSustainFarm (user) {
         }
         // Jam-watch duty belongs to one keeper (solo or north) so two bots
         // never feed clearing wheat into the hopper at the same time.
-        if (polls % SUSTAIN_HOPPER_CHECK_INTERVAL === 0 && (sustainState.role === 'solo' || sustainState.role === 'north') && sustainSafe() && !foodSafetyBusy && (countOnHand('wheat') >= 1 || countOnHand('potato') >= 1)) {
+        if (polls % SUSTAIN_HOPPER_CHECK_INTERVAL === 0 && (sustainState.role === 'solo' || isFieldRole) && sustainSafe() && !foodSafetyBusy && (countOnHand('wheat') >= 1 || countOnHand('potato') >= 1)) {
           try {
             const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
             if (hopperBlock) {
@@ -3582,40 +3621,46 @@ async function runSustainFarm (user) {
           if (pCheck.maturePct < SUSTAIN_POTATO_MATURITY_PCT) sustainState.potatoRole = null
         }
 
-        // 2-bot potato tiebreak: if potatoes are ready and we haven't decided who
-        // gets them yet, meet the rival in the south field for RPS.
+        // 2-bot potato tiebreak: accept a pending challenge, or challenge if
+        // potatoes are ready and nobody has potato duty yet.
         if (isFieldRole && !sustainState.potatoRole && !foodSafetyBusy && !taskBusy() && sustainSafe()) {
-          const pScan = scanKnownPotatoField()
-          if (pScan.potatoes > 0 && pScan.maturePct >= SUSTAIN_POTATO_MATURITY_PCT && !activeFireClaims().has('potatoes')) {
-            logEvent('sustain', 'potatoes ready, no potato keeper — initiating RPS')
-            const result = await runRps()
-            if (sustainState.potatoRole === 'mine') {
-              logEvent('sustain', 'won RPS — harvesting potatoes')
-              try {
-                await runHarvestPotatoesRightClick({ user: 'sustain', then: 'bake' })
-                if (!sustainState.active) break
-                const bakedInChest = await countBakedInChest()
-                if (bakedInChest >= 0 && bakedInChest < 64) {
-                  const toBake = Math.min(64, countOnHand('potato') - SUSTAIN_KEEP_RAW_POTATO)
-                  if (toBake > 0) {
-                    logEvent('sustain', `chest has ${bakedInChest} baked — loading ${toBake} raw into furnace`)
-                    await runBakePotatoesSustain(toBake)
-                  }
-                }
-                if (!sustainState.active) break
-                const rawCount = countOnHand('potato')
-                if (rawCount > SUSTAIN_KEEP_RAW_POTATO) {
-                  await ensureInsideHouse()
-                  await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-                  const r = await depositQuickMove('potato', HOPPER, { keep: SUSTAIN_KEEP_RAW_POTATO })
-                  logEvent('sustain', `raw potato deposit: deposited=${r.deposited} remaining=${r.remaining}`)
-                }
-              } catch (e) {
-                logEvent('sustain', `post-RPS potato cycle failed: ${e.message}`)
-                try { if (!followTarget && !insideHouse()) await runGoInside() } catch (_) {}
-              }
-              sustainState.potatoRole = null
+          const rival = rpsRivalName()
+          if (rpsAccepted && rival) {
+            rpsAccepted = false
+            await runRpsAcceptor(rival)
+          } else if (!rpsAccepted) {
+            const pScan = scanKnownPotatoField()
+            if (pScan.potatoes > 0 && pScan.maturePct >= SUSTAIN_POTATO_MATURITY_PCT && !activeFireClaims().has('potatoes')) {
+              logEvent('sustain', 'potatoes ready, no potato keeper — challenging for RPS')
+              await runRpsChallenger()
             }
+          }
+          if (sustainState.potatoRole === 'mine') {
+            logEvent('sustain', 'won RPS — harvesting potatoes')
+            try {
+              await runHarvestPotatoesRightClick({ user: 'sustain', then: 'bake' })
+              if (!sustainState.active) break
+              const bakedInChest = await countBakedInChest()
+              if (bakedInChest >= 0 && bakedInChest < 64) {
+                const toBake = Math.min(64, countOnHand('potato') - SUSTAIN_KEEP_RAW_POTATO)
+                if (toBake > 0) {
+                  logEvent('sustain', `chest has ${bakedInChest} baked — loading ${toBake} raw into furnace`)
+                  await runBakePotatoesSustain(toBake)
+                }
+              }
+              if (!sustainState.active) break
+              const rawCount = countOnHand('potato')
+              if (rawCount > SUSTAIN_KEEP_RAW_POTATO) {
+                await ensureInsideHouse()
+                await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+                const r = await depositQuickMove('potato', HOPPER, { keep: SUSTAIN_KEEP_RAW_POTATO })
+                logEvent('sustain', `raw potato deposit: deposited=${r.deposited} remaining=${r.remaining}`)
+              }
+            } catch (e) {
+              logEvent('sustain', `post-RPS potato cycle failed: ${e.message}`)
+              try { if (!followTarget && !insideHouse()) await runGoInside() } catch (_) {}
+            }
+            sustainState.potatoRole = null
           }
         }
 
@@ -7033,7 +7078,7 @@ bot.on('whisper', (username, message) => {
 
 // /me action messages don't fire the 'chat' event — they arrive via 'messagestr'
 // as "* PlayerName .r". Parse the username and route to fire coordination.
-const ACTION_COORD_RE = /^\* (\w+) (\.([rnsxwp]|\d[rps]))$/
+const ACTION_COORD_RE = /^\* (\w+) (\.([rnsxwpd]|\d[rps]))$/
 bot.on('messagestr', (msg) => {
   const m = ACTION_COORD_RE.exec(msg)
   if (!m) return
