@@ -7,6 +7,28 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-06-23 — Wheat snooze handler, potato bio-fuel discovery
+
+Bot state at start: pos (-265.5, 65, 570.5), HP 20, food 20, deaths 0, day 44929.
+
+**Players online:** Quesss (Dad), Musebot (Muse), Rainbot6032 (Private).
+
+### Wheat-alert snooze command added
+
+Added a chat-triggered snooze for wheat-ready alerts. Any non-bot player saying an acknowledgement phrase ("got it", "we know", "I hear you", etc.) silences the alert until the next growth cycle. Implemented as a pre-reflex check in the chat handler so it works without Ollama. Also added as an LLM intent (`wheat_snooze`) for natural-language routing when the LLM is available. Tested in-game — confirmed working. See [[../places/house-hopper]].
+
+### Potatoes work as bio-fuel
+
+User confirmed that **potatoes are accepted by the bio-fuel hopper** the same way wheat is. Updated [[../places/house-hopper]].
+
+### Roz death — fast damage inside house
+
+Roz died once this session — HP went 20→19→18→7→dead in ~4 seconds while inside the house. No hostile tag logged. Cause unknown — possibly player-inflicted.
+
+### Bed contention
+
+With 3 bots + 1 player and only 3 beds, Roz missed sleep on multiple night cycles (primary, left, and right all rejected). Got a bed when she was first inside.
+
 ## 2026-06-18 — Claude brain mode implemented, multi-bot fire coordination verified
 
 Bot state at start: pos (-266.5, 65, 571.5) inside house near furnace, HP 20, food 20, deaths 0, day 44382, timeOfDay 3025 (early morning).

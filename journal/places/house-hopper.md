@@ -18,10 +18,15 @@ Placed/observed 2026-05-30.
 
 ## Purpose — bio-fuel intake (user-stated)
 
-Per the user (2026-05-30): the hopper **drains into a machine below that converts wheat into
+Per the user (2026-05-30): the hopper **drains into a machine below that converts items into
 energy (bio-fuel)**, which powers the neighboring town's engines and generators underground.
 The farming bots aren't just farming — keeping this hopper fed is what sustains Oceanside's
 power. So this hopper is an **intake buffer, not storage**: whatever lands here is consumed.
+
+## Update — 2026-06-23: potatoes accepted as fuel
+
+User confirmed that **potatoes work the same way as wheat** in the hopper — the bio-fuel
+machine accepts both. This means surplus potatoes could also be routed here to generate power.
 
 **It drains continuously.** Observed: 18 wheat deposited → hopper empty within ~8–10s,
 consistent with a vanilla hopper's ~2.5 items/sec push rate into the block below. "Empty"
