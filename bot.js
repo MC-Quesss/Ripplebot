@@ -2858,14 +2858,16 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
     }
 
     try {
-      // Right-click the source 8 times to place one-at-a-time onto ring slots.
-      // This avoids picking up the whole stack — cursor stays empty between slots.
+      // Pick up the full stack, then right-click each ring slot to place exactly 1.
+      await bot.clickWindow(seedStack.slot, 0, 0) // left-click = pick up stack
+      await sleep(120)
       for (const ringSlot of BENCH_RING_SLOTS) {
-        await bot.clickWindow(seedStack.slot, 1, 0) // right-click = pick up 1
-        await sleep(120)
-        await bot.clickWindow(ringSlot, 0, 0) // left-click = deposit on grid
+        await bot.clickWindow(ringSlot, 1, 0) // right-click = place 1 from cursor
         await sleep(120)
       }
+      // Put remainder back on the source slot
+      await bot.clickWindow(seedStack.slot, 0, 0)
+      await sleep(120)
     } catch (e) {
       logEvent('craft', `ring placement error: ${e.message}`)
       await benchSafeCursorDump(win)
@@ -3042,6 +3044,13 @@ let fireStartupRivals = null // Set<name>: bots that roll-called during our own 
 let fireStandDownAnnounced = false
 
 function myFireName () { return (bot.username || NICKNAME || '').toLowerCase() }
+
+function isSameBot (a, b) {
+  if (a === b) return true
+  const ra = (resolveUsername(a) || a).toLowerCase()
+  const rb = (resolveUsername(b) || b).toLowerCase()
+  return ra === rb
+}
 
 const RPS_WORD_TO_CODE = { rock: 'r', paper: 'p', scissors: 's' }
 function parseFireCoord (message) {
@@ -3262,11 +3271,11 @@ async function runRpsMatch (rival, isChallenger) {
   for (let round = 1; round <= 10; round++) {
     if (!sustainState.active) return null
 
-    await lookAtPlayer(rival)
-
-    // Sync point: arm the listener BEFORE the chant so an early .g
-    // from the acceptor isn't dropped while the challenger sleeps.
+    // Arm round sync BEFORE any await — the acceptor sends .g immediately
+    // and it can arrive during lookAtPlayer if we arm too late.
     const throwSync = new Promise(resolve => { rpsReadyResolve = resolve })
+
+    await lookAtPlayer(rival)
 
     if (isChallenger) {
       bot.chat('Rock, paper, scissors, shoot!')
@@ -3416,9 +3425,12 @@ function trackFireCoordination (username, message) {
   }
   if (code.startsWith('throw:')) {
     const throw_ = code[6]
-    if (rpsState && name === rpsState.rival) {
+    const isRival = rpsState && isSameBot(name, rpsState.rival)
+    if (isRival) {
       logEvent('rps', `received ${name}'s throw: ${RPS_NAMES[throw_]}`)
       rpsState.resolve(throw_)
+    } else {
+      logEvent('rps-diag', `throw arrived but dropped: from=${name} rpsState=${!!rpsState} rival=${rpsState?.rival || 'null'}`)
     }
     return
   }
@@ -7324,6 +7336,7 @@ bot.on('whisper', (username, message) => {
 // as "* PlayerName .r". Parse the username and route to fire coordination.
 const ACTION_COORD_RE = /^\* (\w+) (\.([rnsxwpdg])|shoots (rock|paper|scissors))$/
 bot.on('messagestr', (msg) => {
+  if (msg.includes('shoots')) logEvent('rps-diag', `messagestr: "${msg}"`)
   const m = ACTION_COORD_RE.exec(msg)
   if (!m) return
   const rawName = m[1]
