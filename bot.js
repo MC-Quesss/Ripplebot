@@ -3229,16 +3229,17 @@ async function runRpsMatch (rival, isChallenger) {
   const myUsername = (bot.username || '').toLowerCase()
   const rivalUsername = rival.toLowerCase()
   const mySpot = myUsername < rivalUsername ? RPS_SPOT_NORTH : RPS_SPOT_SOUTH
+  // Arm the ready listener BEFORE pathfinding — if the rival arrives first
+  // and sends .g while we're still walking, we need to catch it.
+  const readyPromise = new Promise(resolve => { rpsReadyResolve = resolve })
   try {
     if (insideHouse()) await runGoOutside()
     await pathTo(mySpot, 1, 15000)
   } catch (e) {
+    rpsReadyResolve = null
     logEvent('rps', `failed to reach meet spot: ${e.message}`)
     return null
   }
-
-  // Signal ready and wait for rival's ready signal
-  const readyPromise = new Promise(resolve => { rpsReadyResolve = resolve })
   await lookAtPlayer(rival)
   bot.chat('/me .g')
   const rivalReady = await Promise.race([
@@ -3279,15 +3280,17 @@ async function runRpsMatch (rival, isChallenger) {
       return null
     }
 
-    // Both throw simultaneously
-    sendEmote('point')
-    await sleep(400)
-
+    // Arm throw listener IMMEDIATELY after sync — before any emote/sleep —
+    // so a fast rival's throw isn't dropped during cosmetic delays.
     const throws = ['r', 'p', 's']
     const myThrow = throws[Math.floor(Math.random() * 3)]
     const throwPromise = new Promise(resolve => {
       rpsState = { round, myThrow, rival, resolve }
     })
+
+    sendEmote('point')
+    await sleep(400)
+
     bot.chat(`/me shoots ${RPS_NAMES[myThrow]}`)
     logEvent('rps', `round ${round}: threw ${RPS_NAMES[myThrow]}`)
 
@@ -6899,7 +6902,14 @@ const CHAT_INTENTS = {
   },
   tell_story: {
     hint: 'tell a story, share a memory, or talk at length about a topic (args.topic = what to talk about)',
-    run: (user, args) => runTellStory(user, args.topic || 'something from your past'),
+    run: (user, args) => {
+      const t = bot.time?.timeOfDay
+      if (typeof t !== 'number' || t < STORY_PRE_BEDTIME_START - 1000 || t > 13500) {
+        logEvent('story-time', `tell_story intent outside story window (t=${t}), ignoring`)
+        return Promise.resolve()
+      }
+      return runTellStory(user, args.topic || 'something from your past')
+    },
   },
   keep_fire: { hint: 'start the autonomous keep-the-fire-going farm loop (only when explicitly asked to START keeping the fire — never for questions like "who is keeping the fire?" or "are you keeping the fire?")', run: (user) => runSustainFarm(user) },
   check_fire: {
@@ -6950,7 +6960,8 @@ async function runTellStory (user, topic) {
       system: personaSpec.systemPrompt,
       exemplars: personaSpec.exemplars,
       context,
-      lines: 6,
+      lines: 10,
+      maxChars: 350,
     })
     if (!lines || !lines.length) {
       bot.chat("I... had something. It's gone now.")
