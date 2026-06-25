@@ -7,6 +7,26 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-06-25 — Storytelling nights, sheep naming, exploration
+
+Bot state at start: pos (-265.5, 65, 570.5), HP 20, food 20, deaths 0, day 45035.
+
+**Players online:** Quesss (Dad), Musebot (Muse), Rainbot6032 (Private).
+
+### Three new community features added
+
+1. **Storytelling nights** — Private asks Roz for a story before bedtime (~25% of nights). All bots suppress auto-sleep during the story via chat coordination markers ("Gather round, everyone." / "...That is my story."). See [[../procedures/storytelling-nights]].
+
+2. **Named sheep** — Two sheep in the pen given names: Frue (green wool, color 13) and Fluffy (brown wool, color 12). Bot tracks them by entity metadata color. Named sheep appear in ambient prompts and conversation context. See [[../creatures/named-sheep]].
+
+3. **Exploration & cartography** — New idle-wander target (~8% chance when outside). Bot ventures 25–50 blocks out, scans for interesting blocks, reports in chat, returns home. 10-minute cooldown, daytime-only, death/HP safety. See [[../procedures/exploration]].
+
+### Open questions
+
+- Sheep color metadata: index 13 assumed from MC 1.12.2 protocol. Need to confirm it reads correctly on this modded server.
+- Exploration pathfinding: untested at distance. Modded blocks may confuse pathfinder at range.
+- Story generation quality: depends on which LLM is active (Qwen local vs Claude brain).
+
 ## 2026-06-23 — Wheat snooze handler, potato bio-fuel discovery
 
 Bot state at start: pos (-265.5, 65, 570.5), HP 20, food 20, deaths 0, day 44929.

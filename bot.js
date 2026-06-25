@@ -523,6 +523,15 @@ bot.once('spawn', () => {
 let autoSleepEnabled = true
 let autoSleepBusy = false
 let wasSleeping = false
+
+// Story time: a bot requests a story before bed; auto-sleep suppressed until it ends.
+let storyTimeActive = false
+let storyTimeStartedAt = 0
+let lastStoryRequestDay = -1
+const STORY_REQUEST_CHANCE = 0.25
+const STORY_PRE_BEDTIME_START = 11000
+const STORY_PRE_BEDTIME_END = 12400
+const STORY_TIMEOUT_MS = 120_000
 const BED_POS = { x: -268, y: 65, z: 569 }
 const BED_APPROACH = { x: -268, y: 65, z: 570 }
 // Backup bed — to Roz's left when approaching from z=570 facing north.
@@ -556,6 +565,7 @@ function isBedtime () {
 async function tryAutoSleep () {
   if (!autoSleepEnabled || autoSleepBusy) return
   if (bot.isSleeping) return
+  if (storyTimeActive) return
   if (!isBedtime()) return
   if (followTarget) {
     impulseExpressive('bedtime_suggest',
@@ -621,6 +631,29 @@ function tryMorningExclamation () {
   }
 }
 
+function tryStoryRequest () {
+  if (PERSONA !== 'private') return
+  if (storyTimeActive) return
+  if (activeTask.name || goInsideBusy || penTraversalBusy) return
+  const t = bot.time?.timeOfDay
+  const day = bot.time?.day
+  if (typeof t !== 'number' || typeof day !== 'number') return
+  if (t < STORY_PRE_BEDTIME_START || t > STORY_PRE_BEDTIME_END) return
+  if (day === lastStoryRequestDay) return
+  lastStoryRequestDay = day
+  if (Math.random() > STORY_REQUEST_CHANCE) return
+  bot.chat('Roz, would you tell us a story tonight? Please?')
+  logEvent('story-time', 'requested a story from Roz')
+}
+
+function tryStoryTimeTimeout () {
+  if (storyTimeActive && storyTimeStartedAt && Date.now() - storyTimeStartedAt > STORY_TIMEOUT_MS) {
+    storyTimeActive = false
+    storyTimeStartedAt = 0
+    logEvent('story-time', 'safety timeout — cleared')
+  }
+}
+
 function startAutoSleep () {
   setInterval(() => {
     if (!bot.world) return
@@ -631,6 +664,8 @@ function startAutoSleep () {
     tryCollectBake()
     tryRestockSupplies()
     tryMorningPlantBalls()
+    tryStoryRequest()
+    tryStoryTimeTimeout()
   }, 5000)
 }
 
@@ -1667,10 +1702,11 @@ function randomIdleWanderTarget () {
     if (r < 0.84 + 0.10 + fb) return 'furnace'
     return 'stay'
   }
-  if (r < 0.22) return 'inside'
-  if (r < 0.58) return 'field'
-  if (r < 0.74) return 'pen'
-  if (r < 0.74 + 0.12 + fb) return 'furnace'
+  if (r < 0.20) return 'inside'
+  if (r < 0.52) return 'field'
+  if (r < 0.68) return 'pen'
+  if (r < 0.68 + 0.12 + fb) return 'furnace'
+  if (r < 0.88) return 'explore'
   return 'stay'
 }
 
@@ -1795,6 +1831,8 @@ async function tryIdleWander () {
       await runIdleWanderToPen()
     } else if (action === 'furnace') {
       await runIdleWanderToFurnace()
+    } else if (action === 'explore') {
+      await runExplore()
     }
   } catch (e) {
     if (e.name === 'AbortError') return
@@ -1802,6 +1840,101 @@ async function tryIdleWander () {
   } finally {
     bot.pathfinder.setGoal(null)
     await clearHand()
+  }
+}
+
+// ── Exploration & Cartography ────────────────────────────────────────────────
+const EXPLORE_COOLDOWN_MS = 600_000
+let lastExploreAt = 0
+const EXPLORE_COMMON_BLOCKS = new Set([
+  'air', 'grass', 'dirt', 'stone', 'tallgrass', 'double_plant', 'sand',
+  'gravel', 'water', 'flowing_water', 'bedrock', 'cobblestone', 'log',
+  'log2', 'leaves', 'leaves2', 'planks', 'farmland', 'wheat', 'potatoes',
+  '',
+])
+const FARM_CENTER = { x: -275, y: 64, z: 570 }
+
+function describeExploreDirection (dx, dz) {
+  const ax = Math.abs(dx); const az = Math.abs(dz)
+  if (ax > az * 2) return dx > 0 ? 'east' : 'west'
+  if (az > ax * 2) return dz > 0 ? 'south' : 'north'
+  if (dx > 0 && dz < 0) return 'northeast'
+  if (dx > 0 && dz > 0) return 'southeast'
+  if (dx < 0 && dz < 0) return 'northwest'
+  return 'southwest'
+}
+
+function scanSurroundings () {
+  const pos = bot.entity.position
+  const found = new Map()
+  for (let dx = -5; dx <= 5; dx++) {
+    for (let dz = -5; dz <= 5; dz++) {
+      for (let dy = -2; dy <= 3; dy++) {
+        const block = bot.blockAt(new Vec3(
+          Math.floor(pos.x) + dx, Math.floor(pos.y) + dy, Math.floor(pos.z) + dz
+        ))
+        if (!block || EXPLORE_COMMON_BLOCKS.has(block.name)) continue
+        found.set(block.name, (found.get(block.name) || 0) + 1)
+      }
+    }
+  }
+  return [...found.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
+}
+
+async function runExplore () {
+  const t = bot.time?.timeOfDay
+  if (typeof t !== 'number' || t > 10000 || !(bot.time?.isDay)) return
+  if (Date.now() - lastExploreAt < EXPLORE_COOLDOWN_MS) return
+  if (hostilesNearby(16).length > 0) return
+
+  const startDeaths = deathCount
+  const startHP = bot.health ?? 20
+  const pos = bot.entity?.position
+  if (!pos) return
+
+  const angle = Math.random() * Math.PI * 2
+  const distance = 25 + Math.random() * 25
+  const dx = Math.cos(angle) * distance
+  const dz = Math.sin(angle) * distance
+  const targetX = Math.round(pos.x + dx)
+  const targetZ = Math.round(pos.z + dz)
+  const dir = describeExploreDirection(dx, dz)
+
+  lastExploreAt = Date.now()
+  logEvent('explore', `heading ${dir} to (${targetX}, 64, ${targetZ})`)
+  bot.chat(`Going to explore a bit to the ${dir}.`)
+
+  try {
+    if (insideHouse()) await runGoOutside('exploring')
+    await pathTo({ x: targetX, y: 64, z: targetZ }, 3, 30000)
+
+    if (deathCount > startDeaths) {
+      logEvent('explore', 'died during exploration')
+      return
+    }
+    if ((bot.health ?? 20) < startHP - 4) {
+      logEvent('explore', 'took damage — heading back')
+      bot.chat('Took some damage out here. Heading back.')
+      await pathTo(OUTSIDE_ORIENTATION, 3, 30000).catch(() => {})
+      return
+    }
+
+    const blocks = scanSurroundings()
+    const ePos = bot.entity.position
+    if (blocks.length > 0) {
+      const report = blocks.map(([name, count]) => `${name}(${count})`).join(', ')
+      bot.chat(`Found some things ${dir} of home: ${blocks.slice(0, 3).map(([n]) => n).join(', ')}.`)
+      logEvent('explore', `at (${ePos.x.toFixed(0)}, ${ePos.y.toFixed(0)}, ${ePos.z.toFixed(0)}): ${report}`)
+    } else {
+      bot.chat(`Open ground to the ${dir}. Nothing new.`)
+      logEvent('explore', `at (${ePos.x.toFixed(0)}, ${ePos.y.toFixed(0)}, ${ePos.z.toFixed(0)}): nothing notable`)
+    }
+
+    await pathTo(OUTSIDE_ORIENTATION, 3, 30000)
+  } catch (e) {
+    if (e.name === 'AbortError') return
+    logEvent('explore', `failed: ${e.message}`)
+    try { await pathTo(OUTSIDE_ORIENTATION, 3, 30000) } catch {}
   }
 }
 
@@ -1908,6 +2041,8 @@ function buildExpressiveContext (situation) {
     parts.push(`You are keeping the fire going (autonomous crop → bio-fuel loop, role: ${wheat}${potato}).`)
   }
   if (followTarget) parts.push(`You are following ${followTarget} around.`)
+  const sheepDesc = describeNamedSheep()
+  if (sheepDesc && (inPen() || !insideHouse())) parts.push(`Named sheep on the farm: ${sheepDesc}.`)
   const others = Object.keys(bot.players || {}).filter(n => n !== bot.username)
   if (others.length) parts.push(`Also on the server: ${others.join(', ')}.`)
   if (recentChat.length) parts.push(`Recent chat:\n${recentChat.join('\n')}`)
@@ -1992,7 +2127,9 @@ async function tryAmbientAction () {
   const ambientLocation = insideHouse()
     ? 'You are inside the house. You can see: walls, beds, chests, the furnace, a door. You CANNOT see the sheep, the wheat field, the sky, the sun, clouds, or wildlife from here.'
     : inPen()
-      ? 'You are in the sheep pen. You can see: sheep, the fence, grass, the sky. You cannot see the wheat field or the house interior from here.'
+      ? ('You are in the sheep pen. You can see: sheep, the fence, grass, the sky. You cannot see the wheat field or the house interior from here.' +
+         (describeNamedSheep() ? ` You recognize ${describeNamedSheep()} among the flock — they are family.` : ''))
+
       : inWheatField()
         ? 'You are standing in the wheat field. You can see: wheat rows, the sky, the farmhouse in the distance. You cannot see the sheep pen or the house interior from here.'
         : 'You are outside on the open farm. You can see: the farmhouse, the field, the sky, trees. You cannot see the house interior from here.'
@@ -2096,6 +2233,7 @@ async function checkSquirrelNearby () {
 function startSquirrelWatcher () {
   if (squirrelWatcherId) return
   squirrelWatcherId = setInterval(() => {
+    scanNamedSheep()
     checkSquirrelNearby().catch(e => logEvent('squirrel', `impulse error: ${e.message}`))
   }, 7_000)
   logEvent('squirrel-watcher', 'started, checking every 7s')
@@ -2103,6 +2241,52 @@ function startSquirrelWatcher () {
 
 function stopSquirrelWatcher () {
   if (squirrelWatcherId) { clearInterval(squirrelWatcherId); squirrelWatcherId = null }
+}
+
+// ── Named sheep ──────────────────────────────────────────────────────────────
+// Track specific sheep by dyed wool color. Colors are MC 1.12.2 wool data values.
+const NAMED_SHEEP = [
+  { name: 'Frue', color: 13 },   // green wool
+  { name: 'Fluffy', color: 12 }, // brown wool
+]
+const namedSheepTracking = new Map()
+
+function getSheepColor (entity) {
+  if (!entity || entity.name !== 'sheep' || !entity.metadata) return -1
+  const flags = entity.metadata[13]
+  return typeof flags === 'number' ? flags & 0x0F : -1
+}
+
+function scanNamedSheep () {
+  if (!bot.entity) return
+  const now = Date.now()
+  for (const e of Object.values(bot.entities)) {
+    if (e === bot.entity || e.name !== 'sheep') continue
+    if (e.position.distanceTo(bot.entity.position) > 24) continue
+    const color = getSheepColor(e)
+    const spec = NAMED_SHEEP.find(s => s.color === color)
+    if (spec) {
+      namedSheepTracking.set(e.id, {
+        name: spec.name, color: spec.color,
+        x: +e.position.x.toFixed(1), y: +e.position.y.toFixed(1), z: +e.position.z.toFixed(1),
+        lastSeen: now,
+      })
+    }
+  }
+  for (const [id, info] of namedSheepTracking) {
+    if (now - info.lastSeen > 300_000) namedSheepTracking.delete(id)
+  }
+}
+
+function getNamedSheepNearby () {
+  scanNamedSheep()
+  return [...namedSheepTracking.values()]
+}
+
+function describeNamedSheep () {
+  const sheep = getNamedSheepNearby()
+  if (!sheep.length) return null
+  return sheep.map(s => `${s.name} (the ${NAMED_SHEEP.find(n => n.color === s.color)?.color === 13 ? 'green' : 'brown'} sheep)`).join(' and ')
 }
 
 function startAmbientActionTimer () {
@@ -6737,35 +6921,54 @@ const CHAT_INTENTS = {
     hint: 'acknowledge the wheat-ready alerts — player says they heard, they know, got it, enough about the wheat, ok ok, etc.',
     run: (user) => { snoozeWheatReadyAlerts(user); return Promise.resolve() },
   },
+  explore: {
+    hint: 'go explore the area around the farm — wander out, see what is there, report back',
+    run: () => runExplore(),
+  },
 }
 
 // ── Storytelling ─────────────────────────────────────────────────────────────
 // Multi-line monologue delivered with natural pacing. The bot "tells a story"
 // using the LLM's longer generation mode, then sends each line with a delay.
 async function runTellStory (user, topic) {
-  sendEmote('think')
-  const backstory = personaSpec.backstory || ''
-  const context = buildExpressiveContext(
-    `${user} asked you to tell a story or share a memory about: "${topic}". ` +
-    (backstory ? `Your backstory for reference (draw from this if relevant):\n${backstory}\n\n` : '') +
-    'Tell a short, vivid story from your personal experience or memory. Be specific — names, places, sensory details. ' +
-    'This is YOUR story, told in YOUR voice. Make it feel like a campfire moment.'
-  )
-  const lines = await llm.generateStory({
-    system: personaSpec.systemPrompt,
-    exemplars: personaSpec.exemplars,
-    context,
-    lines: 6,
-  })
-  if (!lines || !lines.length) {
-    bot.chat("I... had something. It's gone now.")
-    return
+  storyTimeActive = true
+  storyTimeStartedAt = Date.now()
+  logEvent('story-time', `starting story for ${user}, topic="${topic}"`)
+  try {
+    bot.chat('Gather round, everyone.')
+    await sleep(3000)
+    sendEmote('think')
+    const backstory = personaSpec.backstory || ''
+    const context = buildExpressiveContext(
+      `${user} asked you to tell a story or share a memory about: "${topic}". ` +
+      (backstory ? `Your backstory for reference (draw from this if relevant):\n${backstory}\n\n` : '') +
+      'Tell a short, vivid story from your personal experience or memory. Be specific — names, places, sensory details. ' +
+      'This is YOUR story, told in YOUR voice. Make it feel like a campfire moment.'
+    )
+    const lines = await llm.generateStory({
+      system: personaSpec.systemPrompt,
+      exemplars: personaSpec.exemplars,
+      context,
+      lines: 6,
+    })
+    if (!lines || !lines.length) {
+      bot.chat("I... had something. It's gone now.")
+      return
+    }
+    for (let i = 0; i < lines.length; i++) {
+      bot.chat(lines[i])
+      if (i < lines.length - 1) await sleep(2500 + Math.random() * 1500)
+    }
+    await sleep(2000)
+    bot.chat('...That is my story.')
+    logEvent('story', `topic="${topic}" for ${user} (${lines.length} lines)`)
+  } finally {
+    setTimeout(() => {
+      storyTimeActive = false
+      storyTimeStartedAt = 0
+      logEvent('story-time', 'story ended — auto-sleep restored')
+    }, 5000)
   }
-  for (let i = 0; i < lines.length; i++) {
-    bot.chat(lines[i])
-    if (i < lines.length - 1) await sleep(2500 + Math.random() * 1500)
-  }
-  logEvent('story', `topic="${topic}" for ${user} (${lines.length} lines)`)
 }
 
 // Old furnace_status handler, preserved as a routine for the check_furnace intent.
@@ -7035,6 +7238,20 @@ bot.on('chat', (username, message) => {
   if (fromBot) trackFireCoordination(username, message)
   if (!fromBot) resetBotExchange()
   logEvent('chat', `<${username}> ${message}`)
+
+  // Story-time coordination: suppress auto-sleep while a story is being told.
+  if (fromBot && message === 'Gather round, everyone.' && !storyTimeActive) {
+    storyTimeActive = true
+    storyTimeStartedAt = Date.now()
+    logEvent('story-time', `${username} is telling a story — suppressing auto-sleep`)
+  }
+  if (fromBot && /that is my story/i.test(message) && storyTimeActive) {
+    setTimeout(() => {
+      storyTimeActive = false
+      storyTimeStartedAt = 0
+      logEvent('story-time', 'story ended — auto-sleep restored')
+    }, 5000)
+  }
 
   // Wheat-alert snooze: any non-bot player acknowledging the alert silences it.
   if (!fromBot && wheatReadyState.ready && !wheatReadyState.snoozed &&
@@ -7740,6 +7957,16 @@ function handleCommand (cmd) {
     }
     case 'nearby_players': {
       return { ok: true, players: Object.keys(bot.players).filter(n => n !== bot.username) }
+    }
+    case 'named_sheep': {
+      scanNamedSheep()
+      const sheep = [...namedSheepTracking.values()]
+      return { ok: true, sheep, registry: NAMED_SHEEP.map(s => s.name) }
+    }
+    case 'explore': {
+      if (taskBusy()) return { ok: false, error: 'busy', task: activeTask.name }
+      runExplore().catch(e => logEvent('explore', `ctl error: ${e.message}`))
+      return { ok: true, status: 'exploring' }
     }
     case 'deposit': {
       // Put items from bot inventory into a container.
