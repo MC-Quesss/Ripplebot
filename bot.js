@@ -3263,13 +3263,14 @@ async function runRpsMatch (rival, isChallenger) {
 
     await lookAtPlayer(rival)
 
-    // Challenger chants, then both sync with .g before throwing
+    // Sync point: arm the listener BEFORE the chant so an early .g
+    // from the acceptor isn't dropped while the challenger sleeps.
+    const throwSync = new Promise(resolve => { rpsReadyResolve = resolve })
+
     if (isChallenger) {
       bot.chat('Rock, paper, scissors, shoot!')
       await sleep(1000)
     }
-    // Sync point: both signal ready-to-throw and wait for rival
-    const throwSync = new Promise(resolve => { rpsReadyResolve = resolve })
     bot.chat('/me .g')
     const synced = await Promise.race([throwSync, sleep(15000).then(() => false)])
     rpsReadyResolve = null
