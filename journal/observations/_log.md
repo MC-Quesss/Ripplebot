@@ -7,6 +7,23 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-06-26 — BLizz encounter, modded hostile kill system
+
+BLizz (Thermal Foundation) attacked and killed both Muse and Roz. The hostile watchdog didn't fire because mineflayer resolves modded entities as `name: 'unknown'`.
+
+### Changes
+
+- Added `blizz`, `blitz`, `basalz` to `HOSTILE_NAMES` (safety net if name ever resolves).
+- Added `MODDED_HOSTILE_TYPES` array with Forge registry names (`thermalfoundation:blizz/blitz/basalz`).
+- Added **damage-reactive modded hostile kill**: on `entityHurt`, if no vanilla hostiles are nearby but `unknown` entities are within 16 blocks, fires `/kill @e[type=...,r=16]` for all known modded hostile types. 5-second cooldown.
+
+See [[../creatures/blizz]].
+
+### Open questions
+
+- Exact Forge entity type name for `/kill` command (`thermalfoundation:blizz`) is assumed — needs verification next encounter.
+- Other Thermal Foundation hostiles (blitz, basalz) not yet encountered — included preemptively.
+
 ## 2026-06-25 — Storytelling nights, sheep naming, exploration
 
 Bot state at start: pos (-265.5, 65, 570.5), HP 20, food 20, deaths 0, day 45035.

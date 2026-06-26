@@ -1005,7 +1005,14 @@ const HOSTILE_NAMES = new Set([
   'guardian', 'elder_guardian', 'shulker', 'vex',
   'evoker', 'vindicator', 'pillager', 'ravager',
   'wither', 'hoglin', 'zoglin', 'piglin_brute', 'warden',
+  'blizz', 'blitz', 'basalz',
 ])
+
+const MODDED_HOSTILE_TYPES = [
+  'thermalfoundation:blizz',
+  'thermalfoundation:blitz',
+  'thermalfoundation:basalz',
+]
 
 const JOKES = [
   { setup: 'Why did the bicycle fall over?', punchline: 'Because it was two-tired.' },
@@ -3261,44 +3268,33 @@ async function runRpsMatch (rival, isChallenger) {
     return null
   }
 
-  // Both ready — face each other and salute (the agreement to begin)
+  // Both ready — face each other
   await sleep(500)
   await lookAtPlayer(rival)
-  await sleep(300)
-  sendEmote('salute')
-  await sleep(2500)
 
+  const throws = ['r', 'p', 's']
   for (let round = 1; round <= 10; round++) {
     if (!sustainState.active) return null
 
-    // Arm round sync BEFORE any await — the acceptor sends .g immediately
-    // and it can arrive during lookAtPlayer if we arm too late.
-    const throwSync = new Promise(resolve => { rpsReadyResolve = resolve })
-
-    await lookAtPlayer(rival)
-
-    if (isChallenger) {
-      bot.chat('Rock, paper, scissors, shoot!')
-      await sleep(1000)
-    }
-    bot.chat('/me .g')
-    const synced = await Promise.race([throwSync, sleep(15000).then(() => false)])
-    rpsReadyResolve = null
-    if (!synced) {
-      logEvent('rps', `round ${round}: rival didn't sync — aborting`)
-      return null
-    }
-
-    // Arm throw listener IMMEDIATELY after sync — before any emote/sleep —
-    // so a fast rival's throw isn't dropped during cosmetic delays.
-    const throws = ['r', 'p', 's']
+    // Arm throw listener at the TOP of the round — before any emotes —
+    // so even with a multi-second offset between bots the listener is
+    // ready well before either bot reveals its throw.
     const myThrow = throws[Math.floor(Math.random() * 3)]
     const throwPromise = new Promise(resolve => {
       rpsState = { round, myThrow, rival, resolve }
     })
 
+    await lookAtPlayer(rival)
+
+    // Salute = "Rock, paper, scissors..."
+    sendEmote('salute')
+    if (isChallenger) bot.chat('Rock, paper, scissors...')
+    await sleep(2500)
+
+    // Point = "Shoot!" — straight from salute, hold 2s
     sendEmote('point')
-    await sleep(400)
+    if (isChallenger) bot.chat('Shoot!')
+    await sleep(2000)
 
     bot.chat(`/me shoots ${RPS_NAMES[myThrow]}`)
     logEvent('rps', `round ${round}: threw ${RPS_NAMES[myThrow]}`)
@@ -7436,6 +7432,7 @@ async function lookAtSun () {
 
 // React to damage: flee-lite. If something hurts us, stop whatever we're doing,
 // log a sentiment so the user sees it, and let auto-sleep/etc take over.
+let moddedHostileKillCooldown = 0
 bot.on('entityHurt', (entity) => {
   if (entity !== bot.entity) return
   logEvent('hurt', `HP now ${bot.health?.toFixed(0)}/20`)
@@ -7443,6 +7440,19 @@ bot.on('entityHurt', (entity) => {
     bot.chat('Taking damage — breaking off!')
     bot.pathfinder.setGoal(null)
     followTarget = null; followEntity = null; followChainPos = 0
+  }
+  const now = Date.now()
+  if (now - moddedHostileKillCooldown < 5000) return
+  if (hostilesNearby(16).length > 0) return
+  const unknowns = Object.values(bot.entities).filter(e =>
+    e !== bot.entity && e.name === 'unknown' && e.type !== 'object' &&
+    e.position.distanceTo(bot.entity.position) <= 16
+  )
+  if (!unknowns.length) return
+  moddedHostileKillCooldown = now
+  logEvent('hostile-watchdog', `damage from unknown source — killing modded hostiles`)
+  for (const type of MODDED_HOSTILE_TYPES) {
+    bot.chat(`/kill @e[type=${type},r=16]`)
   }
 })
 
