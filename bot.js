@@ -3273,6 +3273,7 @@ async function runRpsMatch (rival, isChallenger) {
   await lookAtPlayer(rival)
 
   const throws = ['r', 'p', 's']
+  let myWins = 0, rivalWins = 0
   for (let round = 1; round <= 10; round++) {
     if (!sustainState.active) return null
 
@@ -3319,24 +3320,47 @@ async function runRpsMatch (rival, isChallenger) {
       continue
     }
 
-    if (result === 'win') {
+    if (result === 'win') myWins++
+    else rivalWins++
+
+    // Best 2 out of 3 — check for match winner
+    if (myWins >= 2) {
       sendEmote('headbang')
-      bot.chat("I win! Potato duty is mine!")
       sustainState.potatoRole = 'mine'
-      logEvent('rps', 'won — claiming potato duty')
-    } else {
+      logEvent('rps', `won best-of-3 (${myWins}-${rivalWins}) — claiming potato duty`)
+      const said = await impulseExpressive('rps',
+        `You just won a best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}! You get potato duty. Celebrate your victory in one short sentence.`
+      ).catch(() => false)
+      if (!said) bot.chat('I win the potatoes!')
+      await sleep(2000)
+      return 'win'
+    }
+    if (rivalWins >= 2) {
       sendEmote('weep')
-      bot.chat("You win... potatoes are yours.")
       sustainState.potatoRole = 'theirs'
-      logEvent('rps', 'lost — rival gets potato duty')
+      logEvent('rps', `lost best-of-3 (${myWins}-${rivalWins}) — rival gets potato duty`)
+      const said = await impulseExpressive('rps',
+        `You just lost a best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}. They get potato duty. React with graceful defeat in one short sentence.`
+      ).catch(() => false)
+      if (!said) bot.chat('You win... potatoes are yours.')
+      await sleep(2000)
+      return 'lose'
+    }
+
+    // Mid-match round reaction
+    if (result === 'win') {
+      sendEmote(Math.random() < 0.5 ? 'clap' : 'yes')
+      bot.chat(`That's ${myWins}-${rivalWins}!`)
+    } else {
+      sendEmote('shrug')
+      bot.chat(`That's ${myWins}-${rivalWins}...`)
     }
     await sleep(2000)
-    return result
   }
 
-  // 10 ties in a row — alphabetical fallback
+  // 10 rounds without a best-of-3 winner — alphabetical fallback
   const iWin = myFireName() < rival
-  logEvent('rps', `10 ties — alphabetical fallback: ${iWin ? 'I win' : 'rival wins'}`)
+  logEvent('rps', `10 rounds no winner (${myWins}-${rivalWins}) — alphabetical fallback: ${iWin ? 'I win' : 'rival wins'}`)
   if (iWin) {
     sendEmote('headbang')
     sustainState.potatoRole = 'mine'
