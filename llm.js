@@ -252,7 +252,9 @@ async function generateStory ({ system, exemplars, context, maxChars = 200, line
       ? 'Lines you have said before, in your true voice:\n' + exemplars.map(e => `- ${e}`).join('\n')
       : null,
     `Rules: You are telling a short story or memory in-game Minecraft chat. ` +
-    `Write ${lines} separate lines (one thought per line, under ${maxChars} characters each). ` +
+    `Write ${lines} separate lines (under ${maxChars} characters each). ` +
+    'Each line should be a rich, vivid thought — use the full length to paint a scene with sensory detail, emotion, or meaning. ' +
+    'Do not write short choppy fragments. Make every line land. ' +
     'Plain text only — no quotation marks, no narration tags, no emoji, no numbering, ' +
     "and never a line starting with '/'. Stay in character. Keep it wholesome. " +
     'Each line should feel like a natural pause in speech — as if you are telling this to someone sitting beside you by a fire. ' +

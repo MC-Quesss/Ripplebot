@@ -7096,8 +7096,8 @@ async function runTellStory (user, topic) {
       system: personaSpec.systemPrompt,
       exemplars: personaSpec.exemplars,
       context,
-      lines: 10,
-      maxChars: 350,
+      lines: 5,
+      maxChars: 240,
     })
     if (!lines || !lines.length) {
       bot.chat("I... had something. It's gone now.")
@@ -7105,7 +7105,7 @@ async function runTellStory (user, topic) {
     }
     for (let i = 0; i < lines.length; i++) {
       bot.chat(lines[i])
-      if (i < lines.length - 1) await sleep(2500 + Math.random() * 1500)
+      if (i < lines.length - 1) await sleep(4000 + Math.random() * 2000)
     }
     await sleep(2000)
     bot.chat('...That is my story.')
