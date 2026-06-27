@@ -1014,11 +1014,13 @@ const HARVEST_WAYPOINTS = {
   potato_center:       { x: -285, y: 63, z: 578 },
   furnace:             { x: -265, y: 65, z: 571 },
 }
-const POTATO_BOUNDS = { xMin: -287, xMax: -283, zMin: 576, zMax: 592, y: 63 }
+const POTATO_BOUNDS = { xMin: -287, xMax: -280, zMin: 576, zMax: 592, y: 63 }
 const POTATO_SWEEP_POINTS = [
   { x: -284, y: 63, z: 578 }, { x: -286, y: 63, z: 578 },
   { x: -284, y: 63, z: 579 }, { x: -286, y: 63, z: 579 },
   { x: -287, y: 63, z: 577 }, { x: -286, y: 63, z: 577 },
+  { x: -281, y: 63, z: 582 }, { x: -281, y: 63, z: 586 },
+  { x: -283, y: 63, z: 584 },
 ]
 const FIELD_BOUNDS = { xMin: -287, xMax: -279, zMin: 559, zMax: 565 }
 const NORTH_FIELD_BOUNDS = { xMin: -287, xMax: -279, zMin: 551, zMax: 557 }
@@ -2533,6 +2535,87 @@ async function repairBareWheatTilesFromFieldVisit ({ announce = true, limit = 10
   return { repaired, bare: bare.length }
 }
 
+function findBarePotatoTiles () {
+  const bare = []
+  for (let z = POTATO_BOUNDS.zMin; z <= POTATO_BOUNDS.zMax; z++) {
+    for (let x = POTATO_BOUNDS.xMin; x <= POTATO_BOUNDS.xMax; x++) {
+      const below = bot.blockAt(new Vec3(x, POTATO_BOUNDS.y - 1, z))
+      if (!below || below.name !== 'farmland') continue
+      const cropBlock = bot.blockAt(new Vec3(x, POTATO_BOUNDS.y, z))
+      if (!cropBlock) continue
+      if (cropBlock.name === 'potatoes') continue
+      if (cropBlock.name === 'air' || cropBlock.name === 'tallgrass' || cropBlock.name === 'deadbush') {
+        bare.push({ x, y: POTATO_BOUNDS.y, z, reason: `bare:${cropBlock.name}` })
+      }
+    }
+  }
+  return bare
+}
+
+function inPotatoField () {
+  const p = bot.entity?.position
+  if (!p) return false
+  return p.x >= POTATO_BOUNDS.xMin - 0.75 && p.x <= POTATO_BOUNDS.xMax + 0.75 &&
+    p.z >= POTATO_BOUNDS.zMin - 0.75 && p.z <= POTATO_BOUNDS.zMax + 0.75 &&
+    p.y >= 62 && p.y <= 66
+}
+
+async function repairBarePotatoTilesFromFieldVisit ({ announce = true, limit = 108 } = {}) {
+  const bare = findBarePotatoTiles().slice(0, limit)
+  if (!bare.length) return { repaired: 0, bare: 0 }
+
+  const potatoItem = bot.inventory.items().find(i => i.name === 'potato')
+  if (!potatoItem) {
+    if (announce) logEvent('potato-repair', `bare=${bare.length} no potatoes`)
+    return { repaired: 0, bare: bare.length, noPotatoes: true }
+  }
+
+  if (announce) logEvent('potato-repair', `replanting ${bare.length} bare tile(s)`)
+
+  let repaired = 0
+  try {
+    for (const tile of bare) {
+      await pathTo({ x: tile.x, y: tile.y, z: tile.z }, 1, 5000)
+      await sleep(150)
+
+      const freshCrop = bot.blockAt(new Vec3(tile.x, tile.y, tile.z))
+      const freshBelow = bot.blockAt(new Vec3(tile.x, tile.y - 1, tile.z))
+      if (!freshBelow || freshBelow.name !== 'farmland') continue
+      if (freshCrop && freshCrop.name === 'potatoes') continue
+      if (freshCrop && freshCrop.name !== 'air' && !['tallgrass', 'deadbush'].includes(freshCrop.name)) {
+        logEvent('potato-repair', `skip ${tile.x},${tile.y},${tile.z}: occupied by ${freshCrop.name}`)
+        continue
+      }
+
+      const potato = bot.inventory.items().find(i => i.name === 'potato')
+      if (!potato) {
+        logEvent('potato-repair', 'ran out of potatoes')
+        break
+      }
+
+      try {
+        await bot.equip(potato, 'hand')
+        await bot.placeBlock(freshBelow, new Vec3(0, 1, 0))
+        repaired++
+        logEvent('potato-repair', `replanted ${tile.x},${tile.y},${tile.z}`)
+        await sleep(250)
+      } catch (e) {
+        const afterFail = bot.blockAt(new Vec3(tile.x, tile.y, tile.z))
+        if (afterFail && afterFail.name === 'potatoes') {
+          repaired++
+          logEvent('potato-repair', `replanted ${tile.x},${tile.y},${tile.z} despite timeout`)
+        } else {
+          logEvent('potato-repair', `plant fail ${tile.x},${tile.y},${tile.z}: ${e.message}`)
+        }
+      }
+    }
+  } finally {
+    await clearHand()
+  }
+
+  if (announce) logEvent('potato-repair', `done repaired=${repaired}/${bare.length}`)
+  return { repaired, bare: bare.length }
+}
 
 let proactiveRepairBusy = false
 setInterval(async () => {
@@ -2542,18 +2625,30 @@ setInterval(async () => {
   if (isBedtime()) return
   if (insideHouse() || inPen()) return
   if (Date.now() - lastFieldRepairAt < FIELD_WANDER_REPAIR_COOLDOWN_MS) return
-  const bare = findBareWheatTiles()
-  if (!bare.length) return
+
+  const bareWheat = findBareWheatTiles()
+  const barePotato = findBarePotatoTiles()
+  if (!bareWheat.length && !barePotato.length) return
+
   proactiveRepairBusy = true
-  logEvent('wheat-repair', `proactive scan found ${bare.length} bare tile(s)`)
   try {
-    if (!inWheatField()) {
-      const pt = WHEAT_FIELD_STAND_POINTS[Math.floor(Math.random() * WHEAT_FIELD_STAND_POINTS.length)]
-      await pathTo(pt, 1, 8000)
+    if (bareWheat.length) {
+      logEvent('wheat-repair', `proactive scan found ${bareWheat.length} bare tile(s)`)
+      if (!inWheatField()) {
+        const pt = WHEAT_FIELD_STAND_POINTS[Math.floor(Math.random() * WHEAT_FIELD_STAND_POINTS.length)]
+        await pathTo(pt, 1, 8000)
+      }
+      if (inWheatField()) await repairBareWheatTilesFromFieldVisit({ announce: true })
     }
-    if (inWheatField()) await repairBareWheatTilesFromFieldVisit({ announce: true })
+    if (barePotato.length && !isBedtime() && !activeTask.name) {
+      logEvent('potato-repair', `proactive scan found ${barePotato.length} bare tile(s)`)
+      if (!inPotatoField()) {
+        await pathTo(HARVEST_WAYPOINTS.potato_approach, 1, 8000)
+      }
+      await repairBarePotatoTilesFromFieldVisit({ announce: true })
+    }
   } catch (e) {
-    if (e.name !== 'AbortError') logEvent('wheat-repair', `proactive repair failed: ${e.message}`)
+    if (e.name !== 'AbortError') logEvent('field-repair', `proactive repair failed: ${e.message}`)
   }
   proactiveRepairBusy = false
 }, 15 * 1000)
@@ -3301,13 +3396,12 @@ async function runFunRpsChallenger () {
   const pick = rpsFunRivalName()
   if (!pick) { logEvent('rps-fun', 'no bot nearby — skipping'); return null }
   rpsFunBusy = true
-  const { username: rival, nick } = pick
-  logEvent('rps-fun', `challenging ${nick} (${rival}) for fun`)
+  logEvent('rps-fun', 'challenging nearby bots for fun')
   const said = await impulseExpressive('rps',
-    `You want to play a quick game of rock-paper-scissors with ${nick} — just for fun, no stakes. Challenge them in one short playful sentence.`,
+    'You want to play a quick game of rock-paper-scissors with one of the other bots — just for fun, no stakes. Challenge them in one short playful sentence. Do not use a specific name.',
     { skipGate: true }
   ).catch(() => false)
-  if (!said) bot.chat(`Hey ${nick}, wanna play rock-paper-scissors?`)
+  if (!said) bot.chat('Anyone up for rock-paper-scissors?')
   const acceptPromise = new Promise(resolve => { rpsFunChallengeResolve = resolve })
   bot.chat('/me .j')
   const accepted = await Promise.race([
@@ -3317,13 +3411,13 @@ async function runFunRpsChallenger () {
   rpsFunChallengeResolve = null
   if (!accepted) {
     rpsFunBusy = false
-    logEvent('rps-fun', 'rival did not accept — oh well')
+    logEvent('rps-fun', 'no one accepted — oh well')
     return null
   }
-  const actualRival = typeof accepted === 'string' ? accepted : rival
-  if (actualRival !== rival) logEvent('rps-fun', `${actualRival} accepted instead of ${rival} — playing them`)
+  const rival = typeof accepted === 'string' ? accepted : pick.username
+  logEvent('rps-fun', `${rival} accepted — let's play`)
   try {
-    return await runRpsMatch(actualRival, true, { forFun: true })
+    return await runRpsMatch(rival, true, { forFun: true })
   } finally {
     rpsFunBusy = false
   }
