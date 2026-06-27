@@ -7355,7 +7355,7 @@ async function executeClaudeResponse (username, message, result, { namedMe, from
         logEvent('claude-brain', `rejected unknown action: ${cmd.action}`)
         continue
       }
-      if (fromBot) {
+      if (fromBot && cmd.action !== 'tell_story') {
         logEvent('claude-brain', `rejected bot-originated action: ${cmd.action}`)
         continue
       }
@@ -7395,6 +7395,15 @@ bot.on('chat', (username, message) => {
   if (fromBot) trackFireCoordination(username, message)
   if (!fromBot) resetBotExchange()
   logEvent('chat', `<${username}> ${message}`)
+
+  // Story-time coordination: bot story request triggers tell_story directly
+  if (fromBot && /would you tell us a story/i.test(message) && !storyTimeActive && PERSONA === 'roz') {
+    logEvent('story-time', `${username} requested a story — starting`)
+    storyTimeActive = true
+    storyTimeStartedAt = Date.now()
+    runTellStory(username, 'something from your past').catch(e => logEvent('story-time', `story failed: ${e.message}`))
+    return
+  }
 
   // Story-time coordination: come inside early, suppress auto-sleep, gather near the beds.
   if (fromBot && /let's head inside/i.test(message) && !storyTimeActive && !goInsideBusy) {
@@ -7478,6 +7487,12 @@ bot.on('chat', (username, message) => {
     }
     logEvent('mention', `<${username}> ${message}`)
     fs.appendFileSync(path.join(__dirname, 'mentions.log'), `${new Date().toISOString()} <${username}> ${message}\n`)
+  }
+
+  // "Who is keeping the fire going?" — answer even if not addressed by name
+  if (!fromBot && /\b(who(?:'s| is)?|are you|is anyone|anyone)\b.*\b(fire|keeping.+fire|fire.+duty|tending)\b/i.test(message)) {
+    const rule = CHAT_HANDLERS.find(r => r.name === 'check_fire')
+    if (rule) { rule.handler(); return }
   }
 
   // A pending joke's punchline lands on the first human response (the 30s
