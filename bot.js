@@ -3234,6 +3234,7 @@ let rpsReadyResolve = null // resolve function for rival's .g ready signal
 let rpsFunAccepted = null // set to challenger's name for fun-RPS (.j)
 let rpsFunChallengeResolve = null // resolve for fun-RPS acceptance
 let rpsFunBusy = false // prevents cascade: only one fun-RPS at a time
+let rpsFunLastJ = 0 // timestamp of last .j seen — echo suppression
 
 function rpsWinner (a, b) {
   if (a === b) return 'tie'
@@ -3632,12 +3633,19 @@ function trackFireCoordination (username, message) {
     return
   }
   if (code === 'j') {
+    rpsFunLastJ = Date.now()
     if (rpsFunChallengeResolve) {
       logEvent('rps-fun', `${username} accepted our fun challenge`)
       const resolve = rpsFunChallengeResolve
       rpsFunChallengeResolve = null
       resolve(name)
     } else if (!activeTask.name && !rpsState && !rpsFunBusy && idleWanderEnabled) {
+      const now = Date.now()
+      if (now - rpsFunLastJ < 5000) {
+        logEvent('rps-fun', `ignoring ${username}'s .j — echo of recent challenge`)
+        return
+      }
+      rpsFunLastJ = now
       const me = (bot.username || '').toLowerCase()
       const challengerName = name.toLowerCase()
       const higherPriority = Object.values(bot.players)
