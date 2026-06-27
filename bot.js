@@ -822,6 +822,8 @@ if (brainMode === 'claude' && !claude.status().hasKey) {
   brainMode = 'local'
 } else if (brainMode === 'claude') {
   logEvent('brain', `starting in claude mode (${claude.status().model})`)
+} else if (brainMode === 'remote') {
+  logEvent('brain', 'starting in remote mode (chat driven externally via bot-ctl)')
 }
 const CLAUDE_PREFILTER = (process.env.CLAUDE_PREFILTER || 'local').toLowerCase()
 
@@ -2103,7 +2105,7 @@ function asActionText (line) {
   if (!t) return null
   // First-person openers and vocative interjections can't follow "~Name " —
   // drop the line rather than print gibberish.
-  if (/^(i|i'm|i've|i'd|i'll|me|my|we|oh|ah|alas|heavens|good|dear|behold|observe|what|did|was|by|please|attention)\b/i.test(t)) return null
+  if (/^(i|i'm|i've|i'd|i'll|me|my|we|oh|ah|alas|heavens|good|dear|behold|observe|what|did|was|by|please|attention|the|a|an|this|that|it|there|here|so|and|but|if|as|then|today|tonight|every|all|one|she|he|they|her|his|our|its)\b/i.test(t)) return null
   return t[0].toLowerCase() + t.slice(1)
 }
 
@@ -2112,11 +2114,11 @@ function asActionText (line) {
 // chat that arrived meanwhile — stale lines are never written), generate from
 // the persona spec, speak through the gate. The model may PASS; Ollama being
 // down means silence. Returns whether a line was spoken.
-async function impulseExpressive (kind, situation, { me = false, delayMs = 0 } = {}) {
-  if (!expressiveGateOpen(kind)) return false
+async function impulseExpressive (kind, situation, { me = false, delayMs = 0, skipGate = false } = {}) {
+  if (!skipGate && !expressiveGateOpen(kind)) return false
   if (delayMs) {
     await sleep(delayMs)
-    if (!expressiveGateOpen(kind)) return false // something else spoke while we waited
+    if (!skipGate && !expressiveGateOpen(kind)) return false // something else spoke while we waited
   }
   const gen = () => llm.generateLine({
     system: personaSpec.systemPrompt,
@@ -2159,6 +2161,16 @@ async function tryAmbientAction () {
   if (bot.isSleeping) return
   if (goInsideBusy || penTraversalBusy) return
   if (!idleWanderEnabled) return // "stand down" silences ambient chatter too
+  if (rpsFunAccepted) {
+    const challenger = rpsFunAccepted
+    rpsFunAccepted = null
+    await runFunRpsAcceptor(challenger)
+    return
+  }
+  if (!rpsState && Math.random() < 0.15) {
+    const started = await runFunRpsChallenger()
+    if (started) return
+  }
   if (!expressiveGateOpen('ambient')) return
   if (Math.random() < 0.4 && await tryWildlifeComment()) return
   const ambientLocation = insideHouse()
@@ -3078,7 +3090,7 @@ async function clearJammedHopper () {
 // split the fields and extras supervise from the field edge.
 const FIRE_CLAIM_TTL_MS = 45 * 60 * 1000
 const FIRE_ROLLCALL_WAIT_MS = 10000
-const FIRE_COORD_RE = /(?:\.([rnsxwpdgbf])|shoots (rock|paper|scissors))$/
+const FIRE_COORD_RE = /(?:\.([rnsxwpdgbfj])|shoots (rock|paper|scissors))$/
 const fireCrew = new Map() // bot name (lowercase) -> { field: 'north'|'south'|'potatoes'|'supervise', at }
 let fireStartupRivals = null // Set<name>: bots that roll-called during our own startup wait
 let fireStandDownAnnounced = false
@@ -3225,6 +3237,8 @@ let rpsState = null // { round, myThrow, rival, resolve }
 let rpsChallengeResolve = null // resolve function for incoming .d acceptance
 let rpsAccepted = null // set to challenger's name when we receive a .d challenge
 let rpsReadyResolve = null // resolve function for rival's .g ready signal
+let rpsFunAccepted = null // set to challenger's name for fun-RPS (.j)
+let rpsFunChallengeResolve = null // resolve for fun-RPS acceptance
 
 function rpsWinner (a, b) {
   if (a === b) return 'tie'
@@ -3272,7 +3286,47 @@ async function runRpsAcceptor (rival) {
   return runRpsMatch(rival, false)
 }
 
-async function runRpsMatch (rival, isChallenger) {
+// ── Fun RPS — no stakes, just for play ──────────────────────────────────────
+function rpsFunRivalName () {
+  const me = (bot.username || '').toLowerCase()
+  const nearby = Object.values(bot.players)
+    .filter(p => p.entity && p.username.toLowerCase() !== me &&
+      p.entity.position.distanceTo(bot.entity.position) < 32 &&
+      looksLikeBot(p.username))
+  if (!nearby.length) return null
+  return nearby[Math.floor(Math.random() * nearby.length)].username
+}
+
+async function runFunRpsChallenger () {
+  const rival = rpsFunRivalName()
+  if (!rival) { logEvent('rps-fun', 'no bot nearby — skipping'); return null }
+  logEvent('rps-fun', `challenging ${rival} for fun`)
+  const said = await impulseExpressive('rps',
+    `You want to play a quick game of rock-paper-scissors with ${rival} — just for fun, no stakes. Challenge them in one short playful sentence.`,
+    { skipGate: true }
+  ).catch(() => false)
+  if (!said) bot.chat(`Hey ${rival}, wanna play rock-paper-scissors?`)
+  const acceptPromise = new Promise(resolve => { rpsFunChallengeResolve = resolve })
+  bot.chat('/me .j')
+  const accepted = await Promise.race([
+    acceptPromise,
+    sleep(15000).then(() => false)
+  ])
+  rpsFunChallengeResolve = null
+  if (!accepted) {
+    logEvent('rps-fun', 'rival did not accept — oh well')
+    return null
+  }
+  return runRpsMatch(rival, true, { forFun: true })
+}
+
+async function runFunRpsAcceptor (rival) {
+  logEvent('rps-fun', `accepting ${rival}'s fun RPS challenge`)
+  bot.chat('/me .j')
+  return runRpsMatch(rival, false, { forFun: true })
+}
+
+async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
   // Each bot goes to a different spot so they face each other.
   // Compare real usernames so both bots agree on who goes where.
   const myUsername = (bot.username || '').toLowerCase()
@@ -3308,7 +3362,7 @@ async function runRpsMatch (rival, isChallenger) {
   const throws = ['r', 'p', 's']
   let myWins = 0, rivalWins = 0
   for (let round = 1; round <= 10; round++) {
-    if (!sustainState.active) return null
+    if (!forFun && !sustainState.active) return null
 
     // Arm throw listener at the TOP of the round — before any emotes —
     // so even with a multi-second offset between bots the listener is
@@ -3359,23 +3413,43 @@ async function runRpsMatch (rival, isChallenger) {
     // Best 2 out of 3 — check for match winner
     if (myWins >= 2) {
       sendEmote('headbang')
-      sustainState.potatoRole = 'mine'
-      logEvent('rps', `won best-of-3 (${myWins}-${rivalWins}) — claiming potato duty`)
-      const said = await impulseExpressive('rps',
-        `You just won a best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}! You get potato duty. Celebrate — be genuinely excited, playful, triumphant. No task language, no "task acquired." One short sentence, like you're gloating to a friend.`
-      ).catch(() => false)
-      if (!said) bot.chat('I win the potatoes!')
+      if (forFun) {
+        logEvent('rps-fun', `won best-of-3 (${myWins}-${rivalWins}) against ${rival} — just for fun`)
+        const said = await impulseExpressive('rps',
+          `You just won a friendly best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}! No stakes, just fun. Celebrate with playful gloating — one short sentence.`,
+          { skipGate: true }
+        ).catch(() => false)
+        if (!said) bot.chat('Ha! I win!')
+      } else {
+        sustainState.potatoRole = 'mine'
+        logEvent('rps', `won best-of-3 (${myWins}-${rivalWins}) — claiming potato duty`)
+        const said = await impulseExpressive('rps',
+          `You just won a best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}! You get potato duty. Celebrate — be genuinely excited, playful, triumphant. No task language, no "task acquired." One short sentence, like you're gloating to a friend.`,
+          { skipGate: true }
+        ).catch(() => false)
+        if (!said) bot.chat('I win the potatoes!')
+      }
       await sleep(2000)
       return 'win'
     }
     if (rivalWins >= 2) {
       sendEmote('weep')
-      sustainState.potatoRole = 'theirs'
-      logEvent('rps', `lost best-of-3 (${myWins}-${rivalWins}) — rival gets potato duty`)
-      const said = await impulseExpressive('rps',
-        `You just lost a best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}. They get potato duty. React with warmth and humor — a playful concession, not clinical acceptance. No task language. One short sentence.`
-      ).catch(() => false)
-      if (!said) bot.chat('You win... potatoes are yours.')
+      if (forFun) {
+        logEvent('rps-fun', `lost best-of-3 (${myWins}-${rivalWins}) against ${rival} — just for fun`)
+        const said = await impulseExpressive('rps',
+          `You just lost a friendly best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}. No stakes, just fun. React with playful concession — one short sentence.`,
+          { skipGate: true }
+        ).catch(() => false)
+        if (!said) bot.chat('Good game! You got me.')
+      } else {
+        sustainState.potatoRole = 'theirs'
+        logEvent('rps', `lost best-of-3 (${myWins}-${rivalWins}) — rival gets potato duty`)
+        const said = await impulseExpressive('rps',
+          `You just lost a best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}. They get potato duty. React with warmth and humor — a playful concession, not clinical acceptance. No task language. One short sentence.`,
+          { skipGate: true }
+        ).catch(() => false)
+        if (!said) bot.chat('You win... potatoes are yours.')
+      }
       await sleep(2000)
       return 'lose'
     }
@@ -3392,6 +3466,12 @@ async function runRpsMatch (rival, isChallenger) {
   }
 
   // 10 rounds without a best-of-3 winner — alphabetical fallback
+  if (forFun) {
+    logEvent('rps-fun', `10 rounds no winner (${myWins}-${rivalWins}) — calling it a draw`)
+    bot.chat("We'll call that a draw!")
+    await sleep(2000)
+    return 'draw'
+  }
   const iWin = myFireName() < rival
   logEvent('rps', `10 rounds no winner (${myWins}-${rivalWins}) — alphabetical fallback: ${iWin ? 'I win' : 'rival wins'}`)
   if (iWin) {
@@ -3539,6 +3619,16 @@ function trackFireCoordination (username, message) {
     if (benchHolder === name) benchHolder = null
     logEvent('bench-lock', `${username} released the bench`)
     if (benchFreeResolve) { benchFreeResolve(); benchFreeResolve = null }
+    return
+  }
+  if (code === 'j') {
+    if (rpsFunChallengeResolve) {
+      logEvent('rps-fun', `${username} accepted our fun challenge`)
+      rpsFunChallengeResolve(true)
+    } else if (!activeTask.name && !rpsState && idleWanderEnabled) {
+      rpsFunAccepted = name
+      logEvent('rps-fun', `${username} challenged us to fun RPS`)
+    }
     return
   }
 }
@@ -7231,6 +7321,23 @@ function buildClaudeChatHistory () {
 async function routeChat (username, message, { namedMe, fromBot }) {
   if (fromBot && !botExchangeAllows(username)) return
 
+  if (brainMode === 'remote') {
+    const verdict = await llm.classify({
+      system: buildRouterSystemPrompt(),
+      user: [
+        recentChat.length ? `Recent chat (oldest first):\n${recentChat.join('\n')}` : null,
+        `Latest line — <${username}>: ${message}`,
+      ].filter(Boolean).join('\n\n'),
+    })
+    if (verdict) {
+      const audience = String(verdict.audience || 'unclear')
+      const kind = String(verdict.kind || 'noise')
+      const relevance = Math.max(0, Math.min(10, Number(verdict.relevance) || 0))
+      logEvent('chat-prefilter', `<${username}> ${message} -> ${JSON.stringify({ audience, kind, relevance })}`)
+    }
+    return
+  }
+
   if (brainMode === 'claude') {
     if (CLAUDE_PREFILTER === 'local') {
       const verdict = await llm.classify({
@@ -8022,6 +8129,11 @@ function handleCommand (cmd) {
         logEvent('brain', 'switched to local')
         return { ok: true, mode: 'local', model: llm.status().model }
       }
+      if (newMode === 'remote') {
+        brainMode = 'remote'
+        logEvent('brain', 'switched to remote (chat driven externally via bot-ctl)')
+        return { ok: true, mode: 'remote' }
+      }
       return { ok: true, mode: brainMode, local: llm.status(), claude: claude.status(), prefilter: CLAUDE_PREFILTER }
     }
     case 'mem': {
@@ -8777,6 +8889,10 @@ function handleCommand (cmd) {
       if (was) announceFireStandDown()
       abortGen++
       return { ok: true, stopped: was }
+    }
+    case 'rps_fun': {
+      runFunRpsChallenger().catch(e => logEvent('rps-fun-error', e.message))
+      return { ok: true, started: true }
     }
     case 'deposit_named': {
       const names = Array.isArray(args && args.names) ? args.names : []
