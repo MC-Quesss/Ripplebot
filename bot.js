@@ -2161,12 +2161,6 @@ async function tryAmbientAction () {
   if (bot.isSleeping) return
   if (goInsideBusy || penTraversalBusy) return
   if (!idleWanderEnabled) return // "stand down" silences ambient chatter too
-  if (rpsFunAccepted) {
-    const challenger = rpsFunAccepted
-    rpsFunAccepted = null
-    await runFunRpsAcceptor(challenger)
-    return
-  }
   if (!rpsState && Math.random() < 0.15) {
     const started = await runFunRpsChallenger()
     if (started) return
@@ -3626,8 +3620,8 @@ function trackFireCoordination (username, message) {
       logEvent('rps-fun', `${username} accepted our fun challenge`)
       rpsFunChallengeResolve(true)
     } else if (!activeTask.name && !rpsState && idleWanderEnabled) {
-      rpsFunAccepted = name
-      logEvent('rps-fun', `${username} challenged us to fun RPS`)
+      logEvent('rps-fun', `${username} challenged us to fun RPS — accepting`)
+      runFunRpsAcceptor(name).catch(e => logEvent('rps-fun', `acceptor error: ${e.message}`))
     }
     return
   }
