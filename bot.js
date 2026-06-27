@@ -3233,6 +3233,7 @@ let rpsAccepted = null // set to challenger's name when we receive a .d challeng
 let rpsReadyResolve = null // resolve function for rival's .g ready signal
 let rpsFunAccepted = null // set to challenger's name for fun-RPS (.j)
 let rpsFunChallengeResolve = null // resolve for fun-RPS acceptance
+let rpsFunBusy = false // prevents cascade: only one fun-RPS at a time
 
 function rpsWinner (a, b) {
   if (a === b) return 'tie'
@@ -3293,8 +3294,10 @@ function rpsFunRivalName () {
 }
 
 async function runFunRpsChallenger () {
+  if (rpsFunBusy) return null
   const pick = rpsFunRivalName()
   if (!pick) { logEvent('rps-fun', 'no bot nearby — skipping'); return null }
+  rpsFunBusy = true
   const { username: rival, nick } = pick
   logEvent('rps-fun', `challenging ${nick} (${rival}) for fun`)
   const said = await impulseExpressive('rps',
@@ -3310,10 +3313,15 @@ async function runFunRpsChallenger () {
   ])
   rpsFunChallengeResolve = null
   if (!accepted) {
+    rpsFunBusy = false
     logEvent('rps-fun', 'rival did not accept — oh well')
     return null
   }
-  return runRpsMatch(rival, true, { forFun: true })
+  try {
+    return await runRpsMatch(rival, true, { forFun: true })
+  } finally {
+    rpsFunBusy = false
+  }
 }
 
 async function runFunRpsAcceptor (rival) {
@@ -3621,9 +3629,12 @@ function trackFireCoordination (username, message) {
     if (rpsFunChallengeResolve) {
       logEvent('rps-fun', `${username} accepted our fun challenge`)
       rpsFunChallengeResolve(true)
-    } else if (!activeTask.name && !rpsState && idleWanderEnabled) {
+    } else if (!activeTask.name && !rpsState && !rpsFunBusy && idleWanderEnabled) {
+      rpsFunBusy = true
       logEvent('rps-fun', `${username} challenged us to fun RPS — accepting`)
-      runFunRpsAcceptor(name).catch(e => logEvent('rps-fun', `acceptor error: ${e.message}`))
+      runFunRpsAcceptor(name)
+        .catch(e => logEvent('rps-fun', `acceptor error: ${e.message}`))
+        .finally(() => { rpsFunBusy = false })
     }
     return
   }
