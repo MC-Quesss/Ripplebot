@@ -3819,8 +3819,8 @@ async function runSustainFarm (user) {
           await runRpsAcceptor(challenger)
         } else {
           const pScan = scanKnownPotatoField()
-          if (pScan.potatoes > 0 && pScan.maturePct >= SUSTAIN_POTATO_MATURITY_PCT && !activeFireClaims().has('potatoes')) {
-            logEvent('sustain', 'potatoes ready, no potato keeper — challenging for RPS')
+          if (pScan.potatoes > 0 && pScan.maturePct >= SUSTAIN_POTATO_MATURITY_PCT) {
+            logEvent('sustain', 'potatoes ready — challenging for RPS')
             await runRpsChallenger()
           }
         }
@@ -7295,6 +7295,10 @@ async function routeChatLocal (username, message, { namedMe, fromBot }) {
     if (fromBot) return
     const intent = CHAT_INTENTS[verdict.intent]
     if (!intent) return
+    if (verdict.intent === 'keep_fire' && !namedMe) {
+      logEvent('chat-intent', `rejected keep_fire — bot was not addressed by name`)
+      return
+    }
     if (followTarget && username === followTarget && verdict.intent !== 'follow') {
       bot.pathfinder.setGoal(null)
       followTarget = null; followEntity = null; followChainPos = 0
@@ -7357,6 +7361,10 @@ async function executeClaudeResponse (username, message, result, { namedMe, from
       }
       if (fromBot && cmd.action !== 'tell_story') {
         logEvent('claude-brain', `rejected bot-originated action: ${cmd.action}`)
+        continue
+      }
+      if (cmd.action === 'keep_fire' && !namedMe) {
+        logEvent('claude-brain', `rejected keep_fire — bot was not addressed by name`)
         continue
       }
       if (followTarget && username === followTarget && cmd.action !== 'follow') {
