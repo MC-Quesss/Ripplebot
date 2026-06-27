@@ -3633,8 +3633,8 @@ function trackFireCoordination (username, message) {
     return
   }
   if (code === 'j') {
-    rpsFunLastJ = Date.now()
     if (rpsFunChallengeResolve) {
+      rpsFunLastJ = Date.now()
       logEvent('rps-fun', `${username} accepted our fun challenge`)
       const resolve = rpsFunChallengeResolve
       rpsFunChallengeResolve = null
