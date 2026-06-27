@@ -3648,15 +3648,21 @@ function trackFireCoordination (username, message) {
       rpsFunLastJ = now
       const me = (bot.username || '').toLowerCase()
       const challengerName = name.toLowerCase()
-      const higherPriority = Object.values(bot.players)
+      const eligible = Object.values(bot.players)
         .filter(p =>
           p.username.toLowerCase() !== me &&
           p.username.toLowerCase() !== challengerName &&
-          looksLikeBot(p.username) &&
-          p.username.toLowerCase() < me)
-      if (higherPriority.length) {
-        logEvent('rps-fun', `deferring to ${higherPriority.map(p => p.username).join(', ')} (alphabetical priority)`)
-        return
+          looksLikeBot(p.username))
+        .map(p => p.username.toLowerCase())
+      if (eligible.length) {
+        const all = [me, ...eligible].sort()
+        let hash = 0
+        for (const c of challengerName) hash = ((hash << 5) - hash + c.charCodeAt(0)) | 0
+        const winner = all[Math.abs(hash) % all.length]
+        if (winner !== me) {
+          logEvent('rps-fun', `deferring to ${winner} for ${challengerName}'s challenge`)
+          return
+        }
       }
       rpsFunBusy = true
       logEvent('rps-fun', `${username} challenged us to fun RPS — accepting`)
