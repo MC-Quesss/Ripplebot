@@ -3296,6 +3296,7 @@ function rpsFunRivalName () {
 async function runFunRpsChallenger () {
   if (rpsFunBusy) return null
   if (isBedtime()) return null
+  if (insideHouse()) return null
   const pick = rpsFunRivalName()
   if (!pick) { logEvent('rps-fun', 'no bot nearby — skipping'); return null }
   rpsFunBusy = true
@@ -3356,7 +3357,7 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
   bot.chat('/me .g')
   const rivalReady = await Promise.race([
     readyPromise,
-    sleep(20000).then(() => false)
+    sleep(30000).then(() => false)
   ])
   rpsReadyResolve = null
   if (!rivalReady) {
@@ -3633,8 +3634,22 @@ function trackFireCoordination (username, message) {
   if (code === 'j') {
     if (rpsFunChallengeResolve) {
       logEvent('rps-fun', `${username} accepted our fun challenge`)
-      rpsFunChallengeResolve(name)
+      const resolve = rpsFunChallengeResolve
+      rpsFunChallengeResolve = null
+      resolve(name)
     } else if (!activeTask.name && !rpsState && !rpsFunBusy && idleWanderEnabled) {
+      const me = (bot.username || '').toLowerCase()
+      const challengerName = name.toLowerCase()
+      const higherPriority = Object.values(bot.players)
+        .filter(p =>
+          p.username.toLowerCase() !== me &&
+          p.username.toLowerCase() !== challengerName &&
+          looksLikeBot(p.username) &&
+          p.username.toLowerCase() < me)
+      if (higherPriority.length) {
+        logEvent('rps-fun', `deferring to ${higherPriority.map(p => p.username).join(', ')} (alphabetical priority)`)
+        return
+      }
       rpsFunBusy = true
       logEvent('rps-fun', `${username} challenged us to fun RPS — accepting`)
       runFunRpsAcceptor(name)
