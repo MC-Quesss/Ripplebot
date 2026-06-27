@@ -529,8 +529,8 @@ let storyTimeActive = false
 let storyTimeStartedAt = 0
 let lastStoryRequestDay = -1
 const STORY_REQUEST_CHANCE = 0.25
-const STORY_PRE_BEDTIME_START = 11000
-const STORY_PRE_BEDTIME_END = 12400
+const STORY_PRE_BEDTIME_START = 9500
+const STORY_PRE_BEDTIME_END = 10500
 const STORY_TIMEOUT_MS = 120_000
 const BED_POS = { x: -268, y: 65, z: 569 }
 const BED_APPROACH = { x: -268, y: 65, z: 570 }
@@ -592,11 +592,18 @@ async function tryAutoSleep () {
     ]
     for (const b of BEDS) {
       if (bot.isSleeping) break
+      if (storyTimeActive) {
+        logEvent('auto-sleep', 'story in progress — deferring bedtime')
+        bot.pathfinder.setGoal(null)
+        break
+      }
       bot.pathfinder.setGoal(new goals.GoalNear(b.approach.x, b.approach.y, b.approach.z, 1))
       for (let i = 0; i < 20; i++) {
         await new Promise(r => setTimeout(r, 500))
+        if (storyTimeActive) { bot.pathfinder.setGoal(null); break }
         if (!bot.pathfinder.isMoving()) break
       }
+      if (storyTimeActive) break
       const bed = bot.blockAt(new Vec3(b.pos.x, b.pos.y, b.pos.z))
       if (!bed) continue
       try {
@@ -631,9 +638,10 @@ function tryMorningExclamation () {
   }
 }
 
+let storyRequestBusy = false
 function tryStoryRequest () {
   if (PERSONA !== 'private') return
-  if (storyTimeActive) return
+  if (storyTimeActive || storyRequestBusy) return
   if (activeTask.name || goInsideBusy || penTraversalBusy) return
   const t = bot.time?.timeOfDay
   const day = bot.time?.day
@@ -642,8 +650,24 @@ function tryStoryRequest () {
   if (day === lastStoryRequestDay) return
   lastStoryRequestDay = day
   if (Math.random() > STORY_REQUEST_CHANCE) return
-  bot.chat('Roz, would you tell us a story tonight? Please?')
-  logEvent('story-time', 'requested a story from Roz')
+  storyRequestBusy = true
+  ;(async () => {
+    try {
+      bot.chat("Let's head inside, everyone — the sun is going down.")
+      logEvent('story-time', 'calling everyone inside for story night')
+      if (!insideHouse()) {
+        if (inPen()) await runGoOutOfPen()
+        try { await runGoInside() } catch (_) {}
+      }
+      await sleep(60000)
+      bot.chat('Roz, would you tell us a story tonight? Please?')
+      logEvent('story-time', 'requested a story from Roz')
+    } catch (e) {
+      logEvent('story-time', `story request failed: ${e.message}`)
+    } finally {
+      storyRequestBusy = false
+    }
+  })()
 }
 
 function tryStoryTimeTimeout () {
@@ -1158,6 +1182,11 @@ function waitForMorning () {
 }
 
 async function yieldToBedtime (myGen) {
+  // Wait for story time to finish before heading to bed
+  if (storyTimeActive) {
+    logEvent('task', `${activeTask.name} bedtime yield deferred — story in progress`)
+    while (storyTimeActive) await sleep(2000)
+  }
   activeTask.sleeping = true
   if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(BEDTIME_YIELD_LINES, 'bedtimeYield')))
   logEvent('task', `${activeTask.name} yielding to bedtime`)
@@ -2768,26 +2797,29 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
     // Wheat + seeds → craft into plant balls → hopper.
     if (!skipDeposit && !keepSeeds) {
       try {
-        await ensureInsideHouse()
-        if (deathCount > startDeaths) throw new Error('died entering house')
-        await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-
-        if (countOnHand('wheat') >= 8) {
-          const wr = await craftPlantBalls({ ingredient: 'wheat', keepCount: 0, maxBalls: Infinity })
-          logEvent('harvest-rc', `plant balls from wheat: ${wr.crafted}; wheat remaining=${countOnHand('wheat')}`)
-        }
-        if (countOnHand('wheat_seeds') >= 8) {
-          const sr = await craftPlantBalls({ keepCount: 0, maxBalls: Infinity })
-          logEvent('harvest-rc', `plant balls from seeds: ${sr.crafted}; seeds remaining=${countOnHand('wheat_seeds')}`)
-        }
-        const ballCount = countOnHand('unknown')
-        if (ballCount > 0) {
+        await acquireBench()
+        try {
+          await ensureInsideHouse()
+          if (deathCount > startDeaths) throw new Error('died entering house')
           await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-          const r = await depositQuickMove('unknown', HOPPER, { keep: 0 })
-          logEvent('harvest-rc', `plant balls → hopper: deposited=${r.deposited}`)
-        }
-        const leftover = countOnHand('wheat')
-        if (leftover > 0) logEvent('harvest-rc', `${leftover} wheat left over (<8, keeping for next craft)`)
+
+          if (countOnHand('wheat') >= 8) {
+            const wr = await craftPlantBalls({ ingredient: 'wheat', keepCount: 0, maxBalls: Infinity })
+            logEvent('harvest-rc', `plant balls from wheat: ${wr.crafted}; wheat remaining=${countOnHand('wheat')}`)
+          }
+          if (countOnHand('wheat_seeds') >= 8) {
+            const sr = await craftPlantBalls({ keepCount: 0, maxBalls: Infinity })
+            logEvent('harvest-rc', `plant balls from seeds: ${sr.crafted}; seeds remaining=${countOnHand('wheat_seeds')}`)
+          }
+          const ballCount = countOnHand('unknown')
+          if (ballCount > 0) {
+            await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+            const r = await depositQuickMove('unknown', HOPPER, { keep: 0 })
+            logEvent('harvest-rc', `plant balls → hopper: deposited=${r.deposited}`)
+          }
+          const leftover = countOnHand('wheat')
+          if (leftover > 0) logEvent('harvest-rc', `${leftover} wheat left over (<8, keeping for next craft)`)
+        } finally { releaseBench() }
       } catch (e) {
         logEvent('harvest-rc', `post-harvest craft/deposit failed: ${e.message}`)
       }
@@ -3045,7 +3077,7 @@ async function clearJammedHopper () {
 // split the fields and extras supervise from the field edge.
 const FIRE_CLAIM_TTL_MS = 45 * 60 * 1000
 const FIRE_ROLLCALL_WAIT_MS = 10000
-const FIRE_COORD_RE = /(?:\.([rnsxwpdg])|shoots (rock|paper|scissors))$/
+const FIRE_COORD_RE = /(?:\.([rnsxwpdgbf])|shoots (rock|paper|scissors))$/
 const fireCrew = new Map() // bot name (lowercase) -> { field: 'north'|'south'|'potatoes'|'supervise', at }
 let fireStartupRivals = null // Set<name>: bots that roll-called during our own startup wait
 let fireStandDownAnnounced = false
@@ -3329,7 +3361,7 @@ async function runRpsMatch (rival, isChallenger) {
       sustainState.potatoRole = 'mine'
       logEvent('rps', `won best-of-3 (${myWins}-${rivalWins}) — claiming potato duty`)
       const said = await impulseExpressive('rps',
-        `You just won a best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}! You get potato duty. Celebrate your victory in one short sentence.`
+        `You just won a best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}! You get potato duty. Celebrate — be genuinely excited, playful, triumphant. No task language, no "task acquired." One short sentence, like you're gloating to a friend.`
       ).catch(() => false)
       if (!said) bot.chat('I win the potatoes!')
       await sleep(2000)
@@ -3340,7 +3372,7 @@ async function runRpsMatch (rival, isChallenger) {
       sustainState.potatoRole = 'theirs'
       logEvent('rps', `lost best-of-3 (${myWins}-${rivalWins}) — rival gets potato duty`)
       const said = await impulseExpressive('rps',
-        `You just lost a best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}. They get potato duty. React with graceful defeat in one short sentence.`
+        `You just lost a best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}. They get potato duty. React with warmth and humor — a playful concession, not clinical acceptance. No task language. One short sentence.`
       ).catch(() => false)
       if (!said) bot.chat('You win... potatoes are yours.')
       await sleep(2000)
@@ -3370,6 +3402,48 @@ async function runRpsMatch (rival, isChallenger) {
   }
   await sleep(2000)
   return iWin ? 'win' : 'lose'
+}
+
+// Crafting bench mutex — prevents two bots from using the bench at the same time.
+// Claim with .b, release with .f. Bots waiting for the bench get unblocked on .f.
+let benchHolder = null        // name of the bot currently holding the bench (null = free)
+let benchHolderAt = 0         // timestamp when claimed
+let benchFreeResolve = null   // resolve function for bots waiting on the bench
+const BENCH_LOCK_TTL_MS = 60_000 // auto-expire stale claims after 60s
+
+function isBenchFree () {
+  if (!benchHolder) return true
+  if (Date.now() - benchHolderAt > BENCH_LOCK_TTL_MS) {
+    logEvent('bench-lock', `stale claim by ${benchHolder} expired`)
+    benchHolder = null
+    return true
+  }
+  return false
+}
+
+async function acquireBench () {
+  while (!isBenchFree()) {
+    logEvent('bench-lock', `waiting for ${benchHolder} to finish`)
+    await new Promise(resolve => {
+      benchFreeResolve = resolve
+      setTimeout(() => { benchFreeResolve = null; resolve() }, BENCH_LOCK_TTL_MS)
+    })
+  }
+  benchHolder = myFireName()
+  benchHolderAt = Date.now()
+  bot.chat('/me .b')
+  logEvent('bench-lock', 'claimed bench')
+}
+
+function releaseBench () {
+  benchHolder = null
+  bot.chat('/me .f')
+  logEvent('bench-lock', 'released bench')
+  if (Math.random() < 0.35) {
+    impulseExpressive('craft',
+      'You just finished crafting plant balls at the workbench. React with a brief, satisfied one-liner about a job well done.'
+    ).catch(() => {})
+  }
 }
 
 // Parse other bots' chat for fire-duty coordination lines. Called for every
@@ -3454,6 +3528,18 @@ function trackFireCoordination (username, message) {
     }
     return
   }
+  if (code === 'b') {
+    benchHolder = name
+    benchHolderAt = Date.now()
+    logEvent('bench-lock', `${username} claimed the bench`)
+    return
+  }
+  if (code === 'f') {
+    if (benchHolder === name) benchHolder = null
+    logEvent('bench-lock', `${username} released the bench`)
+    if (benchFreeResolve) { benchFreeResolve(); benchFreeResolve = null }
+    return
+  }
 }
 
 let sustainWakeResolve = null
@@ -3514,45 +3600,49 @@ async function sustainHousekeep () {
 
   logEvent('sustain', `housekeep: wheat=${wheat} seeds=${seeds} rawPotato=${rawPotatoes}`)
   try {
-    await ensureInsideHouse()
-    await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-
-    let progress = false
-
-    if (craftableWheat) {
-      const r = await craftPlantBalls({ ingredient: 'wheat', keepCount: 0, maxBalls: SUSTAIN_MAX_PLANT_BALLS })
-      logEvent('sustain', `housekeep plantballs from wheat: ${r.crafted}`)
-      if (r.crafted > 0) progress = true
-    }
-
-    if (craftableSeeds) {
-      const r = await craftPlantBalls({ keepCount: SUSTAIN_KEEP_SEEDS, maxBalls: SUSTAIN_MAX_PLANT_BALLS })
-      logEvent('sustain', `housekeep plantballs from seeds: ${r.crafted}`)
-      if (r.crafted > 0) progress = true
-    }
-
-    if (progress) {
+    const needsBench = craftableWheat || craftableSeeds
+    if (needsBench) await acquireBench()
+    try {
+      await ensureInsideHouse()
       await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-      const r = await depositQuickMove('unknown', HOPPER, { keep: 0 })
-      logEvent('sustain', `housekeep plantball deposit: deposited=${r.deposited} remaining=${r.remaining}`)
-    }
 
-    const remainingWheat = countOnHand('wheat')
-    if (remainingWheat > 0) {
-      logEvent('sustain', `housekeep: ${remainingWheat} wheat left over (<8, keeping for next craft)`)
-    }
+      let progress = false
 
-    if (excessPotatoes) {
-      const r = await depositQuickMove('potato', HOPPER, { keep: SUSTAIN_KEEP_RAW_POTATO })
-      logEvent('sustain', `housekeep raw potato deposit: deposited=${r.deposited} remaining=${r.remaining}`)
-      if (r.deposited > 0) progress = true
-    }
+      if (craftableWheat) {
+        const r = await craftPlantBalls({ ingredient: 'wheat', keepCount: 0, maxBalls: SUSTAIN_MAX_PLANT_BALLS })
+        logEvent('sustain', `housekeep plantballs from wheat: ${r.crafted}`)
+        if (r.crafted > 0) progress = true
+      }
 
-    if (!progress) {
-      logEvent('sustain', 'housekeep made no progress — backing off 5 min')
-      sustainHousekeepCooldownUntil = Date.now() + 5 * 60 * 1000
-    }
-    return progress
+      if (craftableSeeds) {
+        const r = await craftPlantBalls({ keepCount: SUSTAIN_KEEP_SEEDS, maxBalls: SUSTAIN_MAX_PLANT_BALLS })
+        logEvent('sustain', `housekeep plantballs from seeds: ${r.crafted}`)
+        if (r.crafted > 0) progress = true
+      }
+
+      if (progress) {
+        await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+        const r = await depositQuickMove('unknown', HOPPER, { keep: 0 })
+        logEvent('sustain', `housekeep plantball deposit: deposited=${r.deposited} remaining=${r.remaining}`)
+      }
+
+      const remainingWheat = countOnHand('wheat')
+      if (remainingWheat > 0) {
+        logEvent('sustain', `housekeep: ${remainingWheat} wheat left over (<8, keeping for next craft)`)
+      }
+
+      if (excessPotatoes) {
+        const r = await depositQuickMove('potato', HOPPER, { keep: SUSTAIN_KEEP_RAW_POTATO })
+        logEvent('sustain', `housekeep raw potato deposit: deposited=${r.deposited} remaining=${r.remaining}`)
+        if (r.deposited > 0) progress = true
+      }
+
+      if (!progress) {
+        logEvent('sustain', 'housekeep made no progress — backing off 5 min')
+        sustainHousekeepCooldownUntil = Date.now() + 5 * 60 * 1000
+      }
+      return progress
+    } finally { if (needsBench) releaseBench() }
   } catch (e) {
     logEvent('sustain', `housekeep failed: ${e.message} — backing off 5 min`)
     sustainHousekeepCooldownUntil = Date.now() + 5 * 60 * 1000
@@ -3784,30 +3874,31 @@ async function runSustainFarm (user) {
           }
 
           // 2. Craft all wheat and seeds into plantballs, then deposit to hopper.
-          // When two keepers finish their fields together, the south keeper
-          // waits a beat so they don't pile up at the door and hopper.
-          if (sustainState.role === 'south') await sustainWait(20000)
-          await ensureInsideHouse()
-          await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-
-          const wheatBalls = await craftPlantBalls({ ingredient: 'wheat', keepCount: 0, maxBalls: SUSTAIN_MAX_PLANT_BALLS })
-          logEvent('sustain', `plantballs from wheat: ${wheatBalls.crafted}; wheat remaining=${countOnHand('wheat')}`)
-
-          const seedBalls = await craftPlantBalls({ keepCount: SUSTAIN_KEEP_SEEDS, maxBalls: SUSTAIN_MAX_PLANT_BALLS })
-          logEvent('sustain', `plantballs from seeds: ${seedBalls.crafted}; seeds remaining=${countOnHand('wheat_seeds')}`)
-
-          // Deposit plantballs + any remaining wheat to hopper
-          const totalBalls = wheatBalls.crafted + seedBalls.crafted
-          if (totalBalls > 0) {
+          // Bench mutex prevents two bots from using the crafting table at once.
+          await acquireBench()
+          try {
             await ensureInsideHouse()
             await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-            const ballResult = await depositQuickMove('unknown', HOPPER, { keep: 0 })
-            logEvent('sustain', `plantball deposit: deposited=${ballResult.deposited} remaining=${ballResult.remaining}`)
-          }
-          const remainingWheat = countOnHand('wheat')
-          if (remainingWheat > 0) {
-            logEvent('sustain', `${remainingWheat} wheat left over (<8, keeping for next craft)`)
-          }
+
+            const wheatBalls = await craftPlantBalls({ ingredient: 'wheat', keepCount: 0, maxBalls: SUSTAIN_MAX_PLANT_BALLS })
+            logEvent('sustain', `plantballs from wheat: ${wheatBalls.crafted}; wheat remaining=${countOnHand('wheat')}`)
+
+            const seedBalls = await craftPlantBalls({ keepCount: SUSTAIN_KEEP_SEEDS, maxBalls: SUSTAIN_MAX_PLANT_BALLS })
+            logEvent('sustain', `plantballs from seeds: ${seedBalls.crafted}; seeds remaining=${countOnHand('wheat_seeds')}`)
+
+            // Deposit plantballs + any remaining wheat to hopper
+            const totalBalls = wheatBalls.crafted + seedBalls.crafted
+            if (totalBalls > 0) {
+              await ensureInsideHouse()
+              await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+              const ballResult = await depositQuickMove('unknown', HOPPER, { keep: 0 })
+              logEvent('sustain', `plantball deposit: deposited=${ballResult.deposited} remaining=${ballResult.remaining}`)
+            }
+            const remainingWheat = countOnHand('wheat')
+            if (remainingWheat > 0) {
+              logEvent('sustain', `${remainingWheat} wheat left over (<8, keeping for next craft)`)
+            }
+          } finally { releaseBench() }
 
           if (!sustainState.active) break
 
@@ -4821,15 +4912,18 @@ async function tryMorningPlantBalls () {
   morningBallsBusy = true
   try {
     logEvent('morning-balls', `seeds=${seeds}, crafting up to ${MORNING_BALLS_MAX} plant balls`)
-    const result = await craftPlantBalls({ keepCount: MORNING_BALLS_MIN_SEEDS, maxBalls: MORNING_BALLS_MAX })
-    if (result.crafted > 0) {
-      await ensureInsideHouse()
-      await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-      const deposit = await depositQuickMove('unknown', HOPPER, { keep: 0 })
-      logEvent('morning-balls', `crafted=${result.crafted} deposited=${deposit.deposited}`)
-    } else {
-      logEvent('morning-balls', `crafted 0 — bench may not have opened`)
-    }
+    await acquireBench()
+    try {
+      const result = await craftPlantBalls({ keepCount: MORNING_BALLS_MIN_SEEDS, maxBalls: MORNING_BALLS_MAX })
+      if (result.crafted > 0) {
+        await ensureInsideHouse()
+        await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+        const deposit = await depositQuickMove('unknown', HOPPER, { keep: 0 })
+        logEvent('morning-balls', `crafted=${result.crafted} deposited=${deposit.deposited}`)
+      } else {
+        logEvent('morning-balls', `crafted 0 — bench may not have opened`)
+      }
+    } finally { releaseBench() }
   } catch (e) {
     if (e.name !== 'AbortError') logEvent('morning-balls', `error: ${e.message}`)
   } finally {
@@ -6978,8 +7072,18 @@ async function runTellStory (user, topic) {
   storyTimeStartedAt = Date.now()
   logEvent('story-time', `starting story for ${user}, topic="${topic}"`)
   try {
+    // Go inside and stand near the beds before starting
+    try {
+      if (!insideHouse()) {
+        if (inPen()) await runGoOutOfPen()
+        await runGoInside()
+      }
+      if (insideHouse()) await pathTo(BED_APPROACH, 1, 12000)
+    } catch (e) {
+      logEvent('story-time', `couldn't reach bedside: ${e.message}`)
+    }
     bot.chat('Gather round, everyone.')
-    await sleep(3000)
+    await sleep(5000)
     sendEmote('think')
     const backstory = personaSpec.backstory || ''
     const context = buildExpressiveContext(
@@ -7283,11 +7387,37 @@ bot.on('chat', (username, message) => {
   if (!fromBot) resetBotExchange()
   logEvent('chat', `<${username}> ${message}`)
 
-  // Story-time coordination: suppress auto-sleep while a story is being told.
+  // Story-time coordination: come inside early, suppress auto-sleep, gather near the beds.
+  if (fromBot && /let's head inside/i.test(message) && !storyTimeActive && !goInsideBusy) {
+    logEvent('story-time', `${username} called everyone inside — heading in`)
+    ;(async () => {
+      try {
+        if (!insideHouse()) {
+          if (inPen()) await runGoOutOfPen()
+          await runGoInside()
+        }
+      } catch (e) {
+        logEvent('story-time', `couldn't get inside: ${e.message}`)
+      }
+    })()
+  }
   if (fromBot && message === 'Gather round, everyone.' && !storyTimeActive) {
     storyTimeActive = true
     storyTimeStartedAt = Date.now()
-    logEvent('story-time', `${username} is telling a story — suppressing auto-sleep`)
+    logEvent('story-time', `${username} is telling a story — gathering round`)
+    ;(async () => {
+      try {
+        if (!insideHouse()) {
+          if (inPen()) await runGoOutOfPen()
+          await runGoInside()
+        }
+        if (!insideHouse()) return
+        await pathTo(BED_APPROACH, 1, 12000)
+        await lookAtPlayer(username)
+      } catch (e) {
+        logEvent('story-time', `gather failed: ${e.message}`)
+      }
+    })()
   }
   if (fromBot && /that is my story/i.test(message) && storyTimeActive) {
     setTimeout(() => {
