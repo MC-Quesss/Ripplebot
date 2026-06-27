@@ -3295,6 +3295,7 @@ function rpsFunRivalName () {
 
 async function runFunRpsChallenger () {
   if (rpsFunBusy) return null
+  if (isBedtime()) return null
   const pick = rpsFunRivalName()
   if (!pick) { logEvent('rps-fun', 'no bot nearby — skipping'); return null }
   rpsFunBusy = true
@@ -3317,14 +3318,17 @@ async function runFunRpsChallenger () {
     logEvent('rps-fun', 'rival did not accept — oh well')
     return null
   }
+  const actualRival = typeof accepted === 'string' ? accepted : rival
+  if (actualRival !== rival) logEvent('rps-fun', `${actualRival} accepted instead of ${rival} — playing them`)
   try {
-    return await runRpsMatch(rival, true, { forFun: true })
+    return await runRpsMatch(actualRival, true, { forFun: true })
   } finally {
     rpsFunBusy = false
   }
 }
 
 async function runFunRpsAcceptor (rival) {
+  if (isBedtime()) { logEvent('rps-fun', 'declining — bedtime'); return null }
   logEvent('rps-fun', `accepting ${rival}'s fun RPS challenge`)
   bot.chat('/me .j')
   return runRpsMatch(rival, false, { forFun: true })
@@ -3341,6 +3345,7 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
   const readyPromise = new Promise(resolve => { rpsReadyResolve = resolve })
   try {
     if (insideHouse()) await runGoOutside()
+    if (insideHouse()) throw new Error('still inside house after runGoOutside')
     await pathTo(mySpot, 1, 15000)
   } catch (e) {
     rpsReadyResolve = null
@@ -3628,7 +3633,7 @@ function trackFireCoordination (username, message) {
   if (code === 'j') {
     if (rpsFunChallengeResolve) {
       logEvent('rps-fun', `${username} accepted our fun challenge`)
-      rpsFunChallengeResolve(true)
+      rpsFunChallengeResolve(name)
     } else if (!activeTask.name && !rpsState && !rpsFunBusy && idleWanderEnabled) {
       rpsFunBusy = true
       logEvent('rps-fun', `${username} challenged us to fun RPS — accepting`)
