@@ -284,6 +284,7 @@ async function generateStory ({ system, exemplars, context, maxChars = 200, line
       .filter(l => l && !/^PASS\b/i.test(l) && !l.startsWith('/'))
       .map(l => l.length > maxChars ? (l.slice(0, maxChars).includes(' ') ? l.slice(0, l.slice(0, maxChars).lastIndexOf(' ')) : l.slice(0, maxChars)) : l)
       .filter(Boolean)
+      .slice(0, lines)
     return result.length ? result : null
   } catch (e) {
     log('llm', `story generation failed (${e.message})`)
