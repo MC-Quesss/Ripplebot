@@ -3288,18 +3288,20 @@ function rpsFunRivalName () {
       p.entity.position.distanceTo(bot.entity.position) < 32 &&
       looksLikeBot(p.username))
   if (!nearby.length) return null
-  return nearby[Math.floor(Math.random() * nearby.length)].username
+  const pick = nearby[Math.floor(Math.random() * nearby.length)]
+  return { username: pick.username, nick: pick.displayName?.toString() || pick.username }
 }
 
 async function runFunRpsChallenger () {
-  const rival = rpsFunRivalName()
-  if (!rival) { logEvent('rps-fun', 'no bot nearby — skipping'); return null }
-  logEvent('rps-fun', `challenging ${rival} for fun`)
+  const pick = rpsFunRivalName()
+  if (!pick) { logEvent('rps-fun', 'no bot nearby — skipping'); return null }
+  const { username: rival, nick } = pick
+  logEvent('rps-fun', `challenging ${nick} (${rival}) for fun`)
   const said = await impulseExpressive('rps',
-    `You want to play a quick game of rock-paper-scissors with ${rival} — just for fun, no stakes. Challenge them in one short playful sentence.`,
+    `You want to play a quick game of rock-paper-scissors with ${nick} — just for fun, no stakes. Challenge them in one short playful sentence.`,
     { skipGate: true }
   ).catch(() => false)
-  if (!said) bot.chat(`Hey ${rival}, wanna play rock-paper-scissors?`)
+  if (!said) bot.chat(`Hey ${nick}, wanna play rock-paper-scissors?`)
   const acceptPromise = new Promise(resolve => { rpsFunChallengeResolve = resolve })
   bot.chat('/me .j')
   const accepted = await Promise.race([
@@ -7621,7 +7623,7 @@ bot.on('whisper', (username, message) => {
 
 // /me action messages don't fire the 'chat' event — they arrive via 'messagestr'
 // as "* PlayerName .r". Parse the username and route to fire coordination.
-const ACTION_COORD_RE = /^\* (\w+) (\.([rnsxwpdg])|shoots (rock|paper|scissors))$/
+const ACTION_COORD_RE = /^\* (\w+) (\.([rnsxwpdgbfj])|shoots (rock|paper|scissors))$/
 bot.on('messagestr', (msg) => {
   if (msg.includes('shoots')) logEvent('rps-diag', `messagestr: "${msg}"`)
   const m = ACTION_COORD_RE.exec(msg)
