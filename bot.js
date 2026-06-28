@@ -1326,13 +1326,17 @@ function countOnHand (name) {
 // Returns { deposited, remaining, rounds, backedUp }. `backedUp` is true when
 // the container stopped accepting items with more than `keep` still on hand
 // (machine off, or genuinely full) — the caller should surface that.
-async function depositQuickMove (itemName, target, { keep = 0, maxRounds = 8, settleMs = 150 } = {}) {
+async function depositQuickMove (itemName, target, { keep = 0, maxRounds = 8, settleMs = 150, bail = null } = {}) {
   const startCount = countOnHand(itemName)
   if (startCount <= keep) return { deposited: 0, remaining: startCount, rounds: 0, backedUp: false }
 
   let rounds = 0
   let stalled = 0
   while (countOnHand(itemName) > keep && rounds < maxRounds) {
+    if (bail && bail()) {
+      logEvent('deposit-qm', `bailing (${itemName}) after ${rounds} rounds — external interrupt`)
+      break
+    }
     rounds++
     const block = bot.blockAt(new Vec3(target.x, target.y, target.z))
     if (!block) throw new Error(`deposit target not loaded at ${target.x},${target.y},${target.z}`)
@@ -3440,7 +3444,7 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
   // and sends .g while we're still walking, we need to catch it.
   const readyPromise = new Promise(resolve => { rpsReadyResolve = resolve })
   try {
-    if (insideHouse()) await runGoOutside()
+    if (insideHouse()) await runGoOutside(undefined, { skipTimeCheck: true })
     if (insideHouse()) throw new Error('still inside house after runGoOutside')
     await pathTo(mySpot, 1, 15000)
   } catch (e) {
@@ -3782,10 +3786,10 @@ function sustainWake () {
   if (sustainWakeResolve) sustainWakeResolve()
 }
 
-// "Safe to act" gate for the sustain loop. Daytime, HP reasonable, not following.
+// "Safe to act" gate for the sustain loop. HP reasonable, not following.
+// Bedtime is handled by the harvest yield system — no need to gate the loop.
 function sustainSafe () {
   if (followTarget) return false
-  if (isBedtime()) return false
   if (bot.health != null && bot.health < 10) return false
   return true
 }
@@ -3847,8 +3851,10 @@ async function sustainHousekeep () {
       }
 
       if (progress) {
+        if (rpsAccepted) { logEvent('sustain', 'housekeep interrupted — RPS challenge waiting'); return true }
         await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-        const r = await depositQuickMove('unknown', HOPPER, { keep: 0 })
+        const rpsBail = () => !!rpsAccepted
+        const r = await depositQuickMove('unknown', HOPPER, { keep: 0, maxRounds: 3, bail: rpsBail })
         logEvent('sustain', `housekeep plantball deposit: deposited=${r.deposited} remaining=${r.remaining}`)
       }
 
@@ -3858,7 +3864,9 @@ async function sustainHousekeep () {
       }
 
       if (excessPotatoes) {
-        const r = await depositQuickMove('potato', HOPPER, { keep: SUSTAIN_KEEP_RAW_POTATO })
+        if (rpsAccepted) { logEvent('sustain', 'housekeep interrupted — RPS challenge waiting'); return true }
+        const rpsBail = () => !!rpsAccepted
+        const r = await depositQuickMove('potato', HOPPER, { keep: SUSTAIN_KEEP_RAW_POTATO, maxRounds: 3, bail: rpsBail })
         logEvent('sustain', `housekeep raw potato deposit: deposited=${r.deposited} remaining=${r.remaining}`)
         if (r.deposited > 0) progress = true
       }
@@ -5278,12 +5286,14 @@ async function faceYaw (targetYaw, { maxAttempts = 4, tolerance = 0.25 } = {}) {
 // reach orientation, yaw didn't converge, etc.) so the wrapper can retry.
 // On damage or death, throws with a message containing "damage" or "died"
 // so the wrapper can refuse to retry.
-async function runGoOutsideOnce (activity) {
+async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
   if (!insideHouse()) { bot.chat("I'm already outside."); return }
-  const t = bot.time || {}
-  if (!t.isDay || (t.timeOfDay ?? 0) >= 11500) {
-    bot.chat(pickLine(withPersonaSlot(TOO_LATE_LINES, 'tooLate')))
-    return
+  if (!skipTimeCheck) {
+    const t = bot.time || {}
+    if (!t.isDay || (t.timeOfDay ?? 0) >= 11500) {
+      bot.chat(pickLine(withPersonaSlot(TOO_LATE_LINES, 'tooLate')))
+      return
+    }
   }
   const act = activity || 'stuff'
   const itself = act === 'potatoes' ? 'themselves' : 'itself'
@@ -5501,11 +5511,11 @@ async function resetToHouseSide (target /* HOUSE_CENTER or OUTSIDE_ORIENTATION *
 }
 
 // Wrap runGoOutsideOnce with one retry on graceful failure.
-async function runGoOutside (activity) {
+async function runGoOutside (activity, { skipTimeCheck = false } = {}) {
   const startHP = bot.health ?? 20
   const startDeaths = deathCount
   try {
-    await runGoOutsideOnce(activity)
+    await runGoOutsideOnce(activity, { skipTimeCheck })
     return
   } catch (err) {
     const hpDelta = startHP - (bot.health ?? 20)
@@ -5521,7 +5531,7 @@ async function runGoOutside (activity) {
     // Reset to the inside pad before retry — runGoOutsideOnce starts from
     // HOUSE_CENTER, and we may be stranded in the door jamb after the snag.
     await resetToHouseSide(HOUSE_CENTER)
-    await runGoOutsideOnce(activity)
+    await runGoOutsideOnce(activity, { skipTimeCheck })
   }
 }
 
@@ -6864,6 +6874,140 @@ async function runStashAll () {
   logEvent('stash-all', `deposited=${deposited} kept=${kept} failed=${failed}`)
 }
 
+// ── Jukebox ─────────────────────────────────────────────────────────────────
+const JUKEBOX = { x: -274, y: 64, z: 565 }
+const RECORD_CHEST_SLOT = 5
+
+async function runPlayRecord () {
+  const jb = bot.blockAt(new Vec3(JUKEBOX.x, JUKEBOX.y, JUKEBOX.z))
+  if (jb && jb.name === 'jukebox' && jb.metadata === 1) {
+    bot.chat('The jukebox already has a record in it.')
+    return
+  }
+
+  let record = bot.inventory.items().find(i => i.name.startsWith('record_'))
+
+  if (!record) {
+    await ensureInsideHouse()
+    await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+    const chestBlock = bot.blockAt(new Vec3(
+      HARVEST_WAYPOINTS.kitchen_chest.x,
+      HARVEST_WAYPOINTS.kitchen_chest.y,
+      HARVEST_WAYPOINTS.kitchen_chest.z,
+    ))
+    if (!chestBlock) throw new Error('kitchen chest not reachable')
+    const win = await bot.openContainer(chestBlock)
+    const containerSlotCount = win.slots.length - 36
+    const srcItem = win.slots[RECORD_CHEST_SLOT]
+    if (!srcItem || !srcItem.name.startsWith('record_')) {
+      win.close()
+      bot.chat('No record in the chest.')
+      return
+    }
+    let destSlot = -1
+    for (let j = containerSlotCount; j < win.slots.length; j++) {
+      if (!win.slots[j]) { destSlot = j; break }
+    }
+    if (destSlot < 0) { win.close(); bot.chat('Inventory is full.'); return }
+    try {
+      await bot.clickWindow(RECORD_CHEST_SLOT, 0, 0)
+      await bot.clickWindow(destSlot, 0, 0)
+    } catch (e) {
+      try { await bot.clickWindow(-999, 0, 0) } catch (_) {}
+      win.close()
+      throw e
+    }
+    win.close()
+    await sleep(300)
+    record = bot.inventory.items().find(i => i.name.startsWith('record_'))
+    if (!record) { bot.chat("Couldn't grab the record from the chest."); return }
+    logEvent('jukebox', `withdrew ${record.name} from chest slot ${RECORD_CHEST_SLOT}`)
+  }
+
+  if (insideHouse()) await runGoOutside()
+  await pathTo(JUKEBOX, 2, 12000)
+  await bot.equip(record, 'hand')
+  await bot.activateBlock(bot.blockAt(new Vec3(JUKEBOX.x, JUKEBOX.y, JUKEBOX.z)))
+  await sleep(300)
+
+  const stillHas = bot.inventory.items().some(i => i.name === record.name)
+  if (stillHas) {
+    bot.chat("The jukebox didn't take the record.")
+    logEvent('jukebox', 'play failed — record still in inventory')
+  } else {
+    bot.chat('Now playing.')
+    logEvent('jukebox', `playing ${record.name}`)
+  }
+}
+
+async function runStopRecord () {
+  const jb = bot.blockAt(new Vec3(JUKEBOX.x, JUKEBOX.y, JUKEBOX.z))
+  if (jb && jb.name === 'jukebox' && jb.metadata === 0) {
+    bot.chat('The jukebox is empty.')
+    return
+  }
+
+  if (insideHouse()) await runGoOutside()
+  await pathTo(JUKEBOX, 0, 12000)
+
+  await bot.activateBlock(bot.blockAt(new Vec3(JUKEBOX.x, JUKEBOX.y, JUKEBOX.z)))
+  logEvent('jukebox', 'ejected record')
+  await sleep(1000)
+
+  let record = bot.inventory.items().find(i => i.name.startsWith('record_'))
+  if (!record) {
+    await pathTo({ x: JUKEBOX.x, y: JUKEBOX.y, z: JUKEBOX.z + 1 }, 0, 5000)
+    await sleep(500)
+    await pathTo(JUKEBOX, 0, 5000)
+    await sleep(500)
+    record = bot.inventory.items().find(i => i.name.startsWith('record_'))
+  }
+
+  if (!record) {
+    bot.chat("Ejected the record but couldn't pick it up.")
+    logEvent('jukebox', 'eject ok but pickup failed')
+    return
+  }
+
+  await ensureInsideHouse()
+  await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+  const chestBlock = bot.blockAt(new Vec3(
+    HARVEST_WAYPOINTS.kitchen_chest.x,
+    HARVEST_WAYPOINTS.kitchen_chest.y,
+    HARVEST_WAYPOINTS.kitchen_chest.z,
+  ))
+  if (!chestBlock) throw new Error('kitchen chest not reachable')
+  const win = await bot.openContainer(chestBlock)
+  const containerSlotCount = win.slots.length - 36
+
+  let srcSlot = -1
+  for (let j = containerSlotCount; j < win.slots.length; j++) {
+    const it = win.slots[j]
+    if (it && it.name.startsWith('record_')) { srcSlot = j; break }
+  }
+  if (srcSlot < 0) { win.close(); bot.chat('Lost the record somehow.'); return }
+
+  if (win.slots[RECORD_CHEST_SLOT]) {
+    win.close()
+    bot.chat("The record's reserved slot in the chest is occupied.")
+    logEvent('jukebox', `can't return record — chest slot ${RECORD_CHEST_SLOT} occupied`)
+    return
+  }
+
+  try {
+    await bot.clickWindow(srcSlot, 0, 0)
+    await bot.clickWindow(RECORD_CHEST_SLOT, 0, 0)
+  } catch (e) {
+    try { await bot.clickWindow(-999, 0, 0) } catch (_) {}
+    win.close()
+    throw e
+  }
+  win.close()
+
+  bot.chat('Record returned to the chest.')
+  logEvent('jukebox', `returned ${record.name} to chest slot ${RECORD_CHEST_SLOT}`)
+}
+
 // Said when told to "stand down" / "just chill" — idle autonomy (wandering,
 // pen/field joins, ambient chatter) goes quiet until re-enabled. Auto-sleep, auto-eat,
 // and explicit commands still work.
@@ -7290,6 +7434,14 @@ const CHAT_INTENTS = {
   explore: {
     hint: 'go explore the area around the farm — wander out, see what is there, report back',
     run: () => runExplore(),
+  },
+  play_record: {
+    hint: 'play a record / put on music / use the jukebox',
+    run: () => runPlayRecord(),
+  },
+  stop_record: {
+    hint: 'stop the music / eject the record / take the record out of the jukebox',
+    run: () => runStopRecord(),
   },
 }
 
@@ -9050,6 +9202,16 @@ function handleCommand (cmd) {
         } catch (e) { logEvent('deposit-qm', `deposit_item(${depositItemName}) error: ${e.message}`) }
       })()
       return { ok: true, started: true, item: depositItemName, target: target === HOPPER ? 'hopper' : 'chest', keep }
+    }
+    case 'play_record': {
+      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+      runPlayRecord().catch(e => logEvent('jukebox-error', e.message))
+      return { ok: true, started: true }
+    }
+    case 'stop_record': {
+      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+      runStopRecord().catch(e => logEvent('jukebox-error', e.message))
+      return { ok: true, started: true }
     }
     case 'go_outside': {
       if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
