@@ -5326,9 +5326,15 @@ async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
   if (deathCount > startDeaths) throw new Error('died en route to house center')
 
   // 2. Verify we're actually ON the orientation block before doing anything yaw-dependent.
-  const atOrigin = verifyAtOrientation(HOUSE_CENTER)
+  let atOrigin = verifyAtOrientation(HOUSE_CENTER)
   if (!atOrigin.ok) {
-    logEvent('go-outside', `not at house_center (dx=${atOrigin.dx}, dy=${atOrigin.dy}, dz=${atOrigin.dz}, pos=${JSON.stringify(atOrigin.pos)})`)
+    logEvent('go-outside', `not at house_center (dx=${atOrigin.dx}, dz=${atOrigin.dz}) — retrying via bedside`)
+    await pathTo(BED_APPROACH_ALT, 1, 8000)
+    await pathTo(HOUSE_CENTER, 0, 10000)
+    atOrigin = verifyAtOrientation(HOUSE_CENTER)
+  }
+  if (!atOrigin.ok) {
+    logEvent('go-outside', `still not at house_center (dx=${atOrigin.dx}, dy=${atOrigin.dy}, dz=${atOrigin.dz}, pos=${JSON.stringify(atOrigin.pos)})`)
     throw new Error(`not at house_center orientation block (off by dx=${atOrigin.dx}, dz=${atOrigin.dz})`)
   }
   logEvent('go-outside', `at orientation ${JSON.stringify(atOrigin.pos)}`)
@@ -6889,8 +6895,6 @@ async function runStashAll () {
 
 // ── Jukebox ─────────────────────────────────────────────────────────────────
 const JUKEBOX = { x: -274, y: 64, z: 565 }
-const RECORD_CHEST_SLOT = 5
-
 async function runPlayRecord () {
   const jb = bot.blockAt(new Vec3(JUKEBOX.x, JUKEBOX.y, JUKEBOX.z))
   if (jb && jb.name === 'jukebox' && jb.metadata === 1) {
@@ -6911,8 +6915,11 @@ async function runPlayRecord () {
     if (!chestBlock) throw new Error('kitchen chest not reachable')
     const win = await bot.openContainer(chestBlock)
     const containerSlotCount = win.slots.length - 36
-    const srcItem = win.slots[RECORD_CHEST_SLOT]
-    if (!srcItem || !srcItem.name.startsWith('record_')) {
+    let recordSlot = -1
+    for (let j = 0; j < containerSlotCount; j++) {
+      if (win.slots[j] && win.slots[j].name.startsWith('record_')) { recordSlot = j; break }
+    }
+    if (recordSlot < 0) {
       win.close()
       bot.chat('No record in the chest.')
       return
@@ -6923,7 +6930,7 @@ async function runPlayRecord () {
     }
     if (destSlot < 0) { win.close(); bot.chat('Inventory is full.'); return }
     try {
-      await bot.clickWindow(RECORD_CHEST_SLOT, 0, 0)
+      await bot.clickWindow(recordSlot, 0, 0)
       await bot.clickWindow(destSlot, 0, 0)
     } catch (e) {
       try { await bot.clickWindow(-999, 0, 0) } catch (_) {}
@@ -6934,7 +6941,7 @@ async function runPlayRecord () {
     await sleep(300)
     record = bot.inventory.items().find(i => i.name.startsWith('record_'))
     if (!record) { bot.chat("Couldn't grab the record from the chest."); return }
-    logEvent('jukebox', `withdrew ${record.name} from chest slot ${RECORD_CHEST_SLOT}`)
+    logEvent('jukebox', `withdrew ${record.name} from chest slot ${recordSlot}`)
   }
 
   if (insideHouse()) await runGoOutside()
@@ -7000,16 +7007,20 @@ async function runStopRecord () {
   }
   if (srcSlot < 0) { win.close(); bot.chat('Lost the record somehow.'); return }
 
-  if (win.slots[RECORD_CHEST_SLOT]) {
+  let destSlot = -1
+  for (let j = 0; j < containerSlotCount; j++) {
+    if (!win.slots[j]) { destSlot = j; break }
+  }
+  if (destSlot < 0) {
     win.close()
-    bot.chat("The record's reserved slot in the chest is occupied.")
-    logEvent('jukebox', `can't return record — chest slot ${RECORD_CHEST_SLOT} occupied`)
+    bot.chat('The chest is full — no room for the record.')
+    logEvent('jukebox', 'can\'t return record — chest full')
     return
   }
 
   try {
     await bot.clickWindow(srcSlot, 0, 0)
-    await bot.clickWindow(RECORD_CHEST_SLOT, 0, 0)
+    await bot.clickWindow(destSlot, 0, 0)
   } catch (e) {
     try { await bot.clickWindow(-999, 0, 0) } catch (_) {}
     win.close()
@@ -7018,7 +7029,7 @@ async function runStopRecord () {
   win.close()
 
   bot.chat('Record returned to the chest.')
-  logEvent('jukebox', `returned ${record.name} to chest slot ${RECORD_CHEST_SLOT}`)
+  logEvent('jukebox', `returned ${record.name} to chest slot ${destSlot}`)
 }
 
 // Said when told to "stand down" / "just chill" — idle autonomy (wandering,
