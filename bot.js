@@ -688,6 +688,7 @@ function startAutoSleep () {
     tryCollectBake()
     tryRestockSupplies()
     tryMorningPlantBalls()
+    tryHopperCheck()
     tryStoryRequest()
     tryStoryTimeTimeout()
   }, 5000)
@@ -3109,14 +3110,14 @@ const SUSTAIN_KEEP_RAW_POTATO = 16
 const SUSTAIN_POTATO_MATURITY_PCT = 85
 const sustainState = { active: false, cycles: 0, startedBy: null, lastCycleDay: -1, role: null, potatoRole: null }
 
-async function feedHopperOneAtATime (waitMs) {
+async function feedHopperOneAtATime (waitMs, { requireSustain = false } = {}) {
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
   const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
   if (!hopperBlock) { logEvent('sustain-hopper', 'hopper block not loaded'); return false }
 
   for (let fed = 0; fed < 7; fed++) {
-    if (!sustainState.active) return false
+    if (requireSustain && !sustainState.active) return false
     const fuelName = countOnHand('potato') >= 1 ? 'potato' : null
     if (!fuelName) {
       logEvent('sustain-hopper', `out of fuel after ${fed} fed`)
@@ -3160,13 +3161,13 @@ async function clearJammedHopper () {
     logEvent('sustain-hopper', 'no fuel on hand to clear jam')
     return false
   }
-  const cleared = await feedHopperOneAtATime(20000)
+  const cleared = await feedHopperOneAtATime(20000, { requireSustain: true })
   if (cleared) {
     logEvent('sustain-hopper', 'hopper cleared on first pass (20s waits)')
     return true
   }
   logEvent('sustain-hopper', 'first pass failed — retrying with 30s waits')
-  const cleared2 = await feedHopperOneAtATime(30000)
+  const cleared2 = await feedHopperOneAtATime(30000, { requireSustain: true })
   if (cleared2) {
     logEvent('sustain-hopper', 'hopper cleared on second pass (30s waits)')
   } else {
@@ -3270,6 +3271,7 @@ function answerFireRollCall () {
     if (!sustainState.active) return
     if (sustainState.role === 'solo') {
       logEvent('sustain', 'roll call heard while solo — splitting, taking north')
+      abortGen++
       announceFireClaim('north')
     } else {
       bot.chat(fireClaimCode(sustainState.role))
@@ -3279,7 +3281,8 @@ function answerFireRollCall () {
 
 function resolveFireClaimConflict (name, field) {
   if (sustainState.role === 'solo') {
-    // Someone claimed a field while we covered all — take the first free role.
+    // Someone claimed a field while we covered all — abort current harvest and take the first free role.
+    abortGen++
     const claimed = activeFireClaims()
     const free = ['north', 'south', 'potatoes'].filter(f => !claimed.has(f))
     if (free.length) announceFireClaim(free[0])
@@ -3358,6 +3361,15 @@ async function runRpsChallenger () {
   const rival = rpsRivalName()
   if (!rival) { logEvent('rps', 'no rival found — skipping'); return null }
   logEvent('rps', `challenging ${rival} for potato duty`)
+
+  // Get outside before sending the challenge so we're ready to play
+  try {
+    if (insideHouse()) await runGoOutside(undefined, { skipTimeCheck: true })
+    if (insideHouse()) throw new Error('still inside')
+  } catch (e) {
+    logEvent('rps', `can't get outside to challenge: ${e.message}`)
+    return null
+  }
 
   // Send challenge and wait for rival to accept
   const acceptPromise = new Promise(resolve => { rpsChallengeResolve = resolve })
@@ -3964,27 +3976,6 @@ async function runSustainFarm (user) {
           } else if (polls % 20 === 0 && pScan.potatoes > 0) {
             logEvent('sustain', `potatoes waiting (${pScan.mature}/${pScan.potatoes}, ${pScan.maturePct.toFixed(0)}%)`)
           }
-          // Hopper jam check — potato bot clears jams with raw potatoes
-          if (polls % SUSTAIN_HOPPER_CHECK_INTERVAL === 0 && sustainSafe() && !foodSafetyBusy && countOnHand('potato') >= 1) {
-            try {
-              const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
-              if (hopperBlock) {
-                await ensureInsideHouse()
-                await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-                const win = await bot.openContainer(hopperBlock)
-                const slots = win.slots.slice(0, win.slots.length - 36)
-                const hasBalls = slots.some(s => s && s.name === 'unknown')
-                const hasFuel = slots.some(s => s && (s.name === 'wheat' || s.name === 'potato'))
-                win.close()
-                if (hasBalls && !hasFuel) {
-                  logEvent('sustain-hopper', 'plant balls jammed — feeding potato to clear')
-                  await clearJammedHopper()
-                }
-              }
-            } catch (e) {
-              logEvent('sustain-hopper', `check failed: ${e.message}`)
-            }
-          }
         }
         polls++
         await sustainWait(SUSTAIN_POLL_MS)
@@ -4199,29 +4190,6 @@ async function runSustainFarm (user) {
             logEvent('sustain', `waiting (mature=${scan.mature}/${scan.expected} potato=${pS.mature}/${pS.potatoes}(${pS.maturePct.toFixed(0)}%) loaded=${scan.loaded})`)
           }
         }
-        // Jam-watch: feed a raw potato to push stuck plantballs through.
-        if (polls % SUSTAIN_HOPPER_CHECK_INTERVAL === 0 && (sustainState.role === 'solo' || isFieldRole) && sustainSafe() && !foodSafetyBusy && countOnHand('potato') >= 1) {
-          try {
-            const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
-            if (hopperBlock) {
-              await ensureInsideHouse()
-              await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-              const win = await bot.openContainer(hopperBlock)
-              const slots = win.slots.slice(0, win.slots.length - 36)
-              const hasBalls = slots.some(s => s && s.name === 'unknown')
-              const hasFuel = slots.some(s => s && (s.name === 'wheat' || s.name === 'potato'))
-              win.close()
-              const currentDay = bot.time?.day ?? -1
-              if (hasBalls && !hasFuel && currentDay > sustainState.lastCycleDay) {
-                logEvent('sustain-hopper', `plant balls jammed — feeding potato to clear (day ${currentDay}, last cycle day ${sustainState.lastCycleDay})`)
-                await clearJammedHopper()
-              }
-            }
-          } catch (e) {
-            logEvent('sustain-hopper', `check failed: ${e.message}`)
-          }
-        }
-
         // (RPS tiebreak moved above harvestHalf check so it runs before wheat)
 
         // Solo mid-poll potato check — solo bot harvests potatoes between wheat cycles.
@@ -5171,6 +5139,44 @@ async function tryMorningPlantBalls () {
 const HOUSE_CENTER = { x: -268, y: 65, z: 572 }
 const OUTSIDE_ORIENTATION = { x: -275, y: 64, z: 572 }
 // Sheep-pen gate pads. Mirror the door pad pattern: one tile each side of
+// ── Background hopper jam check ─────────────────────────────────────────────
+// Independent of sustain — any idle bot with potatoes checks the hopper for
+// stuck plant balls and feeds a potato to clear the jam.
+let hopperCheckBusy = false
+let hopperCheckCooldownUntil = 0
+
+async function tryHopperCheck () {
+  if (hopperCheckBusy || foodSafetyBusy || restockBusy || morningBallsBusy) return
+  if (taskBusy() || goInsideBusy || autoSleepBusy || penTraversalBusy) return
+  if (!bot.entity || !bot.world || bot.isSleeping) return
+  if (bot.currentWindow) return
+  if (Date.now() < hopperCheckCooldownUntil) return
+  if (countOnHand('potato') < 1) return
+
+  hopperCheckBusy = true
+  try {
+    await ensureInsideHouse()
+    await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+    const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
+    if (!hopperBlock) return
+    const win = await bot.openContainer(hopperBlock)
+    const slots = win.slots.slice(0, win.slots.length - 36)
+    const hasBalls = slots.some(s => s && s.name === 'unknown')
+    const hasFuel = slots.some(s => s && (s.name === 'wheat' || s.name === 'potato'))
+    win.close()
+    if (hasBalls && !hasFuel) {
+      logEvent('hopper-check', 'plant balls stuck — feeding potato to clear')
+      await feedHopperOneAtATime(20000)
+    }
+    hopperCheckCooldownUntil = Date.now() + 60000
+  } catch (e) {
+    logEvent('hopper-check', `failed: ${e.message}`)
+    hopperCheckCooldownUntil = Date.now() + 60000
+  } finally {
+    hopperCheckBusy = false
+  }
+}
+
 // the gate, both at the same y, single-tile, walkable on first pathfind.
 const PEN_GATE       = { x: -278, y: 64, z: 574 }
 const PEN_OUTSIDE    = { x: -278, y: 64, z: 573 }  // pad north of gate (outside the pen)
