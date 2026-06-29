@@ -688,7 +688,6 @@ function startAutoSleep () {
     tryCollectBake()
     tryRestockSupplies()
     tryMorningPlantBalls()
-    tryHopperCheck()
     tryStoryRequest()
     tryStoryTimeTimeout()
   }, 5000)
@@ -1832,6 +1831,44 @@ async function runIdleWanderToFurnace () {
     }
   } else {
     logEvent('idle-wander', 'furnace empty')
+  }
+
+  if (countOnHand('potato') >= 1) {
+    await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+    const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
+    if (hopperBlock) {
+      const win = await bot.openContainer(hopperBlock)
+      const slots = win.slots.slice(0, win.slots.length - 36)
+      const ballCount = slots.reduce((n, s) => n + (s && s.name === 'unknown' ? s.count : 0), 0)
+      const hasFuel = slots.some(s => s && (s.name === 'wheat' || s.name === 'potato'))
+      win.close()
+      if (ballCount > 0 && !hasFuel && (hopperLastBallCount < 0 || ballCount >= hopperLastBallCount)) {
+        logEvent('idle-wander', `hopper stuck (balls=${ballCount}, last=${hopperLastBallCount}) — feeding 1 potato`)
+        hopperLastBallCount = ballCount
+        const containerSize = 5
+        const win2 = await bot.openContainer(hopperBlock)
+        const playerSlots = win2.slots.slice(containerSize)
+        const srcIdx = playerSlots.findIndex(s => s && s.name === 'potato')
+        if (srcIdx >= 0) {
+          const winSlot = containerSize + srcIdx
+          const count = playerSlots[srcIdx].count
+          await bot.clickWindow(winSlot, 1, 0)
+          await bot.clickWindow(1, 1, 0)
+          if (count > 2) await bot.clickWindow(winSlot, 0, 0)
+          else if (count === 2) {
+            const emptyIdx = playerSlots.findIndex((s, i) => i !== srcIdx && !s)
+            if (emptyIdx !== -1) await bot.clickWindow(containerSize + emptyIdx, 0, 0)
+            else await bot.clickWindow(winSlot, 0, 0)
+          }
+        }
+        win2.close()
+      } else if (ballCount > 0) {
+        logEvent('idle-wander', `hopper draining (balls=${ballCount}, last=${hopperLastBallCount}, fuel=${hasFuel})`)
+        hopperLastBallCount = ballCount
+      } else {
+        hopperLastBallCount = -1
+      }
+    }
   }
 
   await sleep(1500 + Math.floor(Math.random() * 2000))
@@ -3147,7 +3184,8 @@ async function feedHopperOneAtATime (waitMs, { requireSustain = false } = {}) {
     }
     win.close()
     logEvent('sustain-hopper', `fed ${fuelName} ${fed + 1}/7, waiting ${waitMs / 1000}s`)
-    await sustainWait(waitMs)
+    if (requireSustain) await sustainWait(waitMs)
+    else await sleep(waitMs)
   }
   const win2 = await bot.openContainer(hopperBlock)
   const finalSlots = win2.slots.slice(0, win2.slots.length - 36)
@@ -3357,7 +3395,10 @@ function lookAtPlayer (name) {
   if (entity) return bot.lookAt(entity.position.offset(0, 1.6, 0)).catch(() => {})
 }
 
+let rpsChallengerCooldownUntil = 0
+
 async function runRpsChallenger () {
+  if (Date.now() < rpsChallengerCooldownUntil) return null
   const rival = rpsRivalName()
   if (!rival) { logEvent('rps', 'no rival found — skipping'); return null }
   logEvent('rps', `challenging ${rival} for potato duty`)
@@ -3368,6 +3409,7 @@ async function runRpsChallenger () {
     if (insideHouse()) throw new Error('still inside')
   } catch (e) {
     logEvent('rps', `can't get outside to challenge: ${e.message}`)
+    rpsChallengerCooldownUntil = Date.now() + 30000
     return null
   }
 
@@ -5140,42 +5182,7 @@ const HOUSE_CENTER = { x: -268, y: 65, z: 572 }
 const OUTSIDE_ORIENTATION = { x: -275, y: 64, z: 572 }
 // Sheep-pen gate pads. Mirror the door pad pattern: one tile each side of
 // ── Background hopper jam check ─────────────────────────────────────────────
-// Independent of sustain — any idle bot with potatoes checks the hopper for
-// stuck plant balls and feeds a potato to clear the jam.
-let hopperCheckBusy = false
-let hopperCheckCooldownUntil = 0
-
-async function tryHopperCheck () {
-  if (hopperCheckBusy || foodSafetyBusy || restockBusy || morningBallsBusy) return
-  if (taskBusy() || goInsideBusy || autoSleepBusy || penTraversalBusy) return
-  if (!bot.entity || !bot.world || bot.isSleeping) return
-  if (bot.currentWindow) return
-  if (Date.now() < hopperCheckCooldownUntil) return
-  if (countOnHand('potato') < 1) return
-
-  hopperCheckBusy = true
-  try {
-    await ensureInsideHouse()
-    await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-    const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
-    if (!hopperBlock) return
-    const win = await bot.openContainer(hopperBlock)
-    const slots = win.slots.slice(0, win.slots.length - 36)
-    const hasBalls = slots.some(s => s && s.name === 'unknown')
-    const hasFuel = slots.some(s => s && (s.name === 'wheat' || s.name === 'potato'))
-    win.close()
-    if (hasBalls && !hasFuel) {
-      logEvent('hopper-check', 'plant balls stuck — feeding potato to clear')
-      await feedHopperOneAtATime(20000)
-    }
-    hopperCheckCooldownUntil = Date.now() + 60000
-  } catch (e) {
-    logEvent('hopper-check', `failed: ${e.message}`)
-    hopperCheckCooldownUntil = Date.now() + 60000
-  } finally {
-    hopperCheckBusy = false
-  }
-}
+let hopperLastBallCount = -1
 
 // the gate, both at the same y, single-tile, walkable on first pathfind.
 const PEN_GATE       = { x: -278, y: 64, z: 574 }
