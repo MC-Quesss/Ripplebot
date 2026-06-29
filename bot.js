@@ -2119,7 +2119,8 @@ function buildExpressiveContext (situation) {
   if (activeTask.name) parts.push(`You are in the middle of: ${activeTask.name}.`)
   if (sustainState.active) {
     const wheat = sustainState.role === 'solo' ? 'solo (both wheat fields + potatoes)' : sustainState.role || 'unknown'
-    const potato = sustainState.potatoRole === 'mine' ? ' + potato duty' : sustainState.potatoRole === 'theirs' ? ' (another bot handles potatoes)' : ''
+    const potatoRival = rpsRivalName() || 'another bot'
+    const potato = sustainState.potatoRole === 'mine' ? ' + potato duty (you won RPS)' : sustainState.potatoRole === 'theirs' ? ` (${potatoRival} has potato duty — they won RPS)` : ''
     parts.push(`You are keeping the fire going (autonomous crop → bio-fuel loop, role: ${wheat}${potato}).`)
   }
   if (followTarget) parts.push(`You are following ${followTarget} around.`)
@@ -3451,6 +3452,7 @@ async function runFunRpsChallenger () {
   if (rpsFunBusy) return null
   if (isBedtime()) return null
   if (insideHouse()) return null
+  if (sustainState.active && !sustainState.potatoRole) return null
   const pick = rpsFunRivalName()
   if (!pick) { logEvent('rps-fun', 'no bot nearby — skipping'); return null }
   rpsFunBusy = true
@@ -4086,8 +4088,14 @@ async function runSustainFarm (user) {
         } else {
           const pScan = scanKnownPotatoField()
           if (pScan.potatoes > 0 && pScan.maturePct >= SUSTAIN_POTATO_MATURITY_PCT) {
-            logEvent('sustain', 'potatoes ready — challenging for RPS')
-            await runRpsChallenger()
+            await sleep(1000 + Math.floor(Math.random() * 4000))
+            if (rpsAccepted) {
+              const c = rpsAccepted; rpsAccepted = null
+              await runRpsAcceptor(c)
+            } else {
+              logEvent('sustain', 'potatoes ready — challenging for RPS')
+              await runRpsChallenger()
+            }
           }
         }
         if (sustainState.potatoRole === 'mine') {
