@@ -160,7 +160,6 @@ client.on('position', (packet) => {
 // them — see journal/observations). Tapping the raw packet reveals the server's
 // window id and type so the grid can be driven via raw window_click if mineflayer
 // won't surface it as bot.currentWindow.
-let lastRawWindow = null
 // Real vanilla windows are short-lived. Keep only a tiny, TTL-pruned memory of
 // them so the Forge-GUI adoption shim can distinguish vanilla windows from
 // orphaned modded windows without accumulating window IDs forever.
@@ -186,7 +185,6 @@ client.on('open_window', (packet) => {
   // "real" server open_window packets, or this set becomes both misleading and
   // slowly unbounded during repeated bench/hopper work.
   if (packet && !packet.__synthetic) {
-    lastRawWindow = packet
     markRealOpenWindow(packet.windowId)
     try { logEvent('open_window', JSON.stringify(packet)) } catch (_) { logEvent('open_window', 'unserializable open_window packet') }
   }
@@ -631,7 +629,7 @@ async function tryAutoSleep () {
 function tryMorningExclamation () {
   if (!wasSleeping) return
   const t = bot.time || {}
-  if (!bot.isSleeping && t.isDay && (t.timeOfDay ?? 0) < 11500 && !activeTask.name) {
+  if (!bot.isSleeping && t.isDay && (t.timeOfDay ?? 0) < 11500 && !activeTask.name && !sustainState.active) {
     wasSleeping = false
     bot.chat(pickLine(withPersonaSlot(MORNING_EXCLAMATION_LINES, 'morningExclamation')))
     logEvent('morning', 'morning exclamation')
@@ -916,22 +914,6 @@ function personaPool (slot, fallbackPool) {
   return (pool && pool.length) ? pool : fallbackPool
 }
 
-// Union of one functional slot across ALL persona spec files — for recognizing
-// other bots' announcements regardless of which persona this bot runs.
-function allPersonaFunctional (slot) {
-  const out = []
-  try {
-    for (const f of fs.readdirSync(path.join(__dirname, 'personas'))) {
-      if (!f.endsWith('.json')) continue
-      try {
-        const spec = JSON.parse(fs.readFileSync(path.join(__dirname, 'personas', f), 'utf8'))
-        out.push(...(spec.functional?.[slot] || []))
-      } catch {}
-    }
-  } catch {}
-  return out
-}
-
 // Persona-tagged pool filtering (used by JOKES): tagged entries are exclusive
 // to the matching persona; untagged entries are available to all bots.
 const PERSONA_TAGS = new Set(['protocol', 'roz', 'unikitty', 'private'])
@@ -944,7 +926,6 @@ function personaBiasForTags (tags = []) {
   return 0
 }
 
-const _personaPools = new Map()
 // Shared base pool extended with this persona's additions from its spec file.
 function withPersonaSlot (basePool, slot) {
   const extra = personaSpec.functional[slot]
@@ -1238,15 +1219,6 @@ async function yieldToBedtime (myGen) {
   }
 }
 
-function hashCode (str) {
-  let hash = 0
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash) + str.charCodeAt(i)
-    hash |= 0
-  }
-  return Math.abs(hash)
-}
-
 const POTATO_ASK_LINES = [
   "Should I cook these little potato-o-o's or what?",
   "Got a bunch of taters — bake 'em or stash 'em?",
@@ -1402,6 +1374,7 @@ async function depositQuickMove (itemName, target, { keep = 0, maxRounds = 8, se
     } finally {
       try { win.close() } catch (_) {}
     }
+    await sleep(200)
     const after = countOnHand(itemName)
     if (after >= before) {
       if (++stalled >= 3) break // container won't accept more — backed up
@@ -1411,8 +1384,13 @@ async function depositQuickMove (itemName, target, { keep = 0, maxRounds = 8, se
     }
   }
 
+  await sleep(300)
   const remaining = countOnHand(itemName)
-  return { deposited: startCount - remaining, remaining, rounds, backedUp: remaining > keep }
+  const deposited = startCount - remaining
+  if (deposited > 0 && remaining > 0) {
+    logEvent('deposit-qm', `${itemName}: deposited=${deposited} remaining=${remaining} (startCount=${startCount})`)
+  }
+  return { deposited, remaining, rounds, backedUp: remaining > keep }
 }
 
 // Nickname → real username map, built from raw chat JSON and player_info updates.
@@ -1673,14 +1651,6 @@ const WHEAT_FIELD_STAND_POINTS = [
   { x: -281, y: 64, z: 565 },
   { x: -285, y: 64, z: 551 },
 ]
-const IDLE_WANDER_FIELD_LINES = [
-  { text: 'I am going to stand in the wheat for a moment. For field research.', weight: (s) => s.curiosity + s.focus },
-  { text: 'Taking a brief wheat-adjacent observational posture.', weight: (s) => s.focus + s.snark },
-  { text: 'The field is calling. Quietly. In wheat.', weight: (s) => s.charm + s.curiosity },
-  { text: 'I will inspect the crop rows. Dramatically, but not too dramatically.', weight: (s) => s.snark + s.focus },
-  { text: 'I feel a sudden need to stand in a field.', weight: (s) => s.curiosity + s.snark },
-  { text: 'The wheat and I need to have a conversation.', weight: (s) => s.charm + s.curiosity },
-]
 let lastFieldRepairAt = 0
 const FIELD_WANDER_REPAIR_COOLDOWN_MS = 15 * 1000
 
@@ -1696,23 +1666,6 @@ async function maybeRepairBareWheatTilesWhileWandering () {
   await repairBareWheatTilesFromFieldVisit({ announce: true })
   return true
 }
-
-const SHEEP_COUNTING_LINES = [
-  { text: 'Maybe I will count the sheep for a while.', weight: (s) => s.charm + s.patience },
-  { text: 'I seem to be counting sheep.', weight: (s) => s.patience + s.snark },
-  { text: 'One sheep. Two sheep. Several sheep.', weight: (s) => s.snark + s.charm },
-  { text: 'I lost count around sheep six.', weight: (s) => s.snark + s.chaos },
-  { text: 'The sheep are making counting difficult.', weight: (s) => s.snark + s.focus },
-  { text: 'I am trying to count the sheep, but they keep moving.', weight: (s) => s.focus + s.snark },
-  { text: 'One of the sheep appears uncooperative.', weight: (s) => s.snark + s.curiosity },
-  { text: 'I think there are still the correct number of sheep.', weight: (s) => s.focus + s.charm },
-  { text: 'Counting sheep feels appropriate somehow.', weight: (s) => s.patience + s.charm },
-  { text: 'The sheep seem calmer tonight.', weight: (s) => s.charm + s.patience },
-  { text: 'The sheep have entered loaf mode.', weight: (s) => s.curiosity + s.charm },
-  { text: 'This is statistically a lot of sheep.', weight: (s) => s.focus + s.snark },
-  { text: 'One sheep. Two sheep. Three sheep. ...what was I doing?', weight: (s) => s.chaos + s.snark },
-  { text: 'I have counted the sheep twice and still learned nothing.', weight: (s) => s.snark + s.patience },
-]
 
 function idleWanderBusy () {
   return !bot.entity || bot.isSleeping || autoSleepBusy || goInsideBusy || penTraversalBusy ||
@@ -3372,7 +3325,6 @@ let rpsState = null // { round, myThrow, rival, resolve }
 let rpsChallengeResolve = null // resolve function for incoming .d acceptance
 let rpsAccepted = null // set to challenger's name when we receive a .d challenge
 let rpsReadyResolve = null // resolve function for rival's .g ready signal
-let rpsFunAccepted = null // set to challenger's name for fun-RPS (.j)
 let rpsFunChallengeResolve = null // resolve for fun-RPS acceptance
 let rpsFunBusy = false // prevents cascade: only one fun-RPS at a time
 let rpsFunLastJ = 0 // timestamp of last .j seen — echo suppression
@@ -3400,6 +3352,7 @@ let rpsChallengerCooldownUntil = 0
 
 async function runRpsChallenger () {
   if (Date.now() < rpsChallengerCooldownUntil) return null
+  rpsAccepted = null
   const rival = rpsRivalName()
   if (!rival) { logEvent('rps', 'no rival found — skipping'); return null }
   logEvent('rps', `challenging ${rival} for potato duty`)
@@ -3747,8 +3700,16 @@ function trackFireCoordination (username, message) {
   }
   if (code === 'd') {
     if (rpsChallengeResolve) {
-      logEvent('rps', `${username} accepted our challenge`)
-      rpsChallengeResolve(true)
+      const myName = myFireName()
+      if (myName < name) {
+        logEvent('rps', `${username} accepted our challenge (we win tiebreak)`)
+        rpsChallengeResolve(true)
+      } else {
+        logEvent('rps', `dual challenge with ${username} — withdrawing (they win tiebreak)`)
+        rpsChallengeResolve(false)
+        rpsAccepted = name
+        sustainWake()
+      }
     } else if (sustainState.active && (sustainState.role === 'north' || sustainState.role === 'south') && !sustainState.potatoRole) {
       rpsAccepted = name
       logEvent('rps', `${username} challenged us to RPS`)
@@ -3831,7 +3792,7 @@ function trackFireCoordination (username, message) {
 let sustainWakeResolve = null
 async function sustainWait (ms) {
   const steps = Math.max(1, Math.round(ms / 1000))
-  for (let i = 0; i < steps && sustainState.active && !rpsAccepted; i++) {
+  for (let i = 0; i < steps && sustainState.active && !(rpsAccepted && !sustainState.potatoRole); i++) {
     await new Promise(resolve => {
       sustainWakeResolve = resolve
       setTimeout(() => { sustainWakeResolve = null; resolve() }, 1000)
@@ -4278,7 +4239,6 @@ async function runSustainFarm (user) {
       await sustainWait(SUSTAIN_POLL_MS)
     }
   } catch (e) {
-    logEvent('sustain', `loop error: ${e.message}`)
     logEvent('sustain', `loop error: ${e.message}`)
   } finally {
     sustainState.active = false
@@ -6668,17 +6628,21 @@ async function runStashJunk (filterNames) {
 async function runStashWheat () {
   const onHand = bot.inventory.items().filter(i => i.name === 'wheat').reduce((s, i) => s + i.count, 0)
   if (!onHand) { bot.chat('No wheat in my pockets.'); return }
-  bot.chat(`Sending ${onHand} wheat to the hopper…`)
+  bot.chat(`Crafting ${onHand} wheat into plant balls…`)
 
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
 
-  const r = await depositQuickMove('wheat', HOPPER, { keep: 0 })
-  const msg = r.remaining > 0
-    ? `Hopper took ${r.deposited} wheat. ${r.remaining} didn't fit.`
-    : `Sent ${r.deposited} wheat to the hopper. Pockets clear.`
-  bot.chat(msg)
-  logEvent('stash-wheat', `deposited=${r.deposited} remaining=${r.remaining}`)
+  const cr = await craftPlantBalls({ ingredient: 'wheat', keepCount: 0, maxBalls: Infinity })
+  if (cr.crafted > 0) {
+    await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+    const r = await depositQuickMove('unknown', HOPPER, { keep: 0 })
+    bot.chat(`Crafted ${cr.crafted} plant balls, sent to the hopper.`)
+    logEvent('stash-wheat', `crafted=${cr.crafted} deposited=${r.deposited}`)
+  } else {
+    bot.chat('Not enough wheat to craft plant balls.')
+    logEvent('stash-wheat', 'no plant balls crafted')
+  }
 }
 
 // Deposit one or more item names. Items not present are silently skipped.
@@ -6702,11 +6666,19 @@ async function runDepositNamed (names) {
 
   const summary = []
 
-  // wheat → hopper via quick-move
-  if (names.includes('wheat') && countOnHand('wheat') > 0) {
-    const r = await depositQuickMove('wheat', HOPPER, { keep: 0 })
-    summary.push(`wheat: ${r.deposited} → hopper${r.remaining ? ` (${r.remaining} kept)` : ''}`)
-    logEvent('deposit-named', `wheat → hopper: deposited=${r.deposited} remaining=${r.remaining}`)
+  // wheat → craft plant balls → hopper
+  if (names.includes('wheat') && countOnHand('wheat') >= 8) {
+    try {
+      const cr = await craftPlantBalls({ ingredient: 'wheat', keepCount: 0, maxBalls: Infinity })
+      if (cr.crafted > 0) {
+        await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+        const r = await depositQuickMove('unknown', HOPPER, { keep: 0 })
+        summary.push(`wheat: crafted ${cr.crafted} plant balls → hopper (${r.deposited})`)
+        logEvent('deposit-named', `wheat → ${cr.crafted} balls → hopper: deposited=${r.deposited}`)
+      }
+    } catch (e) {
+      logEvent('deposit-named', `wheat craft failed: ${e.message}`)
+    }
   }
 
   // wheat_seeds → craft plant balls → hopper
@@ -6775,24 +6747,24 @@ async function runStashAll () {
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
 
-  // Wheat → hopper
-  const wheatOnHand = countOnHand('wheat')
-  if (wheatOnHand > 0) {
-    const r = await depositQuickMove('wheat', HOPPER, { keep: 0 })
-    logEvent('stash-all', `wheat → hopper: deposited=${r.deposited} remaining=${r.remaining}`)
-  }
-
-  // Seeds → craft plant balls → hopper
-  if (countOnHand('wheat_seeds') >= 8) {
+  // Wheat + seeds → craft plant balls → hopper
+  if (countOnHand('wheat') >= 8 || countOnHand('wheat_seeds') >= 8) {
     try {
-      const craftResult = await craftPlantBalls({ keepCount: 0, maxBalls: Infinity })
-      if (craftResult.crafted > 0) {
-        await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+      if (countOnHand('wheat') >= 8) {
+        const wr = await craftPlantBalls({ ingredient: 'wheat', keepCount: 0, maxBalls: Infinity })
+        if (wr.crafted > 0) logEvent('stash-all', `crafted ${wr.crafted} plant balls from wheat`)
+      }
+      if (countOnHand('wheat_seeds') >= 8) {
+        const sr = await craftPlantBalls({ keepCount: 0, maxBalls: Infinity })
+        if (sr.crafted > 0) logEvent('stash-all', `crafted ${sr.crafted} plant balls from seeds`)
+      }
+      await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+      if (countOnHand('unknown') > 0) {
         const r = await depositQuickMove('unknown', HOPPER, { keep: 0 })
         logEvent('stash-all', `plant balls → hopper: deposited=${r.deposited}`)
       }
     } catch (e) {
-      logEvent('stash-all', `seed craft/deposit failed: ${e.message}`)
+      logEvent('stash-all', `craft/deposit failed: ${e.message}`)
     }
   }
 
