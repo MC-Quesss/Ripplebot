@@ -56,7 +56,7 @@ trailing core — `* Roz glances north — all golden. (.c n)`. One core per lin
 | `.q <f>` | **release with work pending** — handoff / orphaned duty up for grabs |
 | `.b` / `.f` | bench lock claim / release (60s TTL, tie-break on crossed claims) |
 | `.k` / `.l` | **hopper lock** claim / release (4 min TTL) — one bot feeds at a time, HARD invariant |
-| `.d` / `.g` | RPS challenge-or-accept / at-the-spot-ready |
+| `.d` / `.e` / `.g` | RPS challenge / accept / at-the-spot-ready — challenge and accept are DISTINCT codes (when both were `.d`, stray acceptances after aborted matches read as fresh challenges and two bots ping-ponged phantom games forever; observed live 2026-07-03) |
 | `.t<round> @<tick>` | RPS chant: round + reveal tick on the shared server clock |
 | `shoots rock (.t<round>)` | round-tagged throw |
 | `.a` | RPS mutual abort |
@@ -95,7 +95,17 @@ multi-bot live test passes (kill-a-keeper wellness drill + one observed `.q` han
 - **2026-05-30 (day 42933):** original loop, 1 cycle clean.
 - **2026-06-02 (day 43242):** plant-ball cycle end-to-end.
 - **2026-06-24/27:** multi-bot fire duty + RPS field-tested (bugs led to this overhaul).
-- **2026-07-03:** overhaul implemented; parse grammar unit-tested (23/23); live 2-bot drill pending.
+- **2026-07-03:** overhaul implemented; parse grammar unit-tested (23/23).
+- **2026-07-03 (day 45901) — live 2-bot drill, RPS + locks VERIFIED:** Roz claimed
+  south, Private north; hopper patrols serialized cleanly under `.k`/`.l` (release →
+  rival claim 100ms apart, zero overlap); potatoes hit 85% → simultaneous challenges →
+  dual-challenge tiebreak resolved alphabetically (rainbot6032 < roz, Roz withdrew to
+  acceptor); full 4-round match with a chant before EVERY round, reveals within 10
+  ticks of the announced tick, throws round-tagged and matched, tie replayed cleanly;
+  Roz won 2-1, took potato duty, correctly did NOT `.q` (south at 57%, no standing
+  work). Found+fixed: dual-challenge withdrawal wrongly logged a failure and took a
+  backoff (fix in bot.js, applies at next restart). Still pending: dead-keeper
+  wellness drill (`.c` → `.q` absorb) and an observed `.q` handoff.
 
 ## Related
 - [[right-click-harvest]] — the per-cycle harvest (RPS checkpoint bail added 2026-07-03)

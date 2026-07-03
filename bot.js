@@ -3808,7 +3808,9 @@ function rpsFailureBackoff (why) {
 
 function rpsAnnounceAbort (why) {
   logEvent('rps', `aborting match: ${why}`)
-  chatCore('oh dear — the game fizzled. rematch soon', '.a')
+  // The prose carries the reason — chat is the only cross-machine debug
+  // channel, so a remote bot's failure cause must be readable from any log.
+  chatCore(`oh dear — the game fizzled (${why}). rematch soon`, '.a')
 }
 
 async function runRpsChallenger () {
@@ -3837,6 +3839,7 @@ async function runRpsChallenger () {
     sleep(RPS_ACCEPT_WAIT_MS).then(() => false)
   ])
   rpsChallengeResolve = null
+  if (accepted === 'withdrew') return null // dual challenge — we're the acceptor now; no backoff
   if (!accepted) {
     rpsFailureBackoff('challenge not accepted')
     return null
@@ -3845,9 +3848,18 @@ async function runRpsChallenger () {
   return runRpsMatch(rival, true)
 }
 
+let rpsAcceptCooldownUntil = 0
+
 async function runRpsAcceptor (rival) {
+  if (Date.now() < rpsAcceptCooldownUntil) {
+    logEvent('rps', `declining ${rival}'s challenge — accept cooldown after a failed match`)
+    return null
+  }
   logEvent('rps', `accepting ${rival}'s RPS challenge`)
-  bot.chat('/me .d')
+  // Accept is its own code (.e), NOT .d — when both were .d, a stray
+  // acceptance after an aborted match read as a fresh challenge and the two
+  // bots ping-ponged games forever (observed live 2026-07-03).
+  chatCore(null, '.e')
   return runRpsMatch(rival, false)
 }
 
@@ -3919,7 +3931,12 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
   })
   const failed = (why) => {
     if (!matchAborted) rpsAnnounceAbort(why)
-    if (!forFun) rpsFailureBackoff(matchAborted ? `rival aborted (${why})` : why)
+    if (!forFun) {
+      rpsFailureBackoff(matchAborted ? `rival aborted (${why})` : why)
+      // Also decline incoming challenges for a beat — a rival stuck in a
+      // failure loop must not be able to yank us around via the accept path.
+      rpsAcceptCooldownUntil = Date.now() + 45000 + Math.random() * 45000
+    }
     return null
   }
   try {
@@ -4287,21 +4304,33 @@ function trackFireCoordination (username, message) {
     return
   }
   if (code === 'd') {
+    // .d is ONLY a challenge. Acceptance is .e — when both were .d, a stray
+    // acceptance after an aborted match read as a fresh challenge and the
+    // bots ping-ponged games forever (observed live 2026-07-03).
     if (rpsChallengeResolve) {
       const myName = myFireName()
       if (myName < name) {
-        logEvent('rps', `${username} accepted our challenge (we win tiebreak)`)
-        rpsChallengeResolve(true)
+        // Dual challenge, we win the tiebreak — stay challenger and keep
+        // waiting for their .e (they withdraw into the acceptor role).
+        logEvent('rps', `dual challenge with ${username} — we win tiebreak, awaiting their accept`)
       } else {
         logEvent('rps', `dual challenge with ${username} — withdrawing (they win tiebreak)`)
-        rpsChallengeResolve(false)
+        rpsChallengeResolve('withdrew') // not a failure — we join their match as acceptor
         rpsAccepted = name
         sustainWake()
       }
-    } else if (sustainState.active && (myDuties().has('north') || myDuties().has('south')) && !sustainState.potatoRole) {
+    } else if (sustainState.active && (myDuties().has('north') || myDuties().has('south')) &&
+               !sustainState.potatoRole && Date.now() >= rpsAcceptCooldownUntil) {
       rpsAccepted = name
       logEvent('rps', `${username} challenged us to RPS`)
       sustainWake()
+    }
+    return
+  }
+  if (code === 'e') {
+    if (rpsChallengeResolve) {
+      logEvent('rps', `${username} accepted our challenge`)
+      rpsChallengeResolve(true)
     }
     return
   }

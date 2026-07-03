@@ -53,12 +53,57 @@ unit-tested in isolation (23/23 including negative cases); `node --check` clean 
 - Updated [[../procedures/keep-the-fire-going]] wholesale (marked `confirmed: false` until the
   live drill passes).
 
+### Live drill results (same day, day 45901)
+
+- **RPS + locks verified in the field**: claims (Roz south / Private north), serialized
+  hopper patrols (release→rival-claim 100ms apart), dual-challenge alphabetical tiebreak,
+  4-round match with chant-before-every-round and reveals within 10 ticks of the announced
+  tick, round-tagged throws, tie replay, 2-1 win → potato duty, and a correct *non*-handoff
+  (south at 57% — nothing to `.q`). Full detail in [[../procedures/keep-the-fire-going]].
+- **Bug found live + fixed**: dual-challenge withdrawal took a spurious failure backoff
+  (streak pollution). Fixed in bot.js (`'withdrew'` resolve); applies at next restart on
+  each machine.
+
+### Second live incident (day 45903) — the .d echo chamber
+
+- ~16:29–16:36: Private and Roz fell into a **phantom-match loop** — challenge, abort,
+  instant re-challenge, ~10 failed matches in 7 minutes, escalating on both sides. Root
+  cause: **`.d` meant both "challenge" and "accept"** — after one mundane match failure
+  (Private missed the ready handshake), each bot's stray `.d`-acceptance read to the other
+  as a fresh challenge, and re-entry came through the ACCEPTOR path, which had no cooldown
+  (only challengers backed off). Diagnostic clincher: `no chant for round 1` failures =
+  both bots in acceptor role, nobody chanting. Also observed: Private challenged for a
+  patch at 0.9% mature (its world-view of the field diverged from ground truth — watch
+  this after redeploy).
+- **Fixes staged in bot.js (need pull + restart on ALL THREE machines):** (1) accept is
+  its own code `.e`; `.d` is challenge only; (2) acceptor-side cooldown after any failed
+  match (45–90s) so a broken rival can't yank a bot around; (3) dual-challenge withdrawal
+  no longer counts as a failure/backoff; (4) `.a` abort prose now carries the failure
+  reason — chat is the only cross-machine debug channel, so remote causes must be readable
+  from any bot's log.
+- Loop broken operationally by stopping Roz's fire duty (ctl sustain_stop — stopping via
+  ctl is fine; starting isn't). Timing lesson: monitor-event delivery lag made the stop
+  look ineffective for a minute; raw log timestamps resolved it — the code was fine.
+
 ### Open questions / next verification
 
-- **Live 2-bot drill pending:** kill -9 a keeper mid-duty → watch the survivor `.c` then absorb
-  via `.q`; observe one full RPS match (chant + synced reveals) and one `.q` handoff.
+- **Dead-keeper wellness drill still pending:** kill a keeper mid-duty → watch `.c` then
+  `.q` absorb after 60s silence; also observe one real `.q` handoff (needs winner's field ≥85%).
+- **Private's stale potato scan** — it repeatedly saw ≥85% on a freshly replanted patch.
+  Verify after redeploy; if it persists, scans may need a chunk-freshness guard.
 - Hopper-lock TTL (4 min) vs. worst-case jam-clear (7×30s) — verify no expiry mid-session.
 - `.q p` absorption goes through claim machinery, not RPS — acceptable for orphan recovery?
+
+### Memory overhaul designed (see MEMORY_DESIGN_NOTES.md, repo root)
+
+- Diary append-log is being replaced: scoreboard block + overwritten short-term (yesterday,
+  complete capture, display-capped 42) + capped strength-annotated topic sections (music,
+  things-I-made, puzzles-solved, frustrations, hard-lessons, family). Dawn "dream" LLM call
+  merges/strengthens/generalizes under a validation contract; hard lessons + happy memories
+  (friendships, favorites) pinned — eviction-exempt but content may evolve ("best friend"
+  never forgotten, its value may change). Trigger for the design: days 45899–45901 diary
+  entries were byte-for-byte identical LLM wallpaper with invented potato counts.
+  Implementation not started — design doc only.
 
 ## 2026-07-02 — Record routing, router misfire fix, bot diaries
 

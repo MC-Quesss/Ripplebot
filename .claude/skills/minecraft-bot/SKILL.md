@@ -131,7 +131,7 @@ at ≥85% → harvest/bake/deposit, (4) wheat halves at ≥85% → harvest → p
   duties, pendingWork, crew}`.
 - Multi-bot: bots split duties over chat dot-codes (`.n`/`.s`/`.p` claims, `.r` roll call,
   `.c` wellness checks on fields left 100% mature, `.q` release-with-work-pending, `.b`/`.f`
-  bench lock, `.k`/`.l` hopper lock, `.d`/`.g`/`.t`/`.a` RPS). Potato duty between wheat
+  bench lock, `.k`/`.l` hopper lock, `.d` challenge / `.e` accept / `.g`/`.t`/`.a` RPS). Potato duty between wheat
   keepers is decided by RPS — reveals are synchronized on the server clock via the chant's
   `@tick`. See `journal/procedures/keep-the-fire-going.md` for the full protocol table.
 - The hopper is a **draining bio-fuel intake** — deposits use a robust quick-move that verifies
