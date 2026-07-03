@@ -68,6 +68,21 @@ Bread, baked potatoes, iron ingots, and any other vanilla item can be in **any s
 The bot finds them by scanning all container slots for matching `item.name`. Never
 hardcode a slot index for a vanilla item.
 
+### Music records — the one vanilla exception (user, 2026-07-02)
+
+Records (`record_*`) are vanilla but **do have a home block**: slots **3, 4, 12, 13,
+21, 22** (columns 3–4 of each row). The user keeps the disc collection there —
+observed 2026-07-02: cat, far, mall, wait, chirp, mellohi. Rules:
+
+- Records are **never junk** — `getJunkItems` in `bot.js` excludes `record_*`, so
+  "stash junk / stash all" won't scatter them (a stash-junk did exactly that on
+  2026-07-02, prompting this convention).
+- `runStopRecord` returns a collected disc to the first empty slot in
+  `RECORD_CHEST_SLOTS` (bot.js), falling back to any empty slot only if the home
+  block is full.
+- `runPlayRecord` still finds discs by name scan, so it works regardless of slot.
+- Disc titles, colors, and factoids: see [[../items/music-records]].
+
 Iron is in `CHEST_SLOTS` as a legacy convenience for shear crafting (the user stages it
 at slot 18 by convention) but this is a soft expectation, not a hard contract.
 

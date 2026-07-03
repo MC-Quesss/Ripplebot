@@ -17,6 +17,7 @@ A network of notes mapping the known parts of this world. Each note is a single 
 - **[[procedures/]]** — multi-step routines (exit house, sleep, [[procedures/right-click-harvest|right-click harvest]], [[procedures/harvest-potatoes-right-click|potato harvest]], [[procedures/stash-wheat|stash wheat]], [[procedures/deposit-named|deposit named]], [[procedures/bake-potatoes|bake potatoes]], [[procedures/project-bench-crafting|3×3 bench crafting]], [[procedures/shear-sheep|shear sheep]], [[procedures/tell-joke|jokes]], [[procedures/emotes|emotes]], [[procedures/idle-autonomy-toggle|stand down / chill]], [[procedures/claude-brain-mode|Claude brain mode]], [[procedures/storytelling-nights|storytelling nights]], [[procedures/exploration|exploration]])
 - **[[creatures/]]** — entities encountered, hostility, behavior, [[creatures/named-sheep|named sheep (Frue & Fluffy)]]
 - **[[observations/]]** — session-by-session journal entries; raw notes that may later promote to canonical entries
+- **[[bots/]]** — each bot's own first-person diary, written **by the bot itself** (via its LLM voice) once per in-game day at bedtime; one file per persona, newest entry last
 
 ## Conventions
 

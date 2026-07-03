@@ -7,6 +7,91 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-07-03 — Fire-duty overhaul pass 2 (implementation)
+
+Bot state at start: pos (-267.7, 65, 570.5), HP 20, food 20, deaths 0, day 45830, idle, sustain off.
+
+Implemented the full overhaul scoped in `FIRE_OVERHAUL_NOTES.md` (all design questions
+had been answered 2026-07-02). Everything landed in bot.js in one pass; parse grammar
+unit-tested in isolation (23/23 including negative cases); `node --check` clean throughout.
+
+### Changes (bot.js)
+
+- **Refactor:** `runPotatoCycle()` extracted (was pasted 4×); `runWheatCycle()` extracted;
+  `pathTo` early-exits when already in range (was a 400ms floor per adjacent tile) and polls
+  at 150ms; field scans TTL-cached 2.5s and shared by all consumers; a literally duplicated
+  harvest-rc log line removed (same-millisecond doubles in bot.log, copy-paste on adjacent lines).
+- **Priority inversion (F3):** role branches replaced by the ladder — hopper → bake pipeline →
+  potato field → wheat-as-bonus. `tryCollectBake`'s wheat-first gate removed. New hopper patrol
+  rung. `pendingBake` boots inactive (no more furnace-visit noise on every restart).
+- **Wellness protocol (F1):** claimed field at 100% mature in daytime = presumed-dead keeper →
+  `.c <f>` persona check → claim refresh answers it → 60s silence frees the duty via `.q <f>`.
+  Crew map (`fireCrew`) now holds a *set* of fields per bot (absorption/handoff need multi-duty).
+- **Pause/resume (F2):** `sustainState.paused` — follow pauses fire duty (all three follow-end
+  paths resume); music registers as a short task (was colliding with the pathfinder mid-harvest);
+  stop/stand-down remain hard kills. Exploring blocked during fire duty (intent + idle-wander).
+- **RPS reliability (F7):** chant carries `.t<round> @<tick>` — both bots reveal when their own
+  `bot.time.age` passes the tick (the shared server clock is the sync barrier); round-tagged
+  throws; `.a` mutual abort; jittered escalating backoff on failure; alphabetical fallback
+  REMOVED (10 rounds = wash + rematch). Timeout ladder 45s accept / 60s ready / 20s throw.
+- **Handoff (F4):** challenged-mid-harvest bot bails at its 10-tile checkpoint to play; winner
+  `.q`s its standing wheat work to the loser; `pendingWork` set bypasses the 85% gate once.
+- **Locks (F5):** generic chat-lock with collision-window tie-break; bench (.b/.f) got the
+  tie-break; new hopper lock (.k/.l, 4 min TTL) wraps EVERY hopper write — one-at-a-time
+  feeding is a hard invariant. All 8 previously-unlocked hopper deposit sites routed through
+  `depositToHopper()`.
+- **Protocol style (C3):** coordination lines may be persona prose with a trailing parenthesized
+  core; `parseFireCoord` handles bare cores, prose cores, args (`.c n`), and tagged throws.
+  Old bare codes still parse (compat), but **mixed-version RPS won't work** — old bots can't
+  read round-tagged throws. All bots must restart onto this code together.
+
+### Notes / decisions
+
+- `sustain_status` now reports `role, paused, duties, pendingWork, crew` (crew values are
+  `+`-joined field sets).
+- Wellness sweeps are daytime-only: overnight maturation while everyone sleeps is normal.
+- Updated [[../procedures/keep-the-fire-going]] wholesale (marked `confirmed: false` until the
+  live drill passes).
+
+### Open questions / next verification
+
+- **Live 2-bot drill pending:** kill -9 a keeper mid-duty → watch the survivor `.c` then absorb
+  via `.q`; observe one full RPS match (chant + synced reveals) and one `.q` handoff.
+- Hopper-lock TTL (4 min) vs. worst-case jam-clear (7×30s) — verify no expiry mid-session.
+- `.q p` absorption goes through claim machinery, not RPS — acceptable for orphan recovery?
+
+## 2026-07-02 — Record routing, router misfire fix, bot diaries
+
+Bot state at start: pos (-279.5, 63.9, 557.5), HP 20, food 20, deaths 0, day 45799, claude brain mode.
+
+### Incidents
+
+- **Router misfire:** a request to simply walk to the wheat field was classified as `harvest_wheat` and started a full harvest. Aborted via ctl `stop` ~5s in. Root cause: no non-harvest "go to the field" intent existed, so the router picked the nearest match.
+- **Record mishandled:** Roz collected the ejected `record_cat`, then an autonomous stash-junk deposited it into the kitchen chest as junk. The user set the convention straight — records have designated places in the chest — and restored the disc manually. Chest observation confirmed the record home block — see [[../chests/house-kitchen-chest]].
+
+### Changes (bot.js, restarted 2026-07-02)
+
+- New `go_to_field` chat intent + `runGoToWheatField()` (plain visit, no harvest/replant); `harvest_wheat` hint sharpened to exclude walk/go phrasings.
+- `runStopRecord` reworked: handles a disc already on the ground (not just in the jukebox), collects by pathfinding to the actual item entity (`collectNearbyItemDrops`), and returns discs to `RECORD_CHEST_SLOTS` (3, 4, 12, 13, 21, 22). `stop_record` hint now covers "pick up the disc".
+- Records excluded from `getJunkItems` — never junk again.
+- **Bot diaries:** new `journal/bots/<persona>.md`, written by the bot itself at bedtime each in-game day (LLM-generated, persona voice) from a day-event buffer (harvests, deaths, RPS, stories, jukebox). Previous entry + housemate diary tails feed the prompt for continuity. Bots on other machines can't share this filesystem — their diaries won't cross-reference.
+- **Self-knowledge context:** `buildExpressiveContext` now tells the bot its live brain mode (local/claude/remote) and that the journal + its diary exist, so questions about them get truthful answers instead of confusion.
+- (Also this session, pre-tweaks: dead-code cleanup in bot.js, −53 lines.)
+
+### Later same session — record metadata + per-bot music memories
+
+- `RECORD_INFO` in bot.js: title, label color, factoid for all six discs (see [[../items/music-records]]). Roz announces title/color when putting a disc on, factoid follows; `play_record` now takes `args.title`/`args.color` ("play Cat", "the green one").
+- **Per-bot music memory**: `journal/bots/<persona>.music.json` + a rendered `## Music` section in each diary — times heard, last heard day, LLM-written private impressions (the per-bot lore). Heard events: self-play + other bots' `Now playing:` chat announces.
+- **"Have you heard...?"** ambient bot-to-bot exchange: No → asker plays the disc for them; Yes → responder shares last-heard day + impression. Deterministic Yes/No answers, ~30 min cooldown.
+- Verified live: `play_record {title:"cat"}` pulled record_cat from home slot 3, announced `"Cat" — the green disc`, memory logged `times=1 day=45801`.
+- **First diary entry confirmed**: Roz wrote Day 45800 during last night's sleep — voice and format look right.
+- **Journal privacy rule (user):** in-game player chat is never saved to the journal or to any file — the journal is the bots' own experience, not surveillance. `mentions.log` removed (file, writer code, and ctl action); verbatim quotes scrubbed from notes; player stories are retold in myth/legend style; the diary prompt forbids quoting players word-for-word.
+
+### Open questions
+
+- Diary only writes if the bot actually sleeps that night — bots stranded outside skip a day. Acceptable? Watch for gaps.
+- Record colors/factoids prefilled from vanilla knowledge — disc-by-disc review with the user pending; server-specific origin stories to collect.
+
 ## 2026-06-26 — BLizz encounter, modded hostile kill system
 
 BLizz (Thermal Foundation) attacked and killed both Muse and Roz. The hostile watchdog didn't fire because mineflayer resolves modded entities as `name: 'unknown'`.

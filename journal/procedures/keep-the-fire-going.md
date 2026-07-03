@@ -1,76 +1,105 @@
 ---
 type: procedure
 name: keep_the_fire_going
-aliases: [sustain_farm, keep_fire]
+aliases: [sustain_farm, keep_fire, fire_duty]
 status: confirmed
-confirmed: true
+confirmed: false
 first_tested: 2026-05-30
-last_updated: 2026-06-02
+last_updated: 2026-07-03
 ---
 
-# Keep The Fire Going (autonomous wheat + plant-ball → bio-fuel loop)
+# Keep The Fire Going (fire duty — priority-ladder sustain loop)
 
-The hands-off sustain loop. The bot watches the wheat field; when it's **fully mature**, it:
+The hands-off farm loop, overhauled 2026-07-03 (design notes: `FIRE_OVERHAUL_NOTES.md`
+at repo root). **The hopper and the potato pipeline are the fire; wheat is a bonus** —
+this inverted the original wheat-first design.
 
-1. Harvests both halves (keeps seeds on hand)
-2. Deposits wheat to the [[../places/house-hopper|bio-fuel hopper]] (keeps 16 for engine clearing)
-3. Crafts **plant balls** from surplus seeds at the [[project-bench-crafting|project bench]] (keeps the 0–7 seed remainder)
-4. Deposits plant balls to the hopper
-5. Waits for regrowth, repeats
+## The priority ladder (evaluated every 5s poll, top rung that needs work wins)
 
-## Trigger / stop
+1. **Hopper health** — plant balls sitting in the bio-fuel intake = a jam; feed
+   potatoes one at a time until it drains ([[../places/house-hopper]]). The
+   potato-duty holder patrols every ~5–7 min; if nobody holds potatoes, any keeper
+   may service it. Always under the hopper lock.
+2. **Baked-potato pipeline** — `tryCollectBake` collects finished furnace batches
+   on its own timer (the old wheat-first gate is gone); the potato cycle below
+   keeps the furnace loaded toward 64 baked in the kitchen chest.
+3. **Potato field** — ≥85% mature → harvest + replant → bake top-up → surplus raw
+   to the hopper (`runPotatoCycle`, one shared implementation).
+4. **Wheat (bonus)** — a held half ≥85% → harvest → craft plant balls at the
+   [[project-bench-crafting|bench]] → balls to the hopper (`runWheatCycle`).
 
-- **Start:** say **"keep the fire going"** (also: keep the fires burning / lit / alive / stoked).
-  ctl: `{"action":"keep_fire"}`.
-- **Stop:** say **"chill"**, **"stand down"**, or **"stop"**. ctl: `{"action":"sustain_stop"}`.
-- **Status:** ctl `{"action":"sustain_status"}` → `{active, cycles, startedBy}`.
+Idle time between rungs is duty-flavored: hopper patrols and near-post wandering.
+**Exploring is disabled entirely while on fire duty.**
 
-## How it works (`bot.js`)
+## Trigger / stop / status
 
-- `runSustainFarm(user)` + module state `sustainState = {active, cycles, startedBy}`.
-- Loop: `scanKnownWheatFields()` every `SUSTAIN_POLL_MS` (5s). When `maturePct >= 85`,
-  triggers the cycle. If a cycle was **interrupted** (path failure, recoverable error, etc.),
-  the 85% gate is bypassed on the next poll via `retryAfterInterrupt` — prevents the loop
-  from stalling on partially-harvested (replanted immature) wheat.
-- Harvest uses `keepSeeds: true, skipDeposit: true` — seeds stay on hand, wheat stays on hand.
-  The sustain loop handles all deposits itself.
-- **Wheat deposit:** `depositQuickMove('wheat', HOPPER, { keep: SUSTAIN_KEEP_WHEAT })`.
-  `SUSTAIN_KEEP_WHEAT = 16` — reserved for 1-at-a-time engine clearing (deferred).
-- **Plant ball crafting:** `craftPlantBalls({ keepSeeds: SUSTAIN_KEEP_SEEDS })` where
-  `SUSTAIN_KEEP_SEEDS = 0`. Uses the close/reopen trick on the project bench
-  (see [[project-bench-crafting]]).
-- **Plant ball deposit:** `depositQuickMove('unknown', HOPPER, { keep: 0 })`.
-- The **harvest is the task** (one-at-a-time, bedtime-aware). The sustain loop holds **no task
-  between cycles**, so the bot stays responsive.
-- Stop is cooperative: `sustainState.active = false` + `abortGen++`.
+- **Start:** say **"keep the fire going"**. (Never auto-start via ctl after a
+  restart — bots coordinate via chat.)
+- **Stop:** "chill" / "stand down" / "stop" (hard kills). ctl `sustain_stop`.
+- **Pause (not kill):** "follow me" pauses fire duty; it resumes when the follow
+  ends (farewell / stop_follow). Music, bread, jokes run as short tasks — the
+  loop waits them out and resumes on its own.
+- **Status:** ctl `sustain_status` → `{active, role, paused, duties, pendingWork, crew}`.
 
-## Constants
+## Multi-bot coordination protocol (chat is claims + liveness; the world is the database)
 
-| Name | Value | Purpose |
-|------|-------|---------|
-| `SUSTAIN_POLL_MS` | 5000 | Field scan interval |
-| `SUSTAIN_KEEP_WHEAT` | 16 | Wheat reserved for engine partial-batch clearing |
-| `SUSTAIN_KEEP_SEEDS` | 0 | Seeds kept as replanting buffer (natural 0–7 remainder only) |
+All coordination rides on `/me` lines: bare cores (`.n`) or persona prose with a
+trailing core — `* Roz glances north — all golden. (.c n)`. One core per line, always last.
 
-## Deferred work
+| Core | Meaning |
+|---|---|
+| `.r` | roll call at startup — keepers re-announce claims |
+| `.n` / `.s` / `.p` | claim north / south / potatoes (alphabetical conflict tie-break) |
+| `.w` | supervising (no duty; promotes when one frees) |
+| `.x` | full stand-down |
+| `.c <f>` | **wellness check** — "you ok, keeper of \<f\>?" |
+| `.q <f>` | **release with work pending** — handoff / orphaned duty up for grabs |
+| `.b` / `.f` | bench lock claim / release (60s TTL, tie-break on crossed claims) |
+| `.k` / `.l` | **hopper lock** claim / release (4 min TTL) — one bot feeds at a time, HARD invariant |
+| `.d` / `.g` | RPS challenge-or-accept / at-the-spot-ready |
+| `.t<round> @<tick>` | RPS chant: round + reveal tick on the shared server clock |
+| `shoots rock (.t<round>)` | round-tagged throw |
+| `.a` | RPS mutual abort |
 
-- **1-at-a-time wheat feeding** to clear the engine's partial batch remainder. Not yet coded or
-  proven. The kept 16 wheat is the raw material for this step once the technique is worked out.
-- **depositQuickMove partial-stack limitation:** with a single stack of 64 wheat, `keep:7` won't
-  split — it skips the stack entirely. Only works when multiple stacks allow keeping 7 across
-  the remainder. Needs a split-first approach for single stacks.
+### Wellness checks (dead-keeper backstop)
+
+Under normal duty a claimed field never reaches 100% mature (keeper harvests at
+85%). A rival's field sitting fully mature in daytime → ask `.c <f>`; an alive
+keeper answers with its normal claim code (a claim refresh IS "I'm ok"); silence
+for 60s → the asker frees the duty (`.q <f>`) and the crew absorbs it (supervisors
+promote; field keepers take it as an extra duty). Backstops missed `playerLeft`
+events; the 45-min claim TTL is map hygiene only.
+
+### RPS for potato duty (the one true tiebreak — never alphabetical)
+
+Potatoes ripe with no potato keeper → wheat keepers play best-of-3 at the south
+field meet spots. The challenger's chant carries the reveal tick; both bots shoot
+when their own `bot.time.age` passes it — synchronized regardless of chat lag,
+and the ceremony can't be skipped because the chant IS the round. A challenged
+bot mid-harvest pauses at its next 10-tile checkpoint (challenger waits 45s).
+**Winner** takes the potatoes and hands any standing wheat work to the crew via
+`.q` — the idle loser claims it and its next poll harvests the remainder
+(`pendingWork` bypasses the 85% gate once). Failed matches: in-character "oh
+dear" + jittered 2–5 min escalating backoff, then replay. 10 rounds without a
+winner = "call it a wash", rematch in ~30–60s.
+
+## Update — 2026-07-03 overhaul (supersedes the 2026-06-02 description)
+
+Old design: wheat-first, single-field-per-bot roles, TTL-only dead-keeper cleanup,
+RPS with open-loop timing (silent sync failures, retry storms), kill-only
+interrupts, no hopper lock. All replaced as above. `confirmed: false` until the
+multi-bot live test passes (kill-a-keeper wellness drill + one observed `.q` handoff).
 
 ## Tested
 
-- **2026-05-30 (day 42933):** Original loop (auto-deposit wheat to hopper, seeds to chest).
-  107 wheat deposited, 101 seeds kept 16. 1 cycle, 0 deaths.
-- **2026-06-02 (day 43242):** Manual end-to-end of new cycle: harvest → deposit wheat → craft
-  7 plant balls from 72 seeds → deposit balls to hopper. All steps confirmed individually.
-  `craftPlantBalls` function written and `runSustainFarm` rewritten.
+- **2026-05-30 (day 42933):** original loop, 1 cycle clean.
+- **2026-06-02 (day 43242):** plant-ball cycle end-to-end.
+- **2026-06-24/27:** multi-bot fire duty + RPS field-tested (bugs led to this overhaul).
+- **2026-07-03:** overhaul implemented; parse grammar unit-tested (23/23); live 2-bot drill pending.
 
 ## Related
-- [[right-click-harvest]] — the per-cycle harvest (takes `keepSeeds`, `skipDeposit`)
-- [[project-bench-crafting]] — the close/reopen trick for crafting plant balls
-- [[deposit-wheat]] — `depositQuickMove` for hopper/chest
-- [[../places/house-hopper]] — the bio-fuel intake
+- [[right-click-harvest]] — the per-cycle harvest (RPS checkpoint bail added 2026-07-03)
+- [[harvest-potatoes-right-click]] — potato cycle harvest
+- [[project-bench-crafting]] — plant-ball crafting
+- [[../places/house-hopper]] — the bio-fuel intake (locked, one feeder at a time)
 - [[../observations/_log]] — session log

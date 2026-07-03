@@ -53,7 +53,7 @@ All commands are `./bot-ctl '<json>'`. Arguments go under an `args` object.
 | Block at offset from bot | `{"action":"block_at","args":{"dx":0,"dy":-1,"dz":0}}` |
 | Find blocks by name | `{"action":"find_blocks","args":{"names":["wheat","farmland"],"maxDistance":16,"count":200}}` |
 | **Active task** (check before sending work) | `{"action":"task_status"}` → `busy`, `task`, `detail`, `sleeping` |
-| **Sustain loop** ("keep the fire going") status | `{"action":"sustain_status"}` → `active`, `cycles`, `startedBy` |
+| **Sustain loop** ("keep the fire going") status | `{"action":"sustain_status"}` → `active`, `cycles`, `role`, `paused`, `duties`, `pendingWork`, `crew` |
 
 ### Movement
 
@@ -115,21 +115,30 @@ Harvest and bake operations **never refuse because of time of day**. Instead:
 - During a bedtime yield, `task_status` shows `sleeping: true` and `busy: false`. Auto-sleep handles the bed.
 - The task resumes automatically at first light — no action from Claude needed.
 
-### Keep the fire going — autonomous sustain loop
+### Keep the fire going — autonomous sustain loop (priority ladder, 2026-07-03)
 
-The phrase **"keep the fire going"** starts a hands-off farm loop: the bot watches the wheat
-field, and when it's fully mature harvests both halves → feeds the wheat into the **bio-fuel
-hopper** → stashes surplus seeds in the kitchen chest (keeps 16) → waits for regrowth → repeats.
+The phrase **"keep the fire going"** starts hands-off fire duty. **The hopper and the
+potato pipeline are the fire; wheat is a bonus.** Every 5s poll walks a ladder, top rung
+needing work wins: (1) hopper health — jam-clear/feed under the hopper lock, (2) baked-potato
+pipeline — furnace collection + restock toward 64 baked in the kitchen chest, (3) potato field
+at ≥85% → harvest/bake/deposit, (4) wheat halves at ≥85% → harvest → plant balls → hopper.
 
-- ctl: `{"action":"keep_fire"}` to start, `{"action":"sustain_stop"}` to stop.
-- **Stops on "chill", "stand down", or "stop"** (chat) — these abort an in-flight harvest too.
-- Each harvest is the normal one-at-a-time, bedtime-aware task; between cycles the loop holds no
-  task, so the bot stays responsive. Wheat goes to the hopper non-interactively (no "hopper or
-  chest?" question while sustaining).
+- ctl: `{"action":"keep_fire"}` to start (but **never auto-start it after a restart** — bots
+  coordinate via chat), `{"action":"sustain_stop"}` to stop.
+- **Stops on "chill", "stand down", or "stop"** (chat) — hard kills, abort an in-flight harvest.
+- **"Follow me" pauses fire duty** (resumes when the follow ends); music/bread/jokes run as
+  short tasks and the loop resumes by itself. `sustain_status` → `{active, role, paused,
+  duties, pendingWork, crew}`.
+- Multi-bot: bots split duties over chat dot-codes (`.n`/`.s`/`.p` claims, `.r` roll call,
+  `.c` wellness checks on fields left 100% mature, `.q` release-with-work-pending, `.b`/`.f`
+  bench lock, `.k`/`.l` hopper lock, `.d`/`.g`/`.t`/`.a` RPS). Potato duty between wheat
+  keepers is decided by RPS — reveals are synchronized on the server clock via the chant's
+  `@tick`. See `journal/procedures/keep-the-fire-going.md` for the full protocol table.
 - The hopper is a **draining bio-fuel intake** — deposits use a robust quick-move that verifies
-  by inventory delta (a "Server rejected transaction" log line is benign; the wheat still moves).
-- The loop re-fires only when the field is **100% mature**; it relies on every tile replanting
-  each cycle. A `waiting (mature=x/expected)` heartbeat in `bot.log` surfaces a stall.
+  by inventory delta (a "Server rejected transaction" log line is benign; the item still moves).
+  **All hopper writes hold the `.k` lock: one bot feeds at a time, hard invariant.**
+- Fields trigger at **≥85% mature**; a `waiting duties=[...]` heartbeat in `bot.log` every
+  20 polls surfaces a stall.
 
 ### Food safety — auto-restock baked potatoes
 
@@ -201,6 +210,15 @@ journal/
 ├── creatures/            ← entities, hostility, behavior
 └── observations/_log.md  ← reverse-chronological session journal
 ```
+
+### Privacy rule — no player chat is ever recorded (user, 2026-07-02)
+
+**Never save in-game player chat to the journal — or to any other file.** The
+journal is the bots' own experience, not a chat log or surveillance record. No
+verbatim quotes of what players said, ever; summarize the meaning in the bot's
+or operator's own words (myth-and-legend retellings of player stories are
+welcome). `mentions.log` was removed for this reason. `bot.log` is bounded
+operational telemetry only — never mine it for content to put in the journal.
 
 ### When to write or update notes (no reminder needed)
 
