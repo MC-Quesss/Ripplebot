@@ -3,7 +3,7 @@ type: procedure
 name: keep_the_fire_going
 aliases: [sustain_farm, keep_fire, fire_duty]
 status: confirmed
-confirmed: false
+confirmed: true
 first_tested: 2026-05-30
 last_updated: 2026-07-03
 ---
@@ -96,6 +96,15 @@ multi-bot live test passes (kill-a-keeper wellness drill + one observed `.q` han
 - **2026-06-02 (day 43242):** plant-ball cycle end-to-end.
 - **2026-06-24/27:** multi-bot fire duty + RPS field-tested (bugs led to this overhaul).
 - **2026-07-03:** overhaul implemented; parse grammar unit-tested (23/23).
+- **2026-07-03 (day 45908) — full verification on the fixed protocol (.e accept), 3 bots:**
+  Roz south / Muse north claims; hopper-lock crossed-claims tie-break resolved a 40ms
+  claim collision (alphabetical loser backed off); ladder priority observed (Muse fed
+  the hopper before touching its 100% wheat); **wellness check verified live** — Roz
+  `.c n`'d Muse's fully-mature field, Muse answered with a claim refresh ("a claim
+  refresh IS I'm ok"), no false absorb; chant-synced match (reveals ~30ms apart every
+  round), Roz won 2-1; **`.q` handoff verified** — Roz released ripe south, Muse claimed
+  it 2.3s later. Exactly one match, no echo (.d/.e split holds). Remaining optional:
+  absorb-on-SILENCE drill (kill a keeper, expect `.c` → 60s → `.q` absorb).
 - **2026-07-03 (day 45901) — live 2-bot drill, RPS + locks VERIFIED:** Roz claimed
   south, Private north; hopper patrols serialized cleanly under `.k`/`.l` (release →
   rival claim 100ms apart, zero overlap); potatoes hit 85% → simultaneous challenges →

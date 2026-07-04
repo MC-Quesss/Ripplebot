@@ -6,24 +6,27 @@ confirmed: false
 
 # Music Records
 
-The farm's disc collection — six vanilla C418 tracks, kept in the record home block
-of the [[../chests/house-kitchen-chest|kitchen chest]] (slots 3, 4, 12, 13, 21, 22)
-and played on the jukebox at (-274, 64, 565). Metadata mirrored in `RECORD_INFO`
-in `bot.js` — keep the two in sync. Roz announces title + color when she puts a
-disc on and shares the factoid as a follow-up line.
+The farm's disc collection — six vanilla C418 tracks, each with its **own assigned
+slot** in the record home block of the [[../chests/house-kitchen-chest|kitchen chest]]
+(per-disc map in `RECORD_HOME_SLOTS`, bot.js) and played on the jukebox at
+(-274, 64, 565). Metadata mirrored in `RECORD_INFO` in `bot.js` — keep the two in
+sync. The bot announces title + color when it puts a disc on; the follow-up line is
+the bot's **own feeling about the song** (LLM, persona voice, drawing on its music
+memory — changed 2026-07-03). The factoid is background lore fed to the LLM context,
+**never recited verbatim** at play time anymore.
 
 `confirmed: false` — titles are from item display names (verified in-chest
 2026-07-02); colors and factoids are prefilled from vanilla Minecraft knowledge,
 pending disc-by-disc review with the user.
 
-| Item | Title | Label color | Length | Factoid |
-|---|---|---|---|---|
-| `record_cat` | Cat | green | 3:05 (185s) | **Quesss's favorite disc.** Like all our records it came from a dungeon chest — though legend tells of an older world where discs were farmed in a long dungeon corridor: a creeper baited behind doors and gates, skeleton arrows doing the rest. *(reviewed 2026-07-02)* |
-| `record_far` | Far | lime | 2:54 (174s) | A calm, drifting C418 melody — good for long afternoons out in the field. |
-| `record_mall` | Mall | purple | 3:17 (197s) | C418 wrote this one to feel like wandering an empty shopping mall — spacious and a little mysterious. |
-| `record_wait` | Wait | blue | 3:58 (238s) | C418 originally titled this one "Where are we now" — the most upbeat disc in the collection. |
-| `record_chirp` | Chirp | red | 3:05 (185s) | A funky retro C418 groove that sounds like a broadcast from another decade. |
-| `record_mellohi` | Mellohi | magenta | 1:36 (96s) | A short, melancholy waltz in three-four time — C418 at his most wistful. |
+| Item | Title | Label color | Length | Home slot | Factoid (background lore) |
+|---|---|---|---|---|---|
+| `record_cat` | Cat | green | 3:05 (185s) | 3 | **Quesss's favorite disc.** Like all our records it came from a dungeon chest — though legend tells of an older world where discs were farmed in a long dungeon corridor: a creeper baited behind doors and gates, skeleton arrows doing the rest. *(reviewed 2026-07-02)* |
+| `record_far` | Far | lime | 2:54 (174s) | 4 | A calm, drifting C418 melody — good for long afternoons out in the field. |
+| `record_mall` | Mall | purple | 3:17 (197s) | 12 | C418 wrote this one to feel like wandering an empty shopping mall — spacious and a little mysterious. |
+| `record_wait` | Wait | blue | 3:58 (238s) | 13 | C418 originally titled this one "Where are we now" — the most upbeat disc in the collection. |
+| `record_chirp` | Chirp | red | 3:05 (185s) | 21 | A funky retro C418 groove that sounds like a broadcast from another decade. |
+| `record_mellohi` | Mellohi | magenta | 1:36 (96s) | 22 | A short, melancholy waltz in three-four time — C418 at his most wistful. |
 
 Durations drive end-of-song awareness (`durationSec` in `RECORD_INFO`): every bot
 that hears a `Now playing:` announce tracks the same countdown, notices when the

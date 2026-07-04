@@ -7,6 +7,30 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-07-03 — Jukebox: own feelings at play time + assigned record slots
+
+User direction: the lore/factoid shouldn't be recited every play — the bots should
+voice **their own feelings** about each song. And each record gets a **fixed assigned
+slot** in the kitchen chest, taken from the arrangement observed in-chest today.
+
+- Opened the [[../chests/house-kitchen-chest|kitchen chest]] live (Roz idle, sustain off):
+  all six discs sat one-per-slot in the home block — cat 3, far 4, mall 12, wait 13,
+  chirp 21, mellohi 22. That arrangement is now the permanent per-disc assignment.
+- **bot.js:** `RECORD_CHEST_SLOTS` (pool) → `RECORD_HOME_SLOTS` (per-disc map).
+  `runStopRecord` returns a disc to *its* slot; occupied → another free home slot;
+  any empty slot only as a last resort (fallbacks logged). `runPlayRecord` unchanged
+  (name scan).
+- **bot.js:** the factoid chat 4s after "Now playing" replaced by
+  `impulseExpressive('music', ...)` — ONE LLM line in persona voice about what the
+  song makes the bot feel, drawing on its own music memory. Factoid stays in
+  `RECORD_INFO` as background lore (`buildExpressiveContext` already injects it +
+  the bot's private note whenever a disc is in the jukebox). Ollama down = announce
+  only, no follow-up — consistent with the no-canned-fallbacks rule.
+- `node --check` clean. Not protocol-breaking (no chat-code changes), but takes
+  effect on next restart — rides along with the fire-overhaul restart already pending.
+- Updated: [[../items/music-records]] (home-slot column, play-time behavior),
+  [[../chests/house-kitchen-chest]] (per-disc slot table).
+
 ## 2026-07-03 — Fire-duty overhaul pass 2 (implementation)
 
 Bot state at start: pos (-267.7, 65, 570.5), HP 20, food 20, deaths 0, day 45830, idle, sustain off.
@@ -85,12 +109,35 @@ unit-tested in isolation (23/23 including negative cases); `node --check` clean 
   ctl is fine; starting isn't). Timing lesson: monitor-event delivery lag made the stop
   look ineffective for a minute; raw log timestamps resolved it — the code was fine.
 
+### Evening session (day 45908+) — full verification + five more live-caught fixes
+
+- **All seven overhaul features verified live**: claims/tiebreaks, serialized hopper locks
+  (incl. a 40ms crossed-claim tie-break), ladder priority (hopper before ripe wheat),
+  wellness check answered by a live keeper, chant-synced RPS (reveals ~30ms apart),
+  and the `.q` handoff (Muse claimed Roz's released south 2.3s after the `.q`).
+- **Fixes staged since the last 3-bot deploy (all in bot.js, need one more deploy round):**
+  1. Wellness cooldown on ANSWERED checks (was nagging a slow keeper every 5s).
+  2. `/me` is for actions only — coordination dialog (wellness, handoffs, chants, aborts)
+     now goes out as plain chat with the trailing core (repeated user rule; memory saved).
+  3. Coordination lines are consumed before the LLM router (no chit-chat about plumbing).
+  4. `feedHopperOneAtATime` tolerates "Server rejected transaction" (was killing the
+     jam-clear pass after 2 feeds; the click lands anyway on this server).
+  5. The pre-overhaul idle-wander hopper feeder now runs under the hopper lock + same
+     click tolerance — it was the last unlocked hopper writer (sweep confirms none remain).
+- Muse wedged in the doorway once (recovered by itself; harvested both fields after);
+  a fresh jam from its double-harvest output was cleared by Roz's patrol rung (2 feeds).
+
 ### Open questions / next verification
 
 - **Dead-keeper wellness drill still pending:** kill a keeper mid-duty → watch `.c` then
   `.q` absorb after 60s silence; also observe one real `.q` handoff (needs winner's field ≥85%).
 - **Private's stale potato scan** — it repeatedly saw ≥85% on a freshly replanted patch.
   Verify after redeploy; if it persists, scans may need a chunk-freshness guard.
+- **Alive-but-stuck keeper** (design item): wellness verifies liveness, not progress — a
+  wedged keeper answers "I'm ok" forever while its field rots. Consider escalation after
+  N answered checks with no field progress.
+- Door-snag frequency at the house doorway (Muse wedged, several graceful retries on Roz)
+  — worth a look at the traversal if it keeps recurring.
 - Hopper-lock TTL (4 min) vs. worst-case jam-clear (7×30s) — verify no expiry mid-session.
 - `.q p` absorption goes through claim machinery, not RPS — acceptable for orphan recovery?
 

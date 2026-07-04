@@ -1,9 +1,11 @@
 {
   "record_cat": {
-    "timesHeard": 1,
-    "lastHeardDay": 45801,
-    "lastHeardAt": "2026-07-02T21:48:50.257Z",
-    "notes": []
+    "timesHeard": 2,
+    "lastHeardDay": 45945,
+    "lastHeardAt": "2026-07-03T23:56:30.053Z",
+    "notes": [
+      "The soft melody of \"Cat\" feels like a warm blanket, reminding me that even in the deep ocean, we found a place to rest."
+    ]
   },
   "record_wait": {
     "timesHeard": 1,
@@ -12,5 +14,19 @@
     "notes": [
       "The melody of \"Wait\" feels like the ocean breeze, reminding me that even in the quietest moments, we are still moving forward."
     ]
+  },
+  "record_mellohi": {
+    "timesHeard": 1,
+    "lastHeardDay": 45913,
+    "lastHeardAt": "2026-07-03T18:12:48.630Z",
+    "notes": [
+      "The melody feels like the tide pulling gently, and I think about how the sun rising is always a promise kept, no matter the night."
+    ]
+  },
+  "record_chirp": {
+    "timesHeard": 1,
+    "lastHeardDay": 45952,
+    "lastHeardAt": "2026-07-04T01:08:27.013Z",
+    "notes": []
   }
 }

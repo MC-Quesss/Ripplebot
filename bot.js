@@ -1982,41 +1982,52 @@ async function runIdleWanderToFurnace () {
   }
 
   if (countOnHand('potato') >= 1) {
-    await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-    const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
-    if (hopperBlock) {
-      const win = await bot.openContainer(hopperBlock)
-      const slots = win.slots.slice(0, win.slots.length - 36)
-      const ballCount = slots.reduce((n, s) => n + (s && s.name === 'unknown' ? s.count : 0), 0)
-      const hasFuel = slots.some(s => s && (s.name === 'wheat' || s.name === 'potato'))
-      win.close()
-      if (ballCount > 0 && !hasFuel && (hopperLastBallCount < 0 || ballCount >= hopperLastBallCount)) {
-        logEvent('idle-wander', `hopper stuck (balls=${ballCount}, last=${hopperLastBallCount}) — feeding 1 potato`)
-        hopperLastBallCount = ballCount
-        const containerSize = 5
-        const win2 = await bot.openContainer(hopperBlock)
-        const playerSlots = win2.slots.slice(containerSize)
-        const srcIdx = playerSlots.findIndex(s => s && s.name === 'potato')
-        if (srcIdx >= 0) {
-          const winSlot = containerSize + srcIdx
-          const count = playerSlots[srcIdx].count
-          await bot.clickWindow(winSlot, 1, 0)
-          await bot.clickWindow(1, 1, 0)
-          if (count > 2) await bot.clickWindow(winSlot, 0, 0)
-          else if (count === 2) {
-            const emptyIdx = playerSlots.findIndex((s, i) => i !== srcIdx && !s)
-            if (emptyIdx !== -1) await bot.clickWindow(containerSize + emptyIdx, 0, 0)
-            else await bot.clickWindow(winSlot, 0, 0)
+    // This wander-time hopper check predates the fire overhaul and is the
+    // only feeder for bots NOT on fire duty — but the one-at-a-time invariant
+    // is universal, so it runs under the hopper lock like every other writer.
+    await acquireChatLock(hopperLock)
+    try {
+      await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+      const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
+      if (hopperBlock) {
+        const win = await bot.openContainer(hopperBlock)
+        const slots = win.slots.slice(0, win.slots.length - 36)
+        const ballCount = slots.reduce((n, s) => n + (s && s.name === 'unknown' ? s.count : 0), 0)
+        const hasFuel = slots.some(s => s && (s.name === 'wheat' || s.name === 'potato'))
+        win.close()
+        if (ballCount > 0 && !hasFuel && (hopperLastBallCount < 0 || ballCount >= hopperLastBallCount)) {
+          logEvent('idle-wander', `hopper stuck (balls=${ballCount}, last=${hopperLastBallCount}) — feeding 1 potato`)
+          hopperLastBallCount = ballCount
+          const containerSize = 5
+          const win2 = await bot.openContainer(hopperBlock)
+          const playerSlots = win2.slots.slice(containerSize)
+          const srcIdx = playerSlots.findIndex(s => s && s.name === 'potato')
+          if (srcIdx >= 0) {
+            const winSlot = containerSize + srcIdx
+            const count = playerSlots[srcIdx].count
+            try {
+              await bot.clickWindow(winSlot, 1, 0)
+              await bot.clickWindow(1, 1, 0)
+              if (count > 2) await bot.clickWindow(winSlot, 0, 0)
+              else if (count === 2) {
+                const emptyIdx = playerSlots.findIndex((s, i) => i !== srcIdx && !s)
+                if (emptyIdx !== -1) await bot.clickWindow(containerSize + emptyIdx, 0, 0)
+                else await bot.clickWindow(winSlot, 0, 0)
+              }
+            } catch (e) {
+              // Benign on this server — the click usually lands anyway.
+              logEvent('idle-wander', `hopper click rejected (benign): ${e.message}`)
+            }
           }
+          try { win2.close() } catch (_) {}
+        } else if (ballCount > 0) {
+          logEvent('idle-wander', `hopper draining (balls=${ballCount}, last=${hopperLastBallCount}, fuel=${hasFuel})`)
+          hopperLastBallCount = ballCount
+        } else {
+          hopperLastBallCount = -1
         }
-        win2.close()
-      } else if (ballCount > 0) {
-        logEvent('idle-wander', `hopper draining (balls=${ballCount}, last=${hopperLastBallCount}, fuel=${hasFuel})`)
-        hopperLastBallCount = ballCount
-      } else {
-        hopperLastBallCount = -1
       }
-    }
+    } finally { releaseChatLock(hopperLock) }
   }
 
   await sleep(1500 + Math.floor(Math.random() * 2000))
@@ -3398,15 +3409,23 @@ async function feedHopperOneAtATime (waitMs, { requireSustain = false } = {}) {
     if (srcIdx === -1) { win.close(); return false }
     const winSlot = containerSize + srcIdx
     const count = playerSlots[srcIdx].count
-    await bot.clickWindow(winSlot, 1, 0)
-    await bot.clickWindow(1, 1, 0)
-    if (count > 2) await bot.clickWindow(winSlot, 0, 0)
-    else if (count === 2) {
-      const emptyIdx = playerSlots.findIndex((s, i) => i !== srcIdx && !s)
-      if (emptyIdx !== -1) await bot.clickWindow(containerSize + emptyIdx, 0, 0)
-      else await bot.clickWindow(winSlot, 0, 0)
+    try {
+      await bot.clickWindow(winSlot, 1, 0)
+      await bot.clickWindow(1, 1, 0)
+      if (count > 2) await bot.clickWindow(winSlot, 0, 0)
+      else if (count === 2) {
+        const emptyIdx = playerSlots.findIndex((s, i) => i !== srcIdx && !s)
+        if (emptyIdx !== -1) await bot.clickWindow(containerSize + emptyIdx, 0, 0)
+        else await bot.clickWindow(winSlot, 0, 0)
+      }
+    } catch (e) {
+      // "Server rejected transaction" is routine on this modded server and the
+      // click usually lands anyway (same tolerance depositQuickMove has). The
+      // next iteration re-opens the hopper and re-checks — a feed that truly
+      // failed simply gets retried; never let it kill the whole clearing pass.
+      logEvent('sustain-hopper', `click rejected (benign on this server): ${e.message}`)
     }
-    win.close()
+    try { win.close() } catch (_) {}
     logEvent('sustain-hopper', `fed ${fuelName} ${fed + 1}/7, waiting ${waitMs / 1000}s`)
     if (requireSustain) await sustainWait(waitMs)
     else await sleep(waitMs)
@@ -3478,9 +3497,11 @@ function isSameBot (a, b) {
   return ra === rb
 }
 
-// Send a coordination line: persona prose with the core appended, or bare core.
+// Send a coordination line. /me is for ACTIONS only (bare machine codes,
+// "shoots rock") — dialog goes out as PLAIN chat with the machine core as a
+// trailing tail (user rule: never wrap spoken lines in /me).
 function chatCore (prose, core) {
-  try { bot.chat(prose ? `/me ${prose} (${core})` : `/me ${core}`) } catch (_) {}
+  try { bot.chat(prose ? `${prose} (${core})` : `/me ${core}`) } catch (_) {}
 }
 
 const RPS_WORD_TO_CODE = { rock: 'r', paper: 'p', scissors: 's' }
@@ -3718,7 +3739,12 @@ function fireWellnessSweep () {
       if (field === 'supervise' || mine.has(field)) continue
       const pending = fireWellnessPending.get(field)
       if (pending) {
-        if (entry.at > pending.askedAt) { fireWellnessPending.delete(field); continue } // claim refreshed = alive
+        if (entry.at > pending.askedAt) {
+          // Claim refreshed = alive. Cool down before re-asking.
+          fireWellnessPending.delete(field)
+          fireWellnessCooldown.set(field, Date.now() + FIRE_WELLNESS_COOLDOWN_MS)
+          continue
+        }
         if (now - pending.askedAt > FIRE_WELLNESS_SILENCE_MS) {
           fireWellnessPending.delete(field)
           fireWellnessCooldown.set(field, now + FIRE_WELLNESS_COOLDOWN_MS)
@@ -4260,7 +4286,12 @@ function trackFireCoordination (username, message) {
   if (code === 'n' || code === 's' || code === 'p') {
     const field = FIRE_FIELD_BY_LETTER[code]
     fireCrewAdd(name, field)
-    fireWellnessPending.delete(field) // a claim refresh IS "I'm ok"
+    if (fireWellnessPending.has(field)) {
+      // A claim refresh IS "I'm ok" — and an answered check must cool down
+      // just like an expired one, or a slow keeper gets nagged every poll.
+      fireWellnessPending.delete(field)
+      fireWellnessCooldown.set(field, Date.now() + FIRE_WELLNESS_COOLDOWN_MS)
+    }
     logEvent('sustain', `${username} claimed ${field}`)
     if (sustainState.active) resolveFireClaimConflict(name, field)
     return
@@ -7219,8 +7250,8 @@ function getJunkItems (filterNames) {
   if (filterNames && filterNames.length) {
     return inv.filter(i => filterNames.includes(i.name))
   }
-  // Records are never junk — they have a designated home in the chest
-  // (see RECORD_CHEST_SLOTS) and are handled by the jukebox routines.
+  // Records are never junk — each has its own assigned home slot in the chest
+  // (see RECORD_HOME_SLOTS) and is handled by the jukebox routines.
   return inv.filter(i => i.name !== 'unknown' && !TRASH_ITEMS.has(i.name) && !ROUTINE_ITEMS.has(i.name) && !i.name.startsWith('record_'))
 }
 
@@ -7531,13 +7562,24 @@ async function runStashAll () {
 
 // ── Jukebox ─────────────────────────────────────────────────────────────────
 const JUKEBOX = { x: -274, y: 64, z: 565 }
-// Records' home block in the kitchen chest — columns 3–4 of each row
-// (user-established layout, observed 2026-07-02). Records are NOT junk.
-const RECORD_CHEST_SLOTS = [3, 4, 12, 13, 21, 22]
+// Each record's assigned home slot in the kitchen chest — columns 3–4 of each
+// row (user-established layout, per-disc assignment observed in-chest
+// 2026-07-03). A returning disc goes back to ITS slot, not just any home slot.
+// Records are NOT junk.
+const RECORD_HOME_SLOTS = {
+  record_cat:     3,
+  record_far:     4,
+  record_mall:    12,
+  record_wait:    13,
+  record_chirp:   21,
+  record_mellohi: 22,
+}
 
-// Disc metadata: title, label color, and a one-liner Roz shares when she puts
-// the disc on. All six are vanilla C418 tracks; colors are the vinyl's center
-// label. Mirrored in journal/items/music-records.md — keep the two in sync.
+// Disc metadata: title, label color, and a lore factoid. The factoid is NOT
+// spoken at play time (2026-07-03) — it feeds the LLM context as background
+// (buildExpressiveContext) so the bot's own reaction can draw on it. All six
+// are vanilla C418 tracks; colors are the vinyl's center label. Mirrored in
+// journal/items/music-records.md — keep the two in sync.
 const RECORD_INFO = {
   record_cat:     { title: 'Cat',     color: 'green',   durationSec: 185, factoid: "Quesss's favorite disc. Like all our records it came from a dungeon chest — though legend tells of an older world where discs were farmed in a long dungeon corridor: a creeper baited behind doors and gates, skeleton arrows doing the rest." },
   record_far:     { title: 'Far',     color: 'lime',    durationSec: 174, factoid: 'A calm, drifting C418 melody — good for long afternoons out in the field.' },
@@ -7753,7 +7795,14 @@ async function runPlayRecord ({ title, color } = {}) {
     const info = recordInfo(record.name)
     startNowPlaying(record.name)
     bot.chat(`Now playing: "${info.title}" — the ${info.color} disc.`)
-    if (info.factoid) setTimeout(() => { try { bot.chat(info.factoid) } catch (_) {} }, 4000)
+    // Follow-up is the bot's OWN feeling about the song, in persona voice —
+    // the factoid/lore stays available as background (buildExpressiveContext
+    // injects it for whatever's in the jukebox) but is never recited. Ollama
+    // down = just the announce, no follow-up.
+    impulseExpressive('music',
+      `You just put the record on and the first notes of "${info.title}" are filling the farm. Say ONE short line about what this song makes YOU feel or remember — your own reaction, not facts or history about the disc.`,
+      { skipGate: true, delayMs: 4000 }
+    ).catch(() => {})
     logEvent('jukebox', `playing ${record.name} ("${info.title}")`)
     diaryNote(`put "${info.title}" (the ${info.color} disc) on the jukebox`)
     markRecordHeard(record.name, { via: 'self' })
@@ -7815,9 +7864,15 @@ async function runStopRecord () {
   }
   if (srcSlot < 0) { win.close(); bot.chat('Lost the record somehow.'); return }
 
-  // Records have a designated home block in the chest; fall back to any
-  // empty slot only when the home block is full.
-  let destSlot = RECORD_CHEST_SLOTS.find(s => s < containerSlotCount && !win.slots[s]) ?? -1
+  // Each record goes back to its own assigned slot. If that slot is somehow
+  // occupied, fall back to another free home slot; any empty slot only as a
+  // last resort.
+  const homeSlot = RECORD_HOME_SLOTS[record.name]
+  let destSlot = (homeSlot != null && homeSlot < containerSlotCount && !win.slots[homeSlot]) ? homeSlot : -1
+  if (destSlot < 0) {
+    destSlot = Object.values(RECORD_HOME_SLOTS).find(s => s !== homeSlot && s < containerSlotCount && !win.slots[s]) ?? -1
+    if (destSlot >= 0) logEvent('jukebox', `home slot ${homeSlot ?? '?'} for ${record.name} unavailable — using home block slot ${destSlot}`)
+  }
   if (destSlot < 0) {
     for (let j = 0; j < containerSlotCount; j++) {
       if (!win.slots[j]) { destSlot = j; break }
@@ -8656,7 +8711,12 @@ bot.on('chat', (username, message) => {
   rememberChatPhrase(message)
   rememberRecentChat(username, message)
   const fromBot = looksLikeBot(username)
-  if (fromBot) trackFireCoordination(username, message)
+  if (fromBot) {
+    trackFireCoordination(username, message)
+    // A line with a machine core is coordination plumbing (spoken-dialog
+    // form) — consumed here, never fed to the LLM router as conversation.
+    if (parseFireCoord(message)) return
+  }
   if (fromBot) {
     // Another bot's "Now playing" announce = this bot heard the song too.
     const np = /^Now playing: "([^"]+)"/.exec(message)

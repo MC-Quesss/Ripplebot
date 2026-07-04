@@ -68,18 +68,29 @@ Bread, baked potatoes, iron ingots, and any other vanilla item can be in **any s
 The bot finds them by scanning all container slots for matching `item.name`. Never
 hardcode a slot index for a vanilla item.
 
-### Music records — the one vanilla exception (user, 2026-07-02)
+### Music records — the one vanilla exception (user, 2026-07-02; per-disc slots 2026-07-03)
 
-Records (`record_*`) are vanilla but **do have a home block**: slots **3, 4, 12, 13,
-21, 22** (columns 3–4 of each row). The user keeps the disc collection there —
-observed 2026-07-02: cat, far, mall, wait, chirp, mellohi. Rules:
+Records (`record_*`) are vanilla but **each disc has its own assigned slot** in the
+home block (columns 3–4 of each row). Assignment taken from the observed in-chest
+arrangement on 2026-07-03 — mirrors `RECORD_HOME_SLOTS` in `bot.js`:
+
+| Slot | Record | Color |
+|---|---|---|
+| 3 | Cat | green |
+| 4 | Far | lime |
+| 12 | Mall | purple |
+| 13 | Wait | blue |
+| 21 | Chirp | red |
+| 22 | Mellohi | magenta |
+
+Rules:
 
 - Records are **never junk** — `getJunkItems` in `bot.js` excludes `record_*`, so
   "stash junk / stash all" won't scatter them (a stash-junk did exactly that on
   2026-07-02, prompting this convention).
-- `runStopRecord` returns a collected disc to the first empty slot in
-  `RECORD_CHEST_SLOTS` (bot.js), falling back to any empty slot only if the home
-  block is full.
+- `runStopRecord` returns a collected disc to **its own slot**; if that slot is
+  occupied it falls back to another free home slot, and to any empty slot only
+  as a last resort (both fallbacks logged).
 - `runPlayRecord` still finds discs by name scan, so it works regardless of slot.
 - Disc titles, colors, and factoids: see [[../items/music-records]].
 
