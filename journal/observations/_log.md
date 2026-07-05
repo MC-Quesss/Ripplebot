@@ -31,6 +31,66 @@ slot** in the kitchen chest, taken from the arrangement observed in-chest today.
 - Updated: [[../items/music-records]] (home-slot column, play-time behavior),
   [[../chests/house-kitchen-chest]] (per-disc slot table).
 
+### Follow-up same session: lazy auto-return + duration calibration
+
+- **bot.js:** DJ bot auto-returns its own finished disc — `nowPlayingMine` ownership
+  flag, `tryReturnRecord` on the 5s poll (song end + 30s grace, only when idle and
+  not bedtime, 90s retry backoff), runs as a `return_record` task so fire duty
+  composes. Player-placed discs never touched. `clearNowPlaying()` also clears a
+  ghost (jukebox empty on arrival = someone pulled the disc).
+- **Anomaly:** first calibration attempt raced Roz's ambient "have you heard...?"
+  flow — she put on Chirp for Muse (01:08:27Z) at the same moment the operator's
+  ctl `play_record Cat` silently no-op'd (the bot's *own* chat lines are not in
+  bot.log, so a spoken early-bail is invisible; also the ctl play path takes no
+  task lock, unlike the chat-intent path). Chirp disc later found gone from an
+  empty jukebox — a player (Quesss online) presumably took it; it is currently
+  unaccounted for (5/6 discs in chest + wherever Chirp is).
+- **Durations were never measured** — `durationSec` values were vanilla numbers,
+  `confirmed: false`. Full calibration run completed 2026-07-04 (all six discs,
+  Mall and Mellohi twice): **every nominal duration holds**; reports read +1 to
+  +13s long (human latency + small systematic), never short. Wait measured
+  exact to ±1s. Mall's first read (+37s) was an operator-latency outlier,
+  disproved by re-measurement (+12.7s). No `RECORD_INFO` changes needed;
+  details in [[../items/music-records]].
+- **Fertilizer bins incident (user report: Roz stuck):** new modded bins on the
+  door→jukebox walking line wedged Roz at (-274, 64, 569) — empty-name block
+  type 3995 (companion machine 1458), partial collision with raised walls, the
+  server rubber-bands every move. Reconnect respawned her still wedged; a
+  jump+push escape attempt **suffocated her (death #1)** — inventory kept, no
+  drops. Fix: `FERTILIZER_BIN_TYPES` solid-collision patch in bot.js (bump off
+  like a wall); pathfinder already avoided them, `walk_until` was the blind
+  spot. Full write-up: [[../places/fertilizer-bins]]. **Roz restarted onto the
+  new bot.js** (all of today's changes now live on Roz only — Muse/Private
+  still need the sync + restart before any keep-fire session).
+- **Bedtime record (new ambient behavior, user request):** some nights a bot
+  puts a record on before bed — window 10600–11800 (right after the story
+  window), 25% chance, one DJ per night rotating by in-game day
+  (roz/unikitty/private). Mutually exclusive with story time via a new
+  `storyNightDay` flag set at every story signal (Private's roll, the story
+  request, "let's head inside", "Gather round") — story always wins the night.
+  The DJ sleeps normally; the sunrise auto-return files the disc. Details in
+  [[../items/music-records]].
+- **RPS hold-your-ground fix (user report: Roz ran inside mid-game):**
+  `idleWanderBusy()` and `tryAutoSleep` now check `rpsCurrentRival` — the flag
+  that spans a whole RPS match (set at match start, cleared in the match's
+  `finally`, duty and fun alike). Previously neither knew RPS existed, so the
+  idle-wander **bedtime override** could march a mid-match bot into the house.
+  Matches are bounded (timeout ladders, 10-round cap), so deferred sleep
+  resumes minutes later at worst.
+- **Also this session:** lazy auto-return grace bumped 30s→60s ("a little extra
+  silence is fine" — user); a "don't sleep while a record plays" gate was added
+  during the calibration (a night-skip mid-song voided the first Wait
+  measurement) and **reverted at the user's direction afterward** — bots sleep
+  normally, the finished disc just waits in the jukebox for the morning
+  auto-return; **explore feature removed entirely**
+  (idle-wander pick, `runExplore` + helpers, chat intent,
+  ctl case) — bots kept stranding themselves (Roz was found on the roof at
+  y=69, one play command died silently while she was stuck). Old-code quirks
+  observed while driving: ctl jukebox paths take no task lock and swallow
+  errors silently; old `runStopRecord` ignores a disc already in the bot's
+  inventory. All fixed-or-moot in the new code; live after the coordinated
+  restart (pending with the fire overhaul).
+
 ## 2026-07-03 — Fire-duty overhaul pass 2 (implementation)
 
 Bot state at start: pos (-267.7, 65, 570.5), HP 20, food 20, deaths 0, day 45830, idle, sustain off.

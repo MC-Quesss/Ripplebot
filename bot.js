@@ -431,6 +431,10 @@ function pickAvoidingRecentPhrase (items, toPhrase = x => x) {
   rememberChatPhrase(toPhrase(picked))
   return picked
 }
+// Modded block type ids (stable per this world's Forge registry) that bots must
+// never walk into — see the solid-collision patch in the getBlock override.
+const FERTILIZER_BIN_TYPES = new Set([3995, 1458])
+
 bot.once('spawn', () => {
   const mcData = require('minecraft-data')(bot.version)
   const mvts = new Movements(bot, mcData)
@@ -470,6 +474,17 @@ bot.once('spawn', () => {
     if (b && !b.name && Math.floor(pos.x) === -266 && Math.floor(pos.z) === 574 &&
         pos.y >= 64 && pos.y <= 65) {
       b.shapes = []
+    }
+    // Fertilizer bins (and the machine block beside them): modded blocks with
+    // partial server-side collision that mineflayer can't model — walking into
+    // one rubber-bands the bot into a wedge (Roz, 2026-07-04, at (-274,64,569)).
+    // Treat them as FULL solid blocks client-side so physics bumps off them
+    // like a wall instead of entering the mismatched space; the pathfinder
+    // already routes around all empty-name blocks via the Infinity penalty.
+    // Observed: type 3995 at (-274,64,568..569), type 1458 at (-273,64,569).
+    if (b && !b.name && FERTILIZER_BIN_TYPES.has(b.type)) {
+      b.boundingBox = 'block'
+      b.shapes = [[0, 0, 0, 1, 1, 1]]
     }
     // Lily-pad-covered water: make the water block appear solid so the
     // pathfinder treats it as walkable ground (lily pads are thin enough
@@ -525,6 +540,9 @@ let wasSleeping = false
 // Story time: a bot requests a story before bed; auto-sleep suppressed until it ends.
 let storyTimeActive = false
 let storyTimeStartedAt = 0
+// Any story-time signal (request, call-inside, gather-round) marks tonight as
+// story night — the bedtime record stands down (mutually exclusive events).
+let storyNightDay = -1
 let lastStoryRequestDay = -1
 const STORY_REQUEST_CHANCE = 0.25
 const STORY_PRE_BEDTIME_START = 9500
@@ -564,6 +582,11 @@ async function tryAutoSleep () {
   if (!autoSleepEnabled || autoSleepBusy) return
   if (bot.isSleeping) return
   if (storyTimeActive) return
+  // Never run to bed mid-RPS-match — matches are bounded by timeout ladders
+  // and the 10-round cap, so sleep resumes minutes later at worst. (A playing
+  // record does NOT block sleep — the disc waits in the jukebox overnight and
+  // tryReturnRecord collects it in the morning.)
+  if (rpsCurrentRival) return
   if (!isBedtime()) return
   if (followTarget) {
     impulseExpressive('bedtime_suggest',
@@ -648,6 +671,7 @@ function tryStoryRequest () {
   if (day === lastStoryRequestDay) return
   lastStoryRequestDay = day
   if (Math.random() > STORY_REQUEST_CHANCE) return
+  storyNightDay = day
   storyRequestBusy = true
   ;(async () => {
     try {
@@ -690,6 +714,8 @@ function startAutoSleep () {
     tryStoryTimeTimeout()
     tryWriteDiary()
     tryMusicEnded()
+    tryReturnRecord()
+    tryBedtimeRecord()
   }, 5000)
 }
 
@@ -1851,8 +1877,11 @@ async function maybeRepairBareWheatTilesWhileWandering () {
 }
 
 function idleWanderBusy () {
+  // rpsCurrentRival spans a whole RPS match (duty or fun) — a bot mid-game
+  // must hold its spot on the field, including against the bedtime override
+  // (user, 2026-07-04: Roz ran inside mid-match).
   return !bot.entity || bot.isSleeping || autoSleepBusy || goInsideBusy || penTraversalBusy ||
-    activeTask.name !== null || followTarget
+    activeTask.name !== null || followTarget || rpsCurrentRival
 }
 
 function randomIdleWanderTarget () {
@@ -1886,7 +1915,6 @@ function randomIdleWanderTarget () {
   if (r < 0.52) return 'field'
   if (r < 0.68) return 'pen'
   if (r < 0.68 + 0.12 + fb) return 'furnace'
-  if (r < 0.88) return 'explore'
   return 'stay'
 }
 
@@ -2052,9 +2080,6 @@ async function tryIdleWander () {
   }
 
   let action = randomIdleWanderTarget()
-  // No exploring while on fire duty (too risky) — idle time near the post
-  // goes to duty-flavored wandering instead.
-  if (action === 'explore' && sustainState.active) action = 'field'
   try {
     if (action !== 'stay') logEvent('idle-wander', `heading ${action}`)
 
@@ -2075,8 +2100,6 @@ async function tryIdleWander () {
       await runIdleWanderToPen()
     } else if (action === 'furnace') {
       await runIdleWanderToFurnace()
-    } else if (action === 'explore') {
-      await runExplore()
     }
   } catch (e) {
     if (e.name === 'AbortError') return
@@ -2084,101 +2107,6 @@ async function tryIdleWander () {
   } finally {
     bot.pathfinder.setGoal(null)
     await clearHand()
-  }
-}
-
-// ── Exploration & Cartography ────────────────────────────────────────────────
-const EXPLORE_COOLDOWN_MS = 600_000
-let lastExploreAt = 0
-const EXPLORE_COMMON_BLOCKS = new Set([
-  'air', 'grass', 'dirt', 'stone', 'tallgrass', 'double_plant', 'sand',
-  'gravel', 'water', 'flowing_water', 'bedrock', 'cobblestone', 'log',
-  'log2', 'leaves', 'leaves2', 'planks', 'farmland', 'wheat', 'potatoes',
-  '',
-])
-const FARM_CENTER = { x: -275, y: 64, z: 570 }
-
-function describeExploreDirection (dx, dz) {
-  const ax = Math.abs(dx); const az = Math.abs(dz)
-  if (ax > az * 2) return dx > 0 ? 'east' : 'west'
-  if (az > ax * 2) return dz > 0 ? 'south' : 'north'
-  if (dx > 0 && dz < 0) return 'northeast'
-  if (dx > 0 && dz > 0) return 'southeast'
-  if (dx < 0 && dz < 0) return 'northwest'
-  return 'southwest'
-}
-
-function scanSurroundings () {
-  const pos = bot.entity.position
-  const found = new Map()
-  for (let dx = -5; dx <= 5; dx++) {
-    for (let dz = -5; dz <= 5; dz++) {
-      for (let dy = -2; dy <= 3; dy++) {
-        const block = bot.blockAt(new Vec3(
-          Math.floor(pos.x) + dx, Math.floor(pos.y) + dy, Math.floor(pos.z) + dz
-        ))
-        if (!block || EXPLORE_COMMON_BLOCKS.has(block.name)) continue
-        found.set(block.name, (found.get(block.name) || 0) + 1)
-      }
-    }
-  }
-  return [...found.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
-}
-
-async function runExplore () {
-  const t = bot.time?.timeOfDay
-  if (typeof t !== 'number' || t > 10000 || !(bot.time?.isDay)) return
-  if (Date.now() - lastExploreAt < EXPLORE_COOLDOWN_MS) return
-  if (hostilesNearby(16).length > 0) return
-
-  const startDeaths = deathCount
-  const startHP = bot.health ?? 20
-  const pos = bot.entity?.position
-  if (!pos) return
-
-  const angle = Math.random() * Math.PI * 2
-  const distance = 25 + Math.random() * 25
-  const dx = Math.cos(angle) * distance
-  const dz = Math.sin(angle) * distance
-  const targetX = Math.round(pos.x + dx)
-  const targetZ = Math.round(pos.z + dz)
-  const dir = describeExploreDirection(dx, dz)
-
-  lastExploreAt = Date.now()
-  logEvent('explore', `heading ${dir} to (${targetX}, 64, ${targetZ})`)
-  bot.chat(`Going to explore a bit to the ${dir}.`)
-
-  try {
-    if (insideHouse()) await runGoOutside('exploring')
-    await pathTo({ x: targetX, y: 64, z: targetZ }, 3, 30000)
-
-    if (deathCount > startDeaths) {
-      logEvent('explore', 'died during exploration')
-      return
-    }
-    if ((bot.health ?? 20) < startHP - 4) {
-      logEvent('explore', 'took damage — heading back')
-      bot.chat('Took some damage out here. Heading back.')
-      await pathTo(OUTSIDE_ORIENTATION, 3, 30000).catch(() => {})
-      return
-    }
-
-    const blocks = scanSurroundings()
-    const ePos = bot.entity.position
-    if (blocks.length > 0) {
-      const report = blocks.map(([name, count]) => `${name}(${count})`).join(', ')
-      bot.chat(`Found some things ${dir} of home: ${blocks.slice(0, 3).map(([n]) => n).join(', ')}.`)
-      logEvent('explore', `at (${ePos.x.toFixed(0)}, ${ePos.y.toFixed(0)}, ${ePos.z.toFixed(0)}): ${report}`)
-    } else {
-      bot.chat(`Open ground to the ${dir}. Nothing new.`)
-      logEvent('explore', `at (${ePos.x.toFixed(0)}, ${ePos.y.toFixed(0)}, ${ePos.z.toFixed(0)}): nothing notable`)
-    }
-
-    await pathTo(OUTSIDE_ORIENTATION, 3, 30000)
-  } catch (e) {
-    if (e.name === 'AbortError') return
-    logEvent('explore', `failed: ${e.message}`)
-    try { await pathTo(OUTSIDE_ORIENTATION, 3, 30000) } catch {}
   }
 }
 
@@ -7595,11 +7523,20 @@ const RECORD_INFO = {
 let nowPlayingRecord = null   // record_* name currently in the jukebox
 let nowPlayingEndsAt = 0      // epoch ms when the track finishes
 let nowPlayingEndNoticed = false
+let nowPlayingMine = false    // true only on the bot that put the disc on (the DJ)
 
-function startNowPlaying (recordName) {
+function startNowPlaying (recordName, { mine = false } = {}) {
   nowPlayingRecord = recordName
   nowPlayingEndsAt = Date.now() + (recordInfo(recordName).durationSec || 180) * 1000
   nowPlayingEndNoticed = false
+  nowPlayingMine = mine
+}
+
+function clearNowPlaying () {
+  nowPlayingRecord = null
+  nowPlayingEndsAt = 0
+  nowPlayingEndNoticed = false
+  nowPlayingMine = false
 }
 
 // Runs on the 5s timer: notice when the track runs out, once per play.
@@ -7613,6 +7550,73 @@ function tryMusicEnded () {
     `The record "${info.title}" just finished — the jukebox has gone quiet. React briefly to the silence.`,
     { me: Math.random() < 0.5 }
   ).catch(() => {})
+}
+
+// Lazy auto-return, on the same 5s timer: once OUR record has finished (plus a
+// grace buffer — durations are nominal until measured against this server),
+// put it back in its home slot the next time the bot is free. "That time or
+// after": the bot never waits by the jukebox — fire duty, wandering, and sleep
+// all take precedence, and the return happens whenever a poll finds the bot
+// idle in daytime. Only the DJ returns the disc (nowPlayingMine); a disc a
+// player put on is never touched.
+// 60s: "a little extra silence is fine" (user, 2026-07-03) — err well past the
+// end of the song rather than ever arriving before it.
+const RECORD_RETURN_GRACE_MS = 60_000
+const RECORD_RETURN_RETRY_MS = 90_000
+let recordReturnLastTryAt = 0
+
+function tryReturnRecord () {
+  if (!nowPlayingRecord || !nowPlayingMine) return
+  if (!nowPlayingEndsAt || Date.now() < nowPlayingEndsAt + RECORD_RETURN_GRACE_MS) return
+  if (isBedtime() || taskBusy()) return
+  if (Date.now() - recordReturnLastTryAt < RECORD_RETURN_RETRY_MS) return
+  recordReturnLastTryAt = Date.now()
+  const t = startTask('return_record')
+  if (!t.allowed) return
+  const info = recordInfo(nowPlayingRecord)
+  logEvent('jukebox', `auto-returning "${info.title}" — song over, bot free`)
+  ;(async () => {
+    try { await runStopRecord() } catch (e) { logEvent('jukebox-error', `auto-return failed: ${e.message}`) }
+    finally { endTask('return_record') }
+  })()
+}
+
+// ── Bedtime record ───────────────────────────────────────────────────────────
+// Some nights, a bot puts a record on as the crew heads in — a lullaby playing
+// over the farm while everyone falls asleep. Mutually exclusive with story
+// time: story rolls first (window 9500–10500) and any story signal marks
+// storyNightDay, standing the DJ down. One DJ per night, rotating by day, so
+// bots never race each other to the chest. The DJ sleeps like everyone else;
+// the disc waits in the jukebox and the lazy auto-return files it at sunrise.
+const BEDTIME_RECORD_START = 10600 // after the story-request window closes
+const BEDTIME_RECORD_END = 11800   // leaves time to reach the jukebox pre-bedtime
+const BEDTIME_RECORD_CHANCE = 0.25
+const BEDTIME_DJ_ROTATION = ['roz', 'unikitty', 'private']
+let lastBedtimeRecordDay = -1
+
+function tryBedtimeRecord () {
+  const t = bot.time?.timeOfDay
+  const day = bot.time?.day
+  if (typeof t !== 'number' || typeof day !== 'number') return
+  if (t < BEDTIME_RECORD_START || t > BEDTIME_RECORD_END) return
+  if (BEDTIME_DJ_ROTATION[day % BEDTIME_DJ_ROTATION.length] !== PERSONA) return
+  if (day === storyNightDay || storyTimeActive || storyRequestBusy) return
+  if (day === lastBedtimeRecordDay) return
+  if (nowPlayingRecord) return // something is already on
+  if (taskBusy() || goInsideBusy || penTraversalBusy || followTarget || rpsCurrentRival) return
+  if (sustainState.active && !sustainState.paused) return
+  lastBedtimeRecordDay = day
+  if (Math.random() > BEDTIME_RECORD_CHANCE) return
+  const names = Object.keys(RECORD_INFO)
+  const pick = recordInfo(names[Math.floor(Math.random() * names.length)])
+  const task = startTask('bedtime_record')
+  if (!task.allowed) return
+  logEvent('music', `bedtime record: putting on "${pick.title}" before bed`)
+  ;(async () => {
+    try { await runPlayRecord({ title: pick.title }) }
+    catch (e) { logEvent('music', `bedtime record failed: ${e.message}`) }
+    finally { endTask('bedtime_record') }
+  })()
 }
 
 function recordInfo (name) {
@@ -7793,7 +7797,7 @@ async function runPlayRecord ({ title, color } = {}) {
     logEvent('jukebox', 'play failed — record still in inventory')
   } else {
     const info = recordInfo(record.name)
-    startNowPlaying(record.name)
+    startNowPlaying(record.name, { mine: true })
     bot.chat(`Now playing: "${info.title}" — the ${info.color} disc.`)
     // Follow-up is the bot's OWN feeling about the song, in persona voice —
     // the factoid/lore stays available as background (buildExpressiveContext
@@ -7814,14 +7818,16 @@ async function runStopRecord () {
   const boxHasRecord = !!(jb && jb.name === 'jukebox' && jb.metadata === 1)
   let record = bot.inventory.items().find(i => i.name.startsWith('record_'))
 
+  // Jukebox empty but we were tracking a disc in it — someone else pulled it.
+  // Stop tracking so the auto-return doesn't keep coming back for a ghost.
+  if (!boxHasRecord && nowPlayingRecord) clearNowPlaying()
+
   if (boxHasRecord) {
     if (insideHouse()) await runGoOutside()
     await pathTo(JUKEBOX, 0, 12000)
     await bot.activateBlock(bot.blockAt(new Vec3(JUKEBOX.x, JUKEBOX.y, JUKEBOX.z)))
     logEvent('jukebox', 'ejected record')
-    nowPlayingRecord = null
-    nowPlayingEndsAt = 0
-    nowPlayingEndNoticed = false
+    clearNowPlaying()
     await sleep(1000)
   }
 
@@ -8330,17 +8336,6 @@ const CHAT_INTENTS = {
     hint: 'acknowledge the wheat-ready alerts — player says they heard, they know, got it, enough about the wheat, ok ok, etc.',
     run: (user) => { snoozeWheatReadyAlerts(user); return Promise.resolve() },
   },
-  explore: {
-    hint: 'go explore the area around the farm — wander out, see what is there, report back',
-    // No exploring while on fire duty — too risky to wander off the post.
-    run: () => {
-      if (sustainState.active) {
-        bot.chat("Can't wander off — I'm on fire duty. Patrols only.")
-        return Promise.resolve()
-      }
-      return runExplore()
-    },
-  },
   play_record: {
     hint: 'play a record / put on music / use the jukebox; args.title (cat|far|mall|wait|chirp|mellohi) or args.color when they ask for a specific disc ("play Cat", "put on the green one")',
     // Registered as a short task so it can't fight an in-flight harvest for
@@ -8748,6 +8743,7 @@ bot.on('chat', (username, message) => {
   // Story-time coordination: bot story request triggers tell_story directly
   if (fromBot && /would you tell us a story/i.test(message) && !storyTimeActive && PERSONA === 'roz') {
     logEvent('story-time', `${username} requested a story — starting`)
+    storyNightDay = bot.time?.day ?? storyNightDay
     storyTimeActive = true
     storyTimeStartedAt = Date.now()
     runTellStory(username, 'something from your past').catch(e => logEvent('story-time', `story failed: ${e.message}`))
@@ -8757,6 +8753,7 @@ bot.on('chat', (username, message) => {
   // Story-time coordination: come inside early, suppress auto-sleep, gather near the beds.
   if (fromBot && /let's head inside/i.test(message) && !storyTimeActive && !goInsideBusy) {
     logEvent('story-time', `${username} called everyone inside — heading in`)
+    storyNightDay = bot.time?.day ?? storyNightDay
     ;(async () => {
       try {
         if (!insideHouse()) {
@@ -8769,6 +8766,7 @@ bot.on('chat', (username, message) => {
     })()
   }
   if (fromBot && message === 'Gather round, everyone.' && !storyTimeActive) {
+    storyNightDay = bot.time?.day ?? storyNightDay
     storyTimeActive = true
     storyTimeStartedAt = Date.now()
     logEvent('story-time', `${username} is telling a story — gathering round`)
@@ -9538,11 +9536,6 @@ function handleCommand (cmd) {
       scanNamedSheep()
       const sheep = [...namedSheepTracking.values()]
       return { ok: true, sheep, registry: NAMED_SHEEP.map(s => s.name) }
-    }
-    case 'explore': {
-      if (taskBusy()) return { ok: false, error: 'busy', task: activeTask.name }
-      runExplore().catch(e => logEvent('explore', `ctl error: ${e.message}`))
-      return { ok: true, status: 'exploring' }
     }
     case 'deposit': {
       // Put items from bot inventory into a container.

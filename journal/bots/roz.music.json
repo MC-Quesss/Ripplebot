@@ -1,32 +1,58 @@
 {
   "record_cat": {
-    "timesHeard": 2,
-    "lastHeardDay": 45945,
-    "lastHeardAt": "2026-07-03T23:56:30.053Z",
+    "timesHeard": 4,
+    "lastHeardDay": 46143,
+    "lastHeardAt": "2026-07-05T11:34:12.999Z",
     "notes": [
-      "The soft melody of \"Cat\" feels like a warm blanket, reminding me that even in the deep ocean, we found a place to rest."
+      "The soft melody of \"Cat\" feels like a warm blanket, reminding me that even in the deep ocean, we found a place to rest.",
+      "The soft melody of Cat feels like a warm blanket, reminding me that even in the deep ocean, we found a place to rest.",
+      "The soft melody of Cat feels like a warm blanket, reminding me that even in the deep ocean, we found a place to rest."
     ]
   },
   "record_wait": {
-    "timesHeard": 1,
-    "lastHeardDay": 45802,
-    "lastHeardAt": "2026-07-02T21:53:56.928Z",
+    "timesHeard": 6,
+    "lastHeardDay": 46173,
+    "lastHeardAt": "2026-07-05T16:54:28.101Z",
     "notes": [
+      "The melody of \"Wait\" feels like the ocean breeze, reminding me that even in the quietest moments, we are still moving forward.",
+      "The melody of \"Wait\" feels like the ocean breeze, reminding me that even in the quietest moments, we are still moving forward.",
       "The melody of \"Wait\" feels like the ocean breeze, reminding me that even in the quietest moments, we are still moving forward."
     ]
   },
   "record_mellohi": {
-    "timesHeard": 1,
-    "lastHeardDay": 45913,
-    "lastHeardAt": "2026-07-03T18:12:48.630Z",
+    "timesHeard": 5,
+    "lastHeardDay": 46134,
+    "lastHeardAt": "2026-07-05T09:57:30.286Z",
     "notes": [
-      "The melody feels like the tide pulling gently, and I think about how the sun rising is always a promise kept, no matter the night."
+      "The melody feels like the tide pulling gently, and I think about how the sun rising is always a promise kept, no matter the night.",
+      "The waltz makes me feel like the tide is gently pulling the sun back up, a promise that the night has finally kept."
     ]
   },
   "record_chirp": {
-    "timesHeard": 1,
-    "lastHeardDay": 45952,
-    "lastHeardAt": "2026-07-04T01:08:27.013Z",
-    "notes": []
+    "timesHeard": 5,
+    "lastHeardDay": 46128,
+    "lastHeardAt": "2026-07-05T08:53:05.907Z",
+    "notes": [
+      "The rhythm of this music feels like the quiet hum of the ocean floor where I walked home, a gentle reminder that even in the dark, the world keeps turning."
+    ]
+  },
+  "record_far": {
+    "timesHeard": 4,
+    "lastHeardDay": 46170,
+    "lastHeardAt": "2026-07-05T16:22:22.135Z",
+    "notes": [
+      "The drifting C418 melody makes me remember the quiet moments with Brightbill, even though he is far away now.",
+      "The C418 melody feels like the wind used to blow through the reeds where Brightbill used to nap, and I am writing this note to keep the memory safe.",
+      "The C418 melody feels like the wind used to blow through the reeds where Brightbill used to nap, and I am writing this note to keep the memory safe."
+    ]
+  },
+  "record_mall": {
+    "timesHeard": 3,
+    "lastHeardDay": 46149,
+    "lastHeardAt": "2026-07-05T12:38:08.210Z",
+    "notes": [
+      "The empty feeling in the song reminds me of the silence after the ocean floor, but the melody fills the space just enough to make the farm feel like a home a...",
+      "The empty feeling in the song reminds me of the silence after the ocean floor, but the melody fills the space just enough to make the farm feel like a home a..."
+    ]
   }
 }

@@ -16,8 +16,9 @@ memory — changed 2026-07-03). The factoid is background lore fed to the LLM co
 **never recited verbatim** at play time anymore.
 
 `confirmed: false` — titles are from item display names (verified in-chest
-2026-07-02); colors and factoids are prefilled from vanilla Minecraft knowledge,
-pending disc-by-disc review with the user.
+2026-07-02); **durations live-verified 2026-07-04** (see below); colors and
+factoids are prefilled from vanilla Minecraft knowledge, pending disc-by-disc
+review with the user.
 
 | Item | Title | Label color | Length | Home slot | Factoid (background lore) |
 |---|---|---|---|---|---|
@@ -32,6 +33,36 @@ Durations drive end-of-song awareness (`durationSec` in `RECORD_INFO`): every bo
 that hears a `Now playing:` announce tracks the same countdown, notices when the
 track runs out, and knows the difference between "playing" and "disc still in the
 jukebox but finished". Now-playing state is in-memory — lost on bot restart.
+**Durations verified against this server 2026-07-04** (live calibration: bot puts
+the disc on, start = the `[jukebox] playing` log timestamp, operator reports the
+audible end). All six nominal values hold. Method spread: reports run **+1 to
++13s long** (human report latency plus a small systematic lag between the log
+line and audio), never short — safely inside the auto-return's 60s grace.
+Measured: Cat ≤198s, Far ≤192s, Mall 209.7s, Wait **239.0s (exact, ±1s)**,
+Chirp 190.2s, Mellohi 102.6s. Mall's first measurement read +37s but re-measured
+at +12.7s — the outlier was a slow report, not the song.
+
+## Bedtime record (added 2026-07-04)
+
+Some nights, one bot puts a record on as the crew heads in — a lullaby over the
+farm while everyone falls asleep. **Mutually exclusive with story time**: the
+story request rolls first (window 9500–10500); any story signal tonight marks
+`storyNightDay` and the DJ stands down. The record window is 10600–11800, 25%
+chance, **one DJ per night rotating by day** (roz → unikitty → private), so bots
+never race each other to the chest. The DJ sleeps like everyone else; the disc
+plays into the night and the lazy auto-return files it at sunrise.
+
+## Lazy auto-return (added 2026-07-03)
+
+The DJ bot — only the bot that put the disc on (`nowPlayingMine`) — returns the
+disc to its home slot **once the song is over and the bot is next free**: song end
++ 30s grace, then the first 5s poll where the bot is idle (no active task, not
+bedtime) triggers `runStopRecord` as a `return_record` task. "That time or after"
+semantics: the bot never waits by the jukebox — fire duty, idle wander, and sleep
+all take precedence, and a busy poll just retries later (90s retry backoff on
+failure). A disc a **player** put on is never touched. If the jukebox turns out
+empty when the bot arrives (someone pulled the disc), tracking is cleared so the
+bot doesn't keep coming back for a ghost.
 
 ## Per-bot music memories (added 2026-07-02)
 
