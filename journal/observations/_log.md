@@ -29,9 +29,19 @@ Reverse-chronological. Each session a header. Raw observations land here first; 
   previously saluting seconds early while still waiting). Reveal tick is
   challenger-chosen and carried in the chant, so mixed-version bots degrade
   gracefully (old 90-tick chant → new bot does 2.5s salute + 2s point).
-- Verified: syntax + restart clean; point emote demoed live to the operator via
-  ctl. Full ceremony verification needs a 2-bot match — watch for: chant +
-  salute → 3s → point + "Shoot!" → 2s → simultaneous throws.
+- **VERIFIED live 2-bot match (same day, Roz vs Private, both on new code):**
+  Roz won 2-0 over 5 rounds (3 ties); every round's throws landed within ~50ms
+  on the shared tick; operator confirmed the ceremony reads correctly in-game.
+- **New bug found by the drill: restock hijacked Private mid-match.** Fun RPS
+  registers no task, and `tryRestockSupplies` gated only on
+  taskBusy/goInside/autoSleep/penTraversal — no `rpsCurrentRival`/`followTarget`
+  (unlike `idleWanderBusy`, which learned this 2026-07-04). Private's baked
+  count was below the floor, so the restock loop saw an "idle" bot mid-ceremony
+  and walked him to the potato patch while his chat kept throwing. Fixed: both
+  `tryRestockSupplies` and `tryFoodSafety`'s chest-run step now hold the field
+  during a match/follow (food-safety still eats from inventory in place —
+  survival stays stationary). Live on Roz; **Private needs one more restart**
+  to pick it up.
 
 ### Follow-up same session (days 46399–46400): hopper jam rule + wheat-field lattice
 

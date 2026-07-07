@@ -5524,6 +5524,13 @@ async function tryFoodSafety () {
 
     // Step 3: No food in inventory. Go to kitchen chest — baked potatoes first,
     // bread only in an emergency (no potatoes AND health not full).
+    // Mid-match/mid-follow the bot holds its spot (eating from inventory above
+    // is fine; walking off to the chest is not) — defer and retry shortly.
+    if (rpsCurrentRival || followTarget) {
+      logEvent('food-safety', 'hungry but mid-match/follow — deferring chest run 30s')
+      foodSafetyWindowCooldownUntil = Date.now() + 30_000
+      return
+    }
     if (inPen() && bot.health <= 6) {
       logEvent('food-safety', `HP=${bot.health} in pen — too risky to traverse, waiting`)
       foodSafetyWindowCooldownUntil = Date.now() + 60_000
@@ -5687,6 +5694,10 @@ let restockCooldownUntil = 0
 async function tryRestockSupplies () {
   if (restockBusy || foodSafetyBusy) return
   if (taskBusy() || goInsideBusy || autoSleepBusy || penTraversalBusy) return
+  // A match holds the field and a follow holds the leash (user, 2026-07-07:
+  // Private walked to the potato patch mid-RPS — fun matches register no
+  // task, so this gate must check them explicitly, same as idleWanderBusy).
+  if (rpsCurrentRival || followTarget) return
   if (!bot.entity || !bot.world || bot.isSleeping || isBedtime()) return
   if (Date.now() < restockCooldownUntil) return
   if (bot.currentWindow) return
