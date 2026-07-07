@@ -564,10 +564,13 @@ function insideHouse () {
   if (!p) return false
   return p.x >= -271 && p.x <= -264 && p.z >= 568 && p.z <= 575 && p.y >= 64 && p.y <= 66
 }
+function penContainsXZ (x, z) {
+  return x >= -282 && x <= -274 && z >= 575 && z <= 578
+}
 function inPen () {
   const p = bot.entity?.position
   if (!p) return false
-  return p.x >= -282 && p.x <= -274 && p.z >= 575 && p.z <= 578 && p.y >= 63 && p.y <= 65
+  return penContainsXZ(p.x, p.z) && p.y >= 63 && p.y <= 65
 }
 async function ensureInsideHouse () {
   if (inPen()) await runGoOutOfPen()
@@ -1695,6 +1698,14 @@ async function faceNearestPlayer () {
 }
 
 async function pathTo (pt, range = 1, waitMs = 15000) {
+  // Pen exit-first rule (user, 2026-07-06): the pathfinder cannot route
+  // through the pen gate, so a bot in the pen heading anywhere OUTSIDE the
+  // pen must run the safe exit procedure before anything else — field duties,
+  // hopper runs, RPS meet spots, all of it. penTraversalBusy guards
+  // recursion (runGoOutOfPen itself paths outward while still in bounds).
+  if (!penTraversalBusy && inPen() && !penContainsXZ(pt.x, pt.z)) {
+    await runLeavePen()
+  }
   const startGen = abortGen
   let tx = pt.x, tz = pt.z
   if (range <= 1 && isPositionOccupied(new Vec3(pt.x, pt.y, pt.z))) {

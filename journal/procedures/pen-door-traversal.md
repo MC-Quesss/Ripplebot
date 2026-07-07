@@ -57,6 +57,17 @@ clears the plate in well under a second — is never interrupted.
 After both fixes, exit clears to z≤571 on the **first attempt** with no retries
 (verified across multiple enter→exit cycles, 0 deaths, no sheep escaped).
 
+## Update 2026-07-06 — exit-first rule baked into pathTo
+
+User report: a bot in the pen that took a **field duty** tried to path straight
+to the field and stalled — the pathfinder cannot route through the pen gate.
+Fix: `pathTo` in bot.js now runs `runLeavePen()` automatically **whenever the
+bot is in the pen and the target is outside the pen bounds** (`penContainsXZ`
+check), before doing anything else. Pen-internal moves (shearing, gate runway)
+are unaffected, and `penTraversalBusy` guards against recursion while the exit
+procedure itself paths outward. Individual routines no longer need to remember
+the exit-first rule — the movement primitive enforces it.
+
 ## Open issue
 
 **Entry** still occasionally stalls north of the door (~z=573.75) — a separate,

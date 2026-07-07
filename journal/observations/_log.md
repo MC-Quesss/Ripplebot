@@ -52,6 +52,17 @@ slot** in the kitchen chest, taken from the arrangement observed in-chest today.
   exact to ±1s. Mall's first read (+37s) was an operator-latency outlier,
   disproved by re-measurement (+12.7s). No `RECORD_INFO` changes needed;
   details in [[../items/music-records]].
+- **Pen exit-first rule (2026-07-06, user report):** a bot in the sheep pen
+  that took a field duty pathed straight at the field and stalled (pathfinder
+  can't route the gate). `pathTo` now auto-runs `runLeavePen()` when the bot
+  is in the pen and the target is outside it — one chokepoint instead of
+  per-routine remembering. See [[../procedures/pen-door-traversal]].
+- **North-field mystery resolved (2026-07-06):** Private bailed its north
+  harvest at the 10-tile RPS checkpoint (54→44 mature = 81%, below the 85%
+  trigger), won the match, but never sent the `.q n` winner handoff — first
+  live firing of that path, failed. Self-healed: Private harvested north once
+  it regrew past the trigger. Open question for Private's log: whether its
+  `pendingWork` flag was consumed without the chat line sending, or fired late.
 - **Fertilizer bins incident (user report: Roz stuck):** new modded bins on the
   door→jukebox walking line wedged Roz at (-274, 64, 569) — empty-name block
   type 3995 (companion machine 1458), partial collision with raised walls, the
