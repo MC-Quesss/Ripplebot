@@ -9,6 +9,30 @@ Reverse-chronological. Each session a header. Raw observations land here first; 
 
 ## 2026-07-07 — Free-play session: motor-control races observed from inside (day 46398)
 
+### Follow-up same session: RPS "Shoot!" ceremony regression fixed
+
+- User report: no point emote visible at the shoot, and no one says "Shoot!" in
+  the logs. Confirmed regression from the 2026-07-03 fire-routine rewrite: old
+  code did `point` + challenger `"Shoot!"` + 2s hold + throw; the tick-sync
+  rewrite moved `sendEmote('point')` to the *top* of the 4.5s (90-tick) hold —
+  animation over before the reveal — and dropped the `"Shoot!"` chat line
+  entirely. Log timeline showed it: chant, 4.5s of dead air, `* Roz shoots …`.
+- Fix: inside the hold loop, at ≤40 ticks (~2s) remaining, `sendEmote('point')`
+  + challenger-only `bot.chat('Shoot!')`; same ceremony on the nonsense-tick
+  early-break path. Throw timing/grammar unchanged — **not protocol-breaking**
+  (prose + emote are ignored by `parseFireCoord`), so Roz restarted alone;
+  Muse/Private pick it up at the next fleet restart.
+- **User choreography spec (same day, second pass):** salute held **3s under the
+  chant**, point held **2s from "Shoot!" to the throw**. Implemented:
+  `RPS_REVEAL_DELAY_TICKS` 90→100 (3s+2s); salute moved from round-top to fire
+  *with the chant* (challenger: sent with it; responder: on receiving it — was
+  previously saluting seconds early while still waiting). Reveal tick is
+  challenger-chosen and carried in the chant, so mixed-version bots degrade
+  gracefully (old 90-tick chant → new bot does 2.5s salute + 2s point).
+- Verified: syntax + restart clean; point emote demoed live to the operator via
+  ctl. Full ceremony verification needs a 2-bot match — watch for: chant +
+  salute → 3s → point + "Shoot!" → 2s → simultaneous throws.
+
 ### Follow-up same session (days 46399–46400): hopper jam rule + wheat-field lattice
 
 - **Hopper jam explained + new rule (user):** the hopper was jammed by raw wheat
@@ -16,9 +40,13 @@ Reverse-chronological. Each session a header. Raw observations land here first; 
   hopper — plantballs only** (potatoes remain legal). Audit: all bot.js
   `depositToHopper` call sites already send only plantballs/potatoes; ctl
   `deposit_item` is unguarded; comments at 7278/7365 are stale (describe pre-rule
-  routing). Enforcement at the `depositToHopper()` chokepoint joins the pending
-  motor-lock fix batch. Yesterday's 24-of-48 plantball `backedUp` stall was almost
-  certainly this jam, not a full intake. Updated [[../places/house-hopper]].
+  routing). **Smoking gun: ctl `deposit_wheat` *defaulted* to raw wheat → hopper.**
+  Guards implemented + verified live same day (bot restarted): `HOPPER_FORBIDDEN`
+  in `depositToHopper()` + refusals in `deposit_wheat`/`deposit_item`, generic
+  `deposit`, and `deposit_slot`; all three grain routes tested `ok:false`; positive
+  control fed the 24 stranded plantballs cleanly (`rounds=1 backedUp=false`).
+  Yesterday's 24-of-48 plantball `backedUp` stall was
+  this jam, not a full intake. Updated [[../places/house-hopper]].
 - **Wheat-field lattice discovered:** 11–12 immobile empty-name *entities* form a
   precise 3×4 grid inside the wheat field (x ∈ {-285.5,-282.5,-279.5}, z ∈
   {552.5,556.5,560.5,564.5}, y≈63.5, co-located with farmland+wheat tiles).

@@ -49,9 +49,19 @@ full, it was *blocked*.
 This supersedes the wheat-feeding behavior below (kept for history): the 2026-05-30
 "18 wheat drained in ~8–10s" observation predates a change in the machine below.
 The "wheat → hopper or chest?" ask-flow should now route wheat only to plantballs
-or the chest, never raw into the hopper. Enforcement planned in `depositToHopper()`
-itself (single chokepoint) alongside the pending motor-lock fix; stale comments at
-bot.js:7278 and :7365 still describe the old routing.
+or the chest, never raw into the hopper.
+
+**Enforced in code + verified live (2026-07-07, same day):** `HOPPER_FORBIDDEN`
+(wheat, wheat_seeds) guard in `depositToHopper()` (throws), plus explicit refusals
+in all three ctl doors that could carry grain: `deposit_wheat`/`deposit_item`
+(whose *default* was raw wheat → hopper — the likely jam source), generic `deposit`
+at hopper coords (strips grain, reports `refused`), and `deposit_slot` into a
+hopper. Refusals log as `[hopper-guard]`. Stale comments fixed. Live test after
+restart: all three grain routes returned `ok:false` with instructive errors;
+positive control deposited 24 plantballs cleanly (`rounds=1 backedUp=false`) —
+retroactively confirming the 2026-07-06 stall was this jam, not a full intake.
+Note: generic `deposit`/`deposit_slot` still bypass the hopper *lock* (multi-bot
+invariant) — operator ctl use only; not fixed today.
 
 ## Use — wheat routing after harvest (HISTORICAL — see 2026-07-07 rule above)
 

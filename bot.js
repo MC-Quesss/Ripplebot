@@ -3725,7 +3725,7 @@ const RPS_ACCEPT_WAIT_MS = 45000 // challenger idles; a mid-task rival needs tim
 const RPS_READY_WAIT_MS = 60000
 const RPS_CHANT_WAIT_MS = 15000
 const RPS_THROW_WAIT_MS = 20000
-const RPS_REVEAL_DELAY_TICKS = 90 // ~4.5s of chant-to-shoot theater
+const RPS_REVEAL_DELAY_TICKS = 100 // 3s salute under the chant + 2s point from "Shoot!" (user spec 2026-07-07)
 const RPS_NAMES = { r: 'rock', p: 'paper', s: 'scissors' }
 let rpsState = null // { round, myThrow, rival, resolve }
 let rpsChallengeResolve = null // resolve function for incoming .d acceptance
@@ -3945,13 +3945,16 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
       })
 
       await lookAtPlayer(rival)
-      sendEmote('salute')
 
-      // The chant IS the round announcement: it carries a reveal tick on the
-      // shared server clock, so both bots shoot simultaneously and the
-      // ceremony can never be skipped.
+      // Ceremony (user spec, 2026-07-07): salute held ~3s while the chant
+      // stands, then point held ~2s from "Shoot!" to the throw. The chant IS
+      // the round announcement: it carries a reveal tick on the shared server
+      // clock, so both bots shoot simultaneously and the ceremony can never
+      // be skipped. Salute fires WITH the chant — sent for the challenger,
+      // received for the responder — not at round-top.
       let revealTick
       if (isChallenger) {
+        sendEmote('salute')
         revealTick = Number(bot.time?.age ?? 0) + RPS_REVEAL_DELAY_TICKS
         chatCore(`Rock, paper, scissors — round ${round}!`, `.t${round} @${revealTick}`)
       } else {
@@ -3971,16 +3974,29 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
           return failed(`no chant for round ${round}`)
         }
         revealTick = chant.tick
+        sendEmote('salute') // chant just landed — take the salute stance with it
       }
 
-      // Hold... hold... shoot on the tick.
-      sendEmote('point')
+      // Hold... hold... — point + "Shoot!" with ~2s (40 ticks) left so the
+      // emote is still mid-animation when the throws land (the 2026-07-03
+      // rewrite lost this: point fired at the top of the 4.5s hold and the
+      // "Shoot!" call vanished entirely). Challenger alone calls it, as before.
+      let shootCalled = false
       for (;;) {
         const now = Number(bot.time?.age ?? 0)
         if (now >= revealTick) break
         if (revealTick - now > 600) break // nonsense tick (>30s out) — just shoot
+        if (!shootCalled && revealTick - now <= 40) {
+          shootCalled = true
+          sendEmote('point')
+          if (isChallenger) bot.chat('Shoot!')
+        }
         if (matchAborted) { rpsState = null; return failed(`aborted in round ${round}`) }
         await sleep(100)
+      }
+      if (!shootCalled) { // early break (nonsense tick) — still do the ceremony
+        sendEmote('point')
+        if (isChallenger) bot.chat('Shoot!')
       }
       bot.chat(`/me shoots ${RPS_NAMES[myThrow]} (.t${round})`)
       logEvent('rps', `round ${round}: threw ${RPS_NAMES[myThrow]} at tick ${Number(bot.time?.age ?? 0)}`)
@@ -4180,7 +4196,16 @@ function releaseBench () {
 // HARD INVARIANT: potatoes go into the hopper ONE AT A TIME, one bot at a
 // time — simultaneous feeding corrupts the bio-fuel intake. Every hopper
 // write (deposits and jam-clears) goes through this lock.
+// HARD INVARIANT (user rule, 2026-07-07): raw wheat and seeds JAM the intake —
+// only plantballs and potatoes are legal feed. Craft grain into plantballs
+// first (stash_wheat / deposit_named do this). Guarded here so every caller,
+// including the ctl deposit actions, hits the same wall.
+const HOPPER_FORBIDDEN = new Set(['wheat', 'wheat_seeds'])
 async function depositToHopper (itemName, opts = {}) {
+  if (HOPPER_FORBIDDEN.has(itemName)) {
+    logEvent('hopper-guard', `refused ${itemName} — raw grain jams the intake; craft plantballs first`)
+    throw new Error(`${itemName} jams the bio-fuel intake — craft plantballs first (use stash_wheat)`)
+  }
   await acquireChatLock(hopperLock)
   try {
     await ensureInsideHouse()
@@ -7275,8 +7300,8 @@ async function runStashWheat () {
 }
 
 // Deposit one or more item names. Items not present are silently skipped.
-// Routing: wheat → hopper (quick-move); wheat_seeds → craft plant balls → hopper;
-// everything else → kitchen chest.
+// Routing: wheat AND wheat_seeds → craft plant balls → hopper (raw grain jams
+// the intake — user rule 2026-07-07); everything else → kitchen chest.
 // `bread` and `baked_potato` are kept to their stack limits; all others go fully.
 async function runDepositNamed (names) {
   const KEEP_BREAD = 64
@@ -7362,8 +7387,9 @@ async function runDepositNamed (names) {
   logEvent('deposit-named', summary.join('; '))
 }
 
-// Stash everything. Wheat → hopper; seeds → craft plant balls → hopper;
-// everything else → kitchen chest (keeping baked_potato/shears at their limits).
+// Stash everything. Wheat + seeds → craft plant balls → hopper (raw grain
+// jams the intake — user rule 2026-07-07); everything else → kitchen chest
+// (keeping baked_potato/shears at their limits).
 // Uses win.deposit for known items and two-click for unknown/modded items.
 const STASH_ALL_KEEP = { baked_potato: 128, shears: 1 }
 async function runStashAll () {
@@ -9554,6 +9580,15 @@ function handleCommand (cmd) {
       const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
       if (!b) return { ok: false, error: 'no block' }
       const wantedNames = new Set(args.names || [])
+      // Raw grain jams the bio-fuel intake (user rule, 2026-07-07). This path
+      // bypasses depositToHopper, so enforce the rule here too: strip
+      // wheat/seeds when the target is a hopper and report them refused.
+      const refusedGrain = []
+      if (b.name === 'hopper' || (b.position.x === HOPPER.x && b.position.y === HOPPER.y && b.position.z === HOPPER.z)) {
+        for (const g of HOPPER_FORBIDDEN) if (wantedNames.delete(g)) refusedGrain.push(g)
+        if (refusedGrain.length) logEvent('hopper-guard', `deposit: refused ${refusedGrain.join(', ')} into hopper — craft plantballs first`)
+        if (!wantedNames.size) return { ok: false, error: `${refusedGrain.join(', ')} jams the bio-fuel intake — craft plantballs first (use stash_wheat)` }
+      }
       return bot.openContainer(b).then(async win => {
         const deposited = {}
         // Bot inventory items (not the window's first N slots)
@@ -9568,7 +9603,7 @@ function handleCommand (cmd) {
           }
         }
         win.close()
-        return { ok: true, deposited }
+        return refusedGrain.length ? { ok: true, deposited, refused: refusedGrain } : { ok: true, deposited }
       }).catch(e => ({ ok: false, error: e.message }))
     }
     case 'open_container': {
@@ -9610,6 +9645,14 @@ function handleCommand (cmd) {
         }
         const srcItem = win.slots[winSrc]
         if (!srcItem) { win.close(); return { ok: false, error: `inv slot ${fromSlot} is empty` } }
+        // Raw grain jams the bio-fuel intake (user rule, 2026-07-07) — this
+        // path also bypasses depositToHopper, so enforce the rule here too.
+        if (HOPPER_FORBIDDEN.has(srcItem.name) &&
+            (b.name === 'hopper' || (b.position.x === HOPPER.x && b.position.y === HOPPER.y && b.position.z === HOPPER.z))) {
+          win.close()
+          logEvent('hopper-guard', `deposit_slot: refused ${srcItem.name} into hopper — craft plantballs first`)
+          return { ok: false, error: `${srcItem.name} jams the bio-fuel intake — craft plantballs first (use stash_wheat)` }
+        }
         if (win.slots[toSlot]) { win.close(); return { ok: false, error: `chest slot ${toSlot} already occupied` } }
         try {
           await bot.clickWindow(winSrc, 0, 0)
@@ -10138,6 +10181,11 @@ function handleCommand (cmd) {
       if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
       const depositItemName = (args && args.item) || 'wheat'
       const target = (args && args.target === 'chest') ? HARVEST_WAYPOINTS.kitchen_chest : HOPPER
+      // Raw grain jams the bio-fuel intake (user rule, 2026-07-07). Refuse
+      // up front — depositToHopper would throw anyway, but only into the log.
+      if (target === HOPPER && HOPPER_FORBIDDEN.has(depositItemName)) {
+        return { ok: false, error: `${depositItemName} jams the bio-fuel intake — use stash_wheat (crafts plantballs first) or pass target:"chest"` }
+      }
       const keep = Number.isFinite(args && args.keep) ? args.keep : 0
       ;(async () => {
         try {
