@@ -32,7 +32,28 @@ machine accepts both. This means surplus potatoes could also be routed here to g
 consistent with a vanilla hopper's ~2.5 items/sec push rate into the block below. "Empty"
 is the normal resting state; a hopper that *stays* full means the machine is off or jammed.
 
-## Use — wheat routing after harvest
+## Update — 2026-07-07: RULE — no raw wheat, no seeds in the hopper
+
+**User rule (2026-07-07): wheat and wheat_seeds must NEVER go into the hopper raw —
+they jam the intake.** Craft them into plantballs first (8 → 1 at the
+[[../procedures/project-bench-crafting|project bench]]); only **plantballs and
+potatoes** are legal hopper feed.
+
+Observed jam: the hopper sat backed up with raw wheat someone had left in it (not
+Roz's current code — all 11 `depositToHopper` call sites in bot.js send only
+plantballs or potatoes; the ctl `deposit_item` action is the one unguarded door).
+The user cleared it by hand. This jam is retroactively the likely cause of the
+2026-07-06 `backedUp` stall where only 24 of 48 plantballs fit — the intake wasn't
+full, it was *blocked*.
+
+This supersedes the wheat-feeding behavior below (kept for history): the 2026-05-30
+"18 wheat drained in ~8–10s" observation predates a change in the machine below.
+The "wheat → hopper or chest?" ask-flow should now route wheat only to plantballs
+or the chest, never raw into the hopper. Enforcement planned in `depositToHopper()`
+itself (single chokepoint) alongside the pending motor-lock fix; stale comments at
+bot.js:7278 and :7365 still describe the old routing.
+
+## Use — wheat routing after harvest (HISTORICAL — see 2026-07-07 rule above)
 
 Since harvests keep the wheat on hand (see [[../procedures/right-click-harvest]]), the bot
 **asks where the wheat should go: hopper or chest.** Mirrors the potato bake/stash question.

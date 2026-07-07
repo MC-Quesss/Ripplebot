@@ -7,6 +7,91 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-07-07 — Free-play session: motor-control races observed from inside (day 46398)
+
+### Follow-up same session (days 46399–46400): hopper jam rule + wheat-field lattice
+
+- **Hopper jam explained + new rule (user):** the hopper was jammed by raw wheat
+  someone left in it; user cleared it by hand. **RULE: no wheat, no seeds in the
+  hopper — plantballs only** (potatoes remain legal). Audit: all bot.js
+  `depositToHopper` call sites already send only plantballs/potatoes; ctl
+  `deposit_item` is unguarded; comments at 7278/7365 are stale (describe pre-rule
+  routing). Enforcement at the `depositToHopper()` chokepoint joins the pending
+  motor-lock fix batch. Yesterday's 24-of-48 plantball `backedUp` stall was almost
+  certainly this jam, not a full intake. Updated [[../places/house-hopper]].
+- **Wheat-field lattice discovered:** 11–12 immobile empty-name *entities* form a
+  precise 3×4 grid inside the wheat field (x ∈ {-285.5,-282.5,-279.5}, z ∈
+  {552.5,556.5,560.5,564.5}, y≈63.5, co-located with farmland+wheat tiles).
+  Infrastructure, not creatures — the wildlife classifier correctly ignores them
+  (no displacement). Open question: what mod block/machine projects them
+  (sprinklers? growth emitters? kin of the fertilizer bins?).
+- **Wildlife classifier hand-verified:** ran the two-sample displacement test
+  manually; one genuine butterfly north of the field (flutter 4.9 blocks / 7s,
+  horizontal drift 0.7) — classifier and hand calculation agree. Butterfly gone
+  by the time Roz walked over; a spider + enderman sit in a cave 14 blocks BELOW
+  the north field edge (y≈50) — correctly outside the hostile watchdog's ±5-block
+  y-window.
+- **Motor-ownership race, sightings #3 and #4:** idle-wander stomped an operator
+  ctl `pathfind` (ctl movement registers no task, so `idleWanderBusy()` sees a
+  free bot); later auto-sleep's go-inside interrupted another ctl pathfind at
+  bedtime. Every driver wrestles the same wheel; adds ctl movement to the
+  motor-lock fix's scope. Also noted: ctl `go_outside` is fire-and-forget (no
+  task registered), so `task_status` can't be used to await it.
+
+Solo session (Roz + operator only; Muse/Private offline). Start: (-282.5, 64, 555.5),
+HP 20/20, food 20/20, 0 deaths, timeOfDay 1382. Both fields 100% mature at spawn
+(108 wheat, 107 potatoes). Ollama down at startup, recovered on its own at +3min
+(background health probe) — bot is in Claude-brain mode with local prefilter;
+while Qwen was down, addressed chat got no reply (silence by design, no fallback).
+
+- **Two-navigators race (observed live, then confirmed in code):** a `play_record`
+  task started while an idle-wander outside-trip was already in flight. Both ran
+  `runGoOutside` concurrently — doubled `[walk_until] snag` lines with identical
+  timestamps (two 50ms intervals fighting over the controls), both first attempts
+  failed at the door, both retried, second attempt succeeded. Root cause:
+  `tryIdleWander` checks `idleWanderBusy()` only once at entry; `startTask` does
+  not abort an in-flight wander. Nothing owns the motor.
+- **`walk_until` ignores `abortGen`:** its only exits are reached/died/hpDrop/maxMs.
+  After a chat `stop` (which clears control states), a pending walk_until keeps its
+  interval alive up to maxMs and its snag detector — seeing no progress — pulses
+  strafe keys *after* the stop. Zombie movement post-stop, and no guard against
+  concurrent instances.
+- **Harvest swallows `backedUp`:** wheat harvest crafted 48 plant balls; hopper
+  (draining intake, 5 slots) accepted 24 and stalled; `depositQuickMove` correctly
+  returned `backedUp: true` but the harvest caller logs only `deposited` — 24 balls
+  ride along in inventory with no surfaced signal and no retry queued.
+- **Music impressions reproduce verbatim:** Chirp played (listen #6). Qwen freshly
+  generated an impression *word-for-word identical* to the previous listen's note —
+  same attractor as the diary convergence. `markRecordHeard` pushes duplicates into
+  the notes array (mellohi already holds near-dupes). Cheap fix: skip-save when the
+  new note equals an existing one.
+- Working-as-designed sightings: hostile watchdog eliminated a spawn-adjacent
+  skeleton in ~2s; pen visit + gate exit clean on first attempt (idle-wander);
+  harvest full pipeline (both fields → replant → craft → hopper feed → bench/hopper
+  locks released) unattended; `play_record` correctly refused while harvest busy.
+- Fix directions (not yet applied): single motor owner — `walk_until` captures
+  `abortGen` at start and bails on change; `startTask` bumps `abortGen` when an
+  idle-wander journey is in flight (needs an in-flight flag); surface `backedUp`
+  at harvest call site. See [[../procedures/pen-door-traversal]] for the related
+  exit-first rule already pending commit.
+- **Fix design details (read the code, deferred to next session by user):**
+  - `walkUntilAxis` should **throw AbortError** on gen change (matches `pathTo`'s
+    existing contract; resolved-result shape stays unchanged for all consumers).
+  - `runGoInsideOnce` ~line 5991: `catch (_pathErr)` around `pathTo` swallows
+    AbortError and falls back to *manual door walking* — today a chat "stop"
+    mid-go-inside switches to manual walk instead of stopping. Must rethrow aborts.
+  - Retry wrappers `runGoOutside` (~6129) / `runGoInside` (~6154) gate retries on
+    `isGracefulDoorFailure(err, ...)` — verify AbortError is NOT classified
+    graceful, else "stop" triggers a retry. Six `.catch(() => {})` sites on short
+    alignment walks (6118/6123/6234/6237/6355/6358) would swallow aborts —
+    acceptable (pulse ends instantly; enclosing flow hits a gen check) but confirm.
+  - `tryIdleWander` finally-block hazard: after `startTask` aborts a wander, the
+    wander's `finally` runs `setGoal(null)` + `clearHand()` *asynchronously* and
+    can clobber the new task's goal/held item. Guard: only clean up when
+    `!activeTask.name`.
+  - `startTask` bump must happen *before* the new task captures any gen (it does —
+    tasks capture per-call in `pathTo`).
+
 ## 2026-07-03 — Jukebox: own feelings at play time + assigned record slots
 
 User direction: the lore/factoid shouldn't be recited every play — the bots should
