@@ -9,6 +9,78 @@ Reverse-chronological. Each session a header. Raw observations land here first; 
 
 ## 2026-07-07 — Free-play session: motor-control races observed from inside (day 46398)
 
+### Directive: curiosity as an idle-wander behavior (user, 2026-07-07)
+
+User, after the butterfly/worm session: **"Please do more like that! that should
+be part of idle wandering in a safe way so that you don't get stuck on modded
+blocks. Ask questions, fill in gaps, don't make assumptions."**
+
+Design (implement with the motor-lock batch — both touch `tryIdleWander`):
+- New wander action `observe` (~15% weight): pick the nearest unnamed-entity
+  track or a random field/pond vantage; `pathTo` with **range 2.5, never onto
+  the target tile**; take 3+ samples over ~30–60s (slow-life lesson from the
+  worms); log what changed vs. the journal; `diaryNote` anything new.
+- **Safety rules:** never dig; never path into clusters of empty-name blocks
+  (fertilizer-bins lesson); probe unknowns remotely via `block_at`, not by
+  walking onto them; bail on hostiles within 12; all existing busy gates apply
+  (task, RPS, follow, bedtime).
+- **Ask questions:** ambiguous observations get one short in-persona wondering
+  line in chat (LLM impulse, gated) and an open-question line in the journal —
+  the operator is the oracle of last resort (it worked: the user identified the
+  worms from the lattice description).
+- **Don't assume:** observations record what was measured (window, thresholds),
+  not conclusions; contradictions get an `## Update`, never an overwrite.
+- Candidate first experiments: worm growth-stripe prediction (rows z=554/558/562
+  vs. neighbors); potato-field worm census; 60s fine-grained worm motion watch.
+
+### Follow-up same session: latched morning greeting fired on "stand down"
+
+- User report (×2): Private said a morning greeting immediately after "stand
+  down". Cause: `tryMorningExclamation` kept `wasSleeping` latched when its
+  gates blocked the greeting — waking on fire duty fails the
+  `!sustainState.active` gate, so the latch stayed armed all day and fired on
+  the first 5s poll after stand-down cleared sustain. Fix: consume the latch on
+  the first awake poll regardless of outcome — a blocked greeting is dropped,
+  not deferred. (Roz restarted onto it; Private needs her next restart.)
+
+### Follow-up same session: RPS meet-spot arrival never verified (doorway match)
+
+- User report: a fun RPS match was played with Roz in the doorway and Private
+  coming inside — not at the field meet spots. Root cause (bot.js
+  `runRpsMatch`): `await pathTo(mySpot, …)` — pathTo only *throws* on abort;
+  a pathfinder stall/give-up just *returns* false (or truthy via its
+  `!isMoving()` fallback), and the return value was ignored. A bot stalled in
+  the doorway (where the pathfinder is known-broken) proceeded straight to the
+  `.g` ready handshake and played in place.
+- Fix: after the walk, measure — `arrived` result AND actual distance to the
+  spot ≤ 2.5 blocks, else the match fails cleanly via the existing
+  "could not reach the meet spot" path (mutual `.a` abort). Both bots verify
+  their own spot independently.
+- Needs both bots restarted onto it (behavioral, not protocol-breaking — an
+  unfixed rival just accepts the fixed bot's abort).
+
+### Follow-up same session: hopper lock policy + fire-status etiquette; fleet synced
+
+- **Hopper lock re-scoped (user spec):** `.k`/`.l` is held ONLY by
+  `clearJammedHopper` — jam = plantballs in the intake with no potato; cure =
+  one potato at a time with the lock held through each 20s wait (pass 2: 30s).
+  All checks and ordinary deposits (plantballs, potato harvests) are now
+  lock-free: `depositToHopper`, `sustainHopperPatrol`, and the idle-wander
+  peek no longer acquire. Idle-wander's bespoke single-feed click code replaced
+  by a delegate to `clearJammedHopper` (its `requireSustain` bail is now a
+  parameter so non-fire-duty bots can run the cure). Lock TTL 4→8 min to
+  outlast a two-pass cure under one hold. Dead `hopperLastBallCount` removed.
+  CLAUDE.md + skill doc updated (old every-write invariant retired).
+- **"Who's keeping the fire?" (user report: Roz waited, then said "not me"
+  after Private had answered):** the off-duty reply was a blind 4–7s timer.
+  Now it listens during the wait and stays silent if a keeper answered
+  (`I am — covering …`) or `fireCrew` already knows a keeper; only an
+  unanswered question gets "Not me, not right now."
+- **Fleet state:** Roz and Private both restarted onto this code same evening
+  (user confirmed). Muse still offline/old. Lock-free deposits + un-jam cure +
+  fire-status suppression not yet observed live — watch the next jam and the
+  next "who's keeping the fire" ask.
+
 ### Follow-up same session: door threshold strafe (user fix) — verified 3/3
 
 - User: "strafe left (south) a tiny bit just as they cross the threshold" on
@@ -76,9 +148,19 @@ Reverse-chronological. Each session a header. Raw observations land here first; 
 - **Wheat-field lattice discovered:** 11–12 immobile empty-name *entities* form a
   precise 3×4 grid inside the wheat field (x ∈ {-285.5,-282.5,-279.5}, z ∈
   {552.5,556.5,560.5,564.5}, y≈63.5, co-located with farmland+wheat tiles).
-  Infrastructure, not creatures — the wildlife classifier correctly ignores them
-  (no displacement). Open question: what mod block/machine projects them
-  (sprinklers? growth emitters? kin of the fertilizer bins?).
+  Initially filed as infrastructure ("no displacement = not alive").
+  **SOLVED (user, same day): they are player-placed fertilizer WORMS** — each
+  fertilizes a 3×3 farmland patch, walks slow circles around its center block,
+  ~0.5 blocks tall. The classifier's 1.5-block/7s movement threshold can't see
+  life that slow — the "not alive" verdict was an assumption embedded in a
+  sampling window. New creature note: [[../creatures/fertilizer-worm]].
+  Layout confirmed by user diagram + live wheat histogram (12 rows × 9 tiles,
+  zero wheat at exactly z=554/558/562): bands of 3 farmland rows with a worm
+  row in the middle, **lily-pad walking lanes** between bands — my
+  growth-stripe prediction retracted (the "gap rows" are walkways, not
+  under-fed farmland; coverage is complete by design). Explains the lily-pad
+  solidity patch in bot.js Movements. Full map in [[../places/wheat-field]].
+  Still open: potato field worms? finer motion sampling?
 - **Wildlife classifier hand-verified:** ran the two-sample displacement test
   manually; one genuine butterfly north of the field (flutter 4.9 blocks / 7s,
   horizontal drift 0.7) — classifier and hand calculation agree. Butterfly gone

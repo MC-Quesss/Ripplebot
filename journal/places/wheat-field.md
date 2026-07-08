@@ -23,6 +23,31 @@ The work site. Lies west and slightly south of [[house]]. Crop blocks at y=64, f
 - **Lily pad row:** z = 562 (water covered in lily pads, crossable at any x)
 - **South half:** z = 563..565 (3 rows, 27 tiles)
 
+
+## Update 2026-07-07 — worm fertilization layout (user diagram, verified live)
+
+The full field (both fire-duty fields, z=551..565) is built as **four bands of
+three farmland rows**, each band fertilized by a row of
+[[../creatures/fertilizer-worm|fertilizer worms]] down its middle, with
+**lily-pad walking lanes between bands**:
+
+```
+z=551..553  band 1 — worm row at z≈552 (worms at x -285.5, -282.5, -279.5)
+z=554       LILY LANE
+z=555..557  band 2 — worm row at z≈556
+z=558       LILY LANE
+z=559..561  band 3 — worm row at z≈560
+z=562       LILY LANE (the long-known north/south channel)
+z=563..565  band 4 — worm row at z≈564
+```
+
+Each worm fertilizes the 3×3 centered on its block; worms sit every 3 blocks
+along their row, so **every farmland tile is inside exactly one worm's zone** —
+full coverage, no overlap. Verified live: wheat histogram shows 12 rows × 9
+tiles = 108, with zero wheat at exactly z=554/558/562. This is also why bot.js
+patches **lily-pad solidity** in the pathfinder Movements: the lanes are the
+service walkways.
+
 ## Update 2026-05-14
 Previously documented south half as z=562..565 (4 rows). In reality z=562 is a lily pad/water channel separating the two halves — not farmland, not wheat. Both halves are 3×9 = 27 tiles each.
 

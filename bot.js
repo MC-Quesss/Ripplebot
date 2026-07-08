@@ -654,9 +654,15 @@ async function tryAutoSleep () {
 }
 function tryMorningExclamation () {
   if (!wasSleeping) return
+  if (bot.isSleeping) return
+  // Consume the latch on the FIRST awake poll, whatever the outcome. A blocked
+  // greeting (task resuming, fire duty) is dropped, not deferred — deferring
+  // let it sit armed all day and fire the moment "stand down" cleared
+  // sustainState (user report 2026-07-07: Private said good morning right
+  // after stand-down, twice). A morning greeting is perishable.
+  wasSleeping = false
   const t = bot.time || {}
-  if (!bot.isSleeping && t.isDay && (t.timeOfDay ?? 0) < 11500 && !activeTask.name && !sustainState.active) {
-    wasSleeping = false
+  if (t.isDay && (t.timeOfDay ?? 0) < 11500 && !activeTask.name && !sustainState.active) {
     bot.chat(pickLine(withPersonaSlot(MORNING_EXCLAMATION_LINES, 'morningExclamation')))
     logEvent('morning', 'morning exclamation')
   }
@@ -3909,7 +3915,17 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
     try {
       if (insideHouse()) await runGoOutside(undefined, { skipTimeCheck: true })
       if (insideHouse()) throw new Error('still inside house after runGoOutside')
-      await pathTo(mySpot, 1, 15000)
+      const arrived = await pathTo(mySpot, 1, 15000)
+      // pathTo RETURNS false (or truthy after a mere pathfinder stall) rather
+      // than throwing — unchecked, a doorway-stalled bot plays the match
+      // wherever it stands (user report 2026-07-07: match played in the
+      // doorway). Nature doesn't care that we *sent* the goal: verify we are
+      // actually standing on the meet spot before signalling ready.
+      const pNow = bot.entity?.position
+      const distToSpot = pNow ? Math.hypot(pNow.x - (mySpot.x + 0.5), pNow.z - (mySpot.z + 0.5)) : Infinity
+      if (!arrived || distToSpot > 2.5) {
+        throw new Error(`not at meet spot (arrived=${arrived}, dist=${distToSpot.toFixed(1)})`)
+      }
     } catch (e) {
       rpsReadyResolve = null
       logEvent('rps', `failed to reach meet spot: ${e.message}`)
@@ -4608,7 +4624,7 @@ async function runWheatCycle (harvestHalf) {
   // go play now; housekeep sweeps whatever is in our pockets afterwards.
   if (sustainRpsInterruptPending()) {
     logEvent('sustain', 'wheat cycle paused — RPS challenge waiting')
-    return true
+    return 'rps-bail'
   }
 
   // Eat if hungry — auto-eat can't fire during window ops, so give it a
@@ -4853,11 +4869,19 @@ async function runSustainFarm (user) {
           // Recoverable try — path failures, door snags etc. skip this cycle
           // and retry next poll. Only AbortError + inactive kills the loop.
           try {
-            const finished = await runWheatCycle(harvestHalf)
-            for (const h of dueHalves) sustainState.pendingWork.delete(h)
-            if (!finished) break
-            sustainState.lastCycleDay = bot.time?.day ?? -1
-            diaryNote(`completed fire-duty cycle ${sustainState.cycles} (${harvestHalf})`)
+            const result = await runWheatCycle(harvestHalf)
+            if (result === false) break // loop went inactive mid-cycle
+            if (result === 'rps-bail') {
+              // The harvest paused at a checkpoint for a waiting RPS challenge
+              // and marked its remainder as pendingWork. Leave that flag set so
+              // whoever ends up owning this half finishes it regardless of the
+              // now-sub-85% maturity — clearing it here strands a half-cut field.
+              logEvent('sustain', `wheat cycle bailed for RPS — ${harvestHalf} remainder left pending`)
+            } else {
+              for (const h of dueHalves) sustainState.pendingWork.delete(h)
+              sustainState.lastCycleDay = bot.time?.day ?? -1
+              diaryNote(`completed fire-duty cycle ${sustainState.cycles} (${harvestHalf})`)
+            }
           } catch (e) {
             if (e.name === 'AbortError' && !sustainState.active) {
               logEvent('sustain', `cycle ${sustainState.cycles} abort + inactive — breaking loop`)
