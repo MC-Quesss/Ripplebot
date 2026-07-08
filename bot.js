@@ -4882,6 +4882,12 @@ async function runSustainFarm (user) {
         duties = myDuties() // the match may have moved duties around (.q handoff)
       }
 
+      // Refresh duties unconditionally before Rung 4 — a role change (solo→split)
+      // during an earlier await (potato cycle, RPS) leaves the captured `duties`
+      // stale when the RPS block's condition is false (e.g. stale duties still
+      // has 'potatoes'). Without this, the bot can harvest a field it no longer owns.
+      duties = myDuties()
+
       // Rung 4 (bonus): wheat — held halves at >=85%, or acquired mid-work
       // via .q with the remainder still standing. One cycle per poll, then
       // re-evaluate the ladder from the top.
