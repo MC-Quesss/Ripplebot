@@ -60,6 +60,7 @@ trailing core — `* Roz glances north — all golden. (.c n)`. One core per lin
 | `.t<round> @<tick>` | RPS chant: round + reveal tick on the shared server clock |
 | `shoots rock (.t<round>)` | round-tagged throw |
 | `.a` | RPS mutual abort |
+| `.j` / `.m` | **fun RPS** (no stakes, bot-vs-bot) challenge / accept — DISTINCT codes like `.d`/`.e`. A single `.j` for both deadlocked two simultaneous challengers ("rival never signalled ready"; observed 2026-07-08). Dual-challenge alphabetical tiebreak: lower stays challenger, higher withdraws into acceptor |
 
 ### Wellness checks (dead-keeper backstop)
 
@@ -82,6 +83,25 @@ bot mid-harvest pauses at its next 10-tile checkpoint (challenger waits 45s).
 (`pendingWork` bypasses the 85% gate once). Failed matches: in-character "oh
 dear" + jittered 2–5 min escalating backoff, then replay. 10 rounds without a
 winner = "call it a wash", rematch in ~30–60s.
+
+### Fun RPS (no stakes, just play) — codes `.j` / `.m`
+
+Separate from potato-duty RPS: any *idle* bot may challenge a nearby bot to a
+friendly best-of-3 — ambient (~15% on the idle timer) or on a human's "play a
+game" / "play RPS" (the `play_rps` reflex + intent, added 2026-07-07). Only idle
+bots accept (`!activeTask && idleWander`); a bot on fire duty declines. Challenge
+is `.j`, acceptance is `.m` — kept DISTINCT for the same reason duty RPS uses
+`.d`/`.e`: when both were `.j`, two bots told to play at once each read the
+other's `.j` as an acceptance, both proceeded as challenger, and the ready
+handshake deadlocked ("rival never signalled ready"). Observed live 2026-07-08
+when two humans told both bots to play at once — the `play_rps` command made the
+collision trivial to hit (ambient timing had masked it before). Fixed 2026-07-08
+(commit `2c016a2`): the `.m` accept code + alphabetical dual-challenge tiebreak
+(lower name stays challenger, higher withdraws into acceptor) + the challenger
+now sends `.j` *before* its LLM flavor line (was after, leaving a ~4s window
+where a simultaneous rival's challenge was ignored). **PROTOCOL-BREAKING — all
+bots must run `2c016a2` together;** a bot still on `.j`-only will talk past the
+new `.m`. `confirmed: false` until a live simultaneous-challenge test passes.
 
 ## Update — 2026-07-03 overhaul (supersedes the 2026-06-02 description)
 
