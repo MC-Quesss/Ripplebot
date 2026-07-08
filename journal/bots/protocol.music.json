@@ -1,0 +1,40 @@
+{
+  "record_mellohi": {
+    "timesHeard": 5,
+    "lastHeardDay": 46134,
+    "lastHeardAt": "2026-07-05T09:57:30.300Z",
+    "notes": []
+  },
+  "record_cat": {
+    "timesHeard": 4,
+    "lastHeardDay": 46419,
+    "lastHeardAt": "2026-07-08T02:22:29.950Z",
+    "notes": []
+  },
+  "record_chirp": {
+    "timesHeard": 5,
+    "lastHeardDay": 46128,
+    "lastHeardAt": "2026-07-05T08:53:05.991Z",
+    "notes": []
+  },
+  "record_far": {
+    "timesHeard": 4,
+    "lastHeardDay": 46170,
+    "lastHeardAt": "2026-07-05T16:22:22.179Z",
+    "notes": []
+  },
+  "record_mall": {
+    "timesHeard": 3,
+    "lastHeardDay": 46149,
+    "lastHeardAt": "2026-07-05T12:38:08.236Z",
+    "notes": []
+  },
+  "record_wait": {
+    "timesHeard": 5,
+    "lastHeardDay": 46173,
+    "lastHeardAt": "2026-07-05T16:54:28.177Z",
+    "notes": [
+      "Oh dear, this song makes me feel rather melancholy, though I suppose we must wait for the harvest to begin."
+    ]
+  }
+}

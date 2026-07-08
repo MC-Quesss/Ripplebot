@@ -38,19 +38,47 @@ nets that in a 7s window, so the classifier files worms as "decoration/not
 alive." **They are alive — at a timescale the sampling can't see.** Lesson for
 observation procedures: transience thresholds embed assumptions about speed.
 
+## Update 2026-07-07 — potato field AND rooftop garden confirmed (operator survey)
+
+**The potato field DOES have its own worm grid.** At least 14 worms at y=62.5
+(farmland at y=62), covering a much larger area than the documented
+`POTATO_BOUNDS`. The grid has two clusters:
+
+- **Western cluster**: x ∈ {-285.5, -283.5}, z ∈ {580.5, 583.5, 586.5, 589.5}
+  (x-spacing 2, z-spacing 3). First row at z=577.5 shifted west to
+  x ∈ {-286.5, -284.5}.
+- **Eastern column**: x = -280.5, z ∈ {581.5, 584.5, 586.5, 588.5} (spacing
+  varies: 3, 2, 2 — possibly incomplete scan).
+
+Unlike the wheat field's perfect 3×4 grid, the potato worm layout is
+**asymmetric** — possibly because the patch is irregularly shaped along the
+pond shoreline, or because the farmland extends further east (to x=-280) than
+previously documented.
+
+**Rooftop garden**: 2 worms at (-267.5, 69.5, 571.5) and (-267.5, 69.5, 574.5)
+fertilize a 2×6 farmland strip on top of the [[../places/house|house]] at y=69.
+Three unknown modded crop types (block IDs 4701, 4727, 4726) grow there.
+See [[../places/rooftop-garden]].
+
 ## Open questions
 
 - ~~Growth-stripe prediction (rows z=554/558/562 under-fertilized)~~ —
   **RETRACTED same day**: those rows are lily-pad walkways, not farmland; there
   is no wheat there to lag. Coverage is complete by design.
-- Does the potato field have its own worm grid? (Unchecked.)
+- ~~Does the potato field have its own worm grid?~~ — **YES**, confirmed
+  2026-07-07. At least 14 worms; layout above.
 - Can slow circling be detected at all from entity packets (finer than the
   0.5-precision positions `nearby_entities` reports), e.g. 60s multi-sample
   variance?
 - Are these the same mod family as the fertilizer bins (block 3995 /
   companion 1458) from the [[../observations/_log|fertilizer bins incident]]?
+- What are rooftop crop types 4701/4727/4726? Mod identity unknown.
+- Are there more potato worms further south (z>589) or at x=-288.5 (west
+  edge)?
 
 ## Related
 
 - [[../observations/_log]] — 2026-07-07 lattice observation + identification
-- [[../places/wheat-field]] (if/when noted) — worm grid coordinates above
+- [[../places/wheat-field]] — wheat worm grid coordinates
+- [[../places/rooftop-garden]] — rooftop garden worm pair + unknown crops
+- [[../places/potato-patch]] — potato field (farmland extends beyond documented bounds)

@@ -10033,6 +10033,15 @@ function handleCommand (cmd) {
         tossed: trash.map(i => ({ name: i.name, count: i.count }))
       })).catch(e => ({ ok: false, error: e.message }))
     }
+    case 'toss_slot': {
+      const slot = args?.slot
+      if (slot == null) return { ok: false, error: 'slot required' }
+      const item = bot.inventory.slots[slot]
+      if (!item) return { ok: false, error: `slot ${slot} is empty` }
+      return bot.tossStack(item).then(() => ({
+        ok: true, tossed: { name: item.name, count: item.count, slot }
+      })).catch(e => ({ ok: false, error: e.message }))
+    }
     case 'inventory': {
       const items = bot.inventory.items().map(i => ({ name: i.name, count: i.count, slot: i.slot }))
       const held = bot.heldItem ? { name: bot.heldItem.name, count: bot.heldItem.count } : null

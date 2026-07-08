@@ -17,7 +17,7 @@ A network of notes mapping the known parts of this world. Each note is a single 
 - **[[procedures/]]** — multi-step routines (exit house, sleep, [[procedures/right-click-harvest|right-click harvest]], [[procedures/harvest-potatoes-right-click|potato harvest]], [[procedures/stash-wheat|stash wheat]], [[procedures/deposit-named|deposit named]], [[procedures/bake-potatoes|bake potatoes]], [[procedures/project-bench-crafting|3×3 bench crafting]], [[procedures/shear-sheep|shear sheep]], [[procedures/tell-joke|jokes]], [[procedures/emotes|emotes]], [[procedures/idle-autonomy-toggle|stand down / chill]], [[procedures/claude-brain-mode|Claude brain mode]], [[procedures/storytelling-nights|storytelling nights]], [[procedures/exploration|exploration]])
 - **[[creatures/]]** — entities encountered, hostility, behavior, [[creatures/named-sheep|named sheep (Frue & Fluffy)]]
 - **[[observations/]]** — session-by-session journal entries; raw notes that may later promote to canonical entries
-- **[[bots/]]** — each bot's own first-person diary, written **by the bot itself** (via its LLM voice) once per in-game day at bedtime; one file per persona, newest entry last
+- **[[bots/]]** — each bot's own first-person diary, written **by the bot itself** (via its LLM voice) once per in-game day at bedtime; one file per persona, newest entry last. Also includes the [[bots/operator|operator's journal]] (Claude's own observations)
 
 ## Conventions
 
@@ -35,6 +35,7 @@ A network of notes mapping the known parts of this world. Each note is a single 
 - [[places/wheat-field]] — primary work site
 - [[places/potato-patch]] — secondary work site
 - [[places/water-hazard-west-of-potatoes]] — oval pond west of the potato patch, keep out
+- [[places/rooftop-garden]] — discovered 2026-07-07; 2×6 modded crop garden on the house roof
 - [[procedures/right-click-harvest]] — current main loop (wheat)
 - [[procedures/harvest-potatoes-right-click]] — confirmed for potatoes (single-tile)
 - [[recipes/bread]] — first recipe learned
