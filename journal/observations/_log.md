@@ -9,6 +9,41 @@ Reverse-chronological. Each session a header. Raw observations land here first; 
 
 ## 2026-07-07 — Free-play session: motor-control races observed from inside (day 46398)
 
+### Bug: RPS-bail strands a half-harvested wheat field (diagnosed + fix staged, 2026-07-07)
+
+Two-bot fire duty (Roz=south, Private=north). Roz began the south wheat cycle at
+100% mature, bailed at tile 10 for a pending RPS challenge (the correct
+`sustainRpsInterruptPending()` path), and marked the south remainder as
+`pendingWork` so it would be finished later regardless of maturity. Then the
+field sat stranded at 81% (44/54 mature), never re-harvested.
+
+**Root cause:** the Rung-4 caller in `runSustainFarm` cleared `pendingWork` for
+every harvested half *unconditionally* right after `runWheatCycle` returned —
+including when the cycle bailed early for RPS. Bail and completion both returned
+`true`, so the caller couldn't tell them apart and erased the flag the bail had
+just set. With `pendingWork` empty and maturity now <85%, Rung 4's gate
+(`maturePct >= 85 || pendingWork.has(half)`) stayed false forever. A half only
+recovers once its replanted tiles regrow past 85% — a full cycle with the
+already-mature tiles sitting overripe.
+
+Aggravating factor (separate, self-healing): the Roz↔Private RPS handshake was
+flaky ("challenge not accepted" / "rival never signalled ready"), usually
+because one bot was mid-hopper-un-jam (20s waits) when challenged. It recovers
+via the 2–6 min backoff, so potatoes were slow (99%→2%) but not permanently
+starved.
+
+**Fix (staged in `bot.js`, not yet deployed):** `runWheatCycle` now returns the
+sentinel `'rps-bail'` instead of `true` when it pauses for RPS; the Rung-4 caller
+clears `pendingWork` and records completion **only** on a genuine finish, and
+leaves `pendingWork` intact on a bail. Not protocol-breaking (no chat-grammar
+change) — safe to deploy to Roz alone; Muse/Private interoperate on old code.
+
+Open: verify on the next RPS-bail after a restart onto fixed code — expect a
+`wheat cycle bailed for RPS — <half> remainder left pending` log line, non-empty
+`pendingWork`, then that half actually harvested. Consider hardening the RPS
+handshake (don't challenge a bot known to be holding the hopper lock).
+See [[keep-the-fire-going]].
+
 ### Directive: curiosity as an idle-wander behavior (user, 2026-07-07)
 
 User, after the butterfly/worm session: **"Please do more like that! that should
