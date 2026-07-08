@@ -1,7 +1,7 @@
 'use strict'
 
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.BOT_API_KEY || ''
-const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-opus-4-6'
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-opus-4-8'
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages'
 const CLAUDE_TIMEOUT_MS = 30_000
 
@@ -33,7 +33,7 @@ function parseJson (text) {
   try { return JSON.parse(s) } catch { return null }
 }
 
-async function brainChat ({ systemPrompt, userMessage, chatHistory = [], maxTokens = 1024, temperature = 0.8 }) {
+async function brainChat ({ systemPrompt, userMessage, chatHistory = [], maxTokens = 1024 }) {
   if (!CLAUDE_API_KEY) return null
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), CLAUDE_TIMEOUT_MS)
@@ -52,7 +52,6 @@ async function brainChat ({ systemPrompt, userMessage, chatHistory = [], maxToke
       body: JSON.stringify({
         model: CLAUDE_MODEL,
         max_tokens: maxTokens,
-        temperature,
         system: systemPrompt,
         messages,
       }),
@@ -67,7 +66,12 @@ async function brainChat ({ systemPrompt, userMessage, chatHistory = [], maxToke
     }
     healthy = true
     const data = await res.json()
-    const text = data?.content?.[0]?.text
+    if (data?.stop_reason === 'refusal') {
+      log('claude', 'response refused by model (stop_reason=refusal)')
+      return null
+    }
+    // Newer models can lead with a thinking block — pick the text block, not [0].
+    const text = data?.content?.find(b => b.type === 'text')?.text
     const startMs = Date.now()
     const parsed = parseJson(text)
     if (!parsed) {

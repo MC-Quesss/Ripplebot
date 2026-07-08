@@ -2154,11 +2154,18 @@ const EXPRESSIVE_COOLDOWN_MS = {
 let lastExpressiveAt = 0
 const lastExpressiveByKind = {}
 
+// Nature/flavor chatter must wait out ALL chat, not just other flavor lines.
+// A burst of game or conversation traffic doesn't touch lastExpressiveAt, so
+// without this a squirrel comment can land seconds after a game (observed
+// 2026-07-07). These kinds additionally require ~30s of true silence.
+const EXPRESSIVE_WAIT_FOR_QUIET = new Set(['ambient', 'wildlife', 'squirrel', 'butterfly', 'music'])
+
 function expressiveGateOpen (kind) {
   const now = Date.now()
   const gap = EXPRESSIVE_GLOBAL_GAP_BY_KIND[kind] ?? EXPRESSIVE_GLOBAL_GAP_MS
   if (now - lastExpressiveAt < gap) return false
   if (now - (lastExpressiveByKind[kind] || 0) < (EXPRESSIVE_COOLDOWN_MS[kind] ?? 0)) return false
+  if (EXPRESSIVE_WAIT_FOR_QUIET.has(kind) && now - lastChatActivityAt < EXPRESSIVE_GLOBAL_GAP_MS) return false
   return true
 }
 
@@ -9375,7 +9382,10 @@ function looksLikeBot (username) {
 // sees everything said during the wait and PASSes if the topic moved on.
 const BOT_CHAT_DEPTH = Math.max(0, parseInt(process.env.BOT_CHAT_DEPTH || '0', 10) || 0)
 const BOT_EXCHANGE_RESET_MS = 60_000 // silence that ends an exchange
-const BOT_EXCHANGE_START_COOLDOWN_MS = 90_000 // breather before the next one
+// Breather before Roz opens a fresh bot-to-bot exchange. Raised 90s→5min
+// (2026-07-08) to keep two LLM bots from constantly answering each other's idle
+// musings — the chat was too busy. Env-tunable for live calibration.
+const BOT_EXCHANGE_START_COOLDOWN_MS = Math.max(0, parseInt(process.env.BOT_EXCHANGE_START_COOLDOWN_MS || '300000', 10) || 300000)
 let botExchange = { partner: null, turns: 0, lastAt: 0 }
 let lastBotExchangeStartAt = 0
 
