@@ -3886,6 +3886,33 @@ async function runFunRpsAcceptor (rival) {
   return runRpsMatch(rival, false, { forFun: true })
 }
 
+// Human-initiated fun RPS ("play a game", "play RPS"). Shared by the reflex
+// handler and the router intent. runFunRpsChallenger bails silently on its
+// guards (indoors, bedtime, on duty, no rival); here we check the same
+// conditions up front so a direct request gets a spoken reason, and we step
+// outside first (safely) so an indoor ask actually starts a match.
+async function startFunRps (user) {
+  if (user) facePlayer(user).catch(() => {})
+  if (isBedtime()) { bot.chat('Not now — it is nearly bedtime. A game in the morning?'); return }
+  if (rpsFunBusy || rpsState) { bot.chat('Already mid-match — watch this one first.'); return }
+  if (sustainState.active && !sustainState.potatoRole) {
+    bot.chat('I am on fire duty right now — have me stand down first and I will play.')
+    return
+  }
+  if (!rpsFunRivalName()) { bot.chat('No other unit nearby to play against.'); return }
+  if (insideHouse()) {
+    try {
+      await runGoOutside('play RPS')
+    } catch (e) {
+      logEvent('rps-fun', `could not get outside to play: ${e.message}`)
+      bot.chat('I could not get outside to play just now.')
+      return
+    }
+  }
+  const started = await runFunRpsChallenger()
+  if (!started) bot.chat('Could not get a game going — maybe next time.')
+}
+
 async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
   // Each bot goes to a different spot so they face each other.
   // Compare real usernames so both bots agree on who goes where.
@@ -8271,6 +8298,11 @@ const CHAT_HANDLERS = [
       }, 30000)
     },
   },
+  {
+    name: 'play_rps',
+    pattern: /\b(play (a |another )?game|(play|do|start) (some )?(rps|rock[ -]?paper[ -]?scissors)|rock[ -]?paper[ -]?scissors|up for a game)\b/i,
+    handler: (user) => startFunRps(user),
+  },
 ]
 
 let nickRe = null
@@ -8374,6 +8406,10 @@ const CHAT_INTENTS = {
   sleep: { hint: 'go to bed now', run: () => { bot.chat('Heading to bed.'); return tryAutoSleep() } },
   check_furnace: { hint: 'report what is cooking in the furnace', run: () => reportFurnace() },
   look_at_sun: { hint: 'look up at the sun and gaze for a moment', run: () => lookAtSun() },
+  play_rps: {
+    hint: 'play a game / play rock-paper-scissors with another bot for fun (no stakes)',
+    run: (user) => startFunRps(user),
+  },
   follow: {
     hint: 'start following the speaker (or args.player if they name someone else)',
     run: (user, args) => {

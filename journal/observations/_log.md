@@ -9,6 +9,20 @@ Reverse-chronological. Each session a header. Raw observations land here first; 
 
 ## 2026-07-07 — Free-play session: motor-control races observed from inside (day 46398)
 
+### New ability: "play a game" / "play RPS" triggers fun RPS (staged, 2026-07-07)
+
+The bot-vs-bot fun RPS routine (`runFunRpsChallenger`, no stakes) was previously
+reachable only via ambient impulse (~15% idle chance) or the `rps_fun` ctl
+action. Added a human trigger: reflex handler `play_rps` (patterns "play a
+game", "play RPS", "rock paper scissors", "up for a game") plus a matching
+`play_rps` router intent for paraphrases. Both call a shared `startFunRps(user)`
+helper that respects the routine's guards but *speaks* the reason it can't play
+(bedtime, already mid-match, on fire duty, no other bot nearby) instead of a
+silent no-op, and steps outside first (safely, via `runGoOutside`) so an indoor
+request still starts a match. Fun RPS is bot-vs-bot only — a human asking it
+sends the bot to challenge another nearby bot, not the human. Staged in
+`bot.js`, live on next restart. See [[keep-the-fire-going]].
+
 ### Bug: RPS-bail strands a half-harvested wheat field (diagnosed + fix staged, 2026-07-07)
 
 Two-bot fire duty (Roz=south, Private=north). Roz began the south wheat cycle at
