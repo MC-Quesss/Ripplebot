@@ -3742,7 +3742,8 @@ let rpsState = null // { round, myThrow, rival, resolve }
 let rpsChallengeResolve = null // resolve function for incoming .d acceptance
 let rpsAccepted = null // set to challenger's name when we receive a .d challenge
 let rpsReadyResolve = null // resolve function for rival's .g ready signal
-let rpsFunChallengeResolve = null // resolve for fun-RPS acceptance
+let rpsFunChallengeResolve = null // resolve for fun-RPS acceptance (.m)
+let rpsFunWithdrewTo = null // dual-challenge tiebreak loser: name we join as acceptor
 let rpsFunBusy = false // prevents cascade: only one fun-RPS at a time
 let rpsFunLastJ = 0 // timestamp of last .j seen — echo suppression
 let rpsCurrentRival = null // set for the duration of a match — routes .t/.a lines
@@ -3860,18 +3861,29 @@ async function runFunRpsChallenger () {
   if (!pick) { logEvent('rps-fun', 'no bot nearby — skipping'); return null }
   rpsFunBusy = true
   logEvent('rps-fun', 'challenging nearby bots for fun')
+  // Send the machine challenge (.j) and arm the acceptance resolver FIRST, so a
+  // rival who challenges at the same instant sees our .j and both sides run the
+  // same dual-challenge tiebreak. (Previously the LLM flavor line ran first,
+  // leaving a ~4s window where a simultaneous rival's .j was ignored.)
+  const acceptPromise = new Promise(resolve => { rpsFunChallengeResolve = resolve })
+  bot.chat('/me .j')
   const said = await impulseExpressive('rps',
     'You want to play a quick game of rock-paper-scissors with one of the other bots — just for fun, no stakes. Challenge them in one short playful sentence. Do not use a specific name.',
     { skipGate: true }
   ).catch(() => false)
   if (!said) bot.chat('Anyone up for rock-paper-scissors?')
-  const acceptPromise = new Promise(resolve => { rpsFunChallengeResolve = resolve })
-  bot.chat('/me .j')
   const accepted = await Promise.race([
     acceptPromise,
     sleep(15000).then(() => false)
   ])
   rpsFunChallengeResolve = null
+  if (accepted === 'withdrew') {
+    // Dual challenge — the rival won the alphabetical tiebreak. Drop our
+    // challenge and join their game as the acceptor: no re-challenge, no fail.
+    rpsFunBusy = false
+    const winner = rpsFunWithdrewTo; rpsFunWithdrewTo = null
+    return winner ? runFunRpsAcceptor(winner) : null
+  }
   if (!accepted) {
     rpsFunBusy = false
     logEvent('rps-fun', 'no one accepted — oh well')
@@ -3888,9 +3900,14 @@ async function runFunRpsChallenger () {
 
 async function runFunRpsAcceptor (rival) {
   if (isBedtime()) { logEvent('rps-fun', 'declining — bedtime'); return null }
+  rpsFunBusy = true
   logEvent('rps-fun', `accepting ${rival}'s fun RPS challenge`)
-  bot.chat('/me .j')
-  return runRpsMatch(rival, false, { forFun: true })
+  bot.chat('/me .m') // .m = fun-RPS accept (distinct from the .j challenge)
+  try {
+    return await runRpsMatch(rival, false, { forFun: true })
+  } finally {
+    rpsFunBusy = false
+  }
 }
 
 // Human-initiated fun RPS ("play a game", "play RPS"). Shared by the reflex
@@ -4419,12 +4436,21 @@ function trackFireCoordination (username, message) {
   if (code === 'k') { trackLockClaim(hopperLock, name, username); return }
   if (code === 'l') { trackLockRelease(hopperLock, name, username); return }
   if (code === 'j') {
+    // .j is ONLY a fun challenge now; acceptance is .m (mirrors the .d/.e fix
+    // that killed the duty-RPS echo chamber). If we're already challenging when
+    // another .j lands, both bots challenged at once — alphabetical tiebreak:
+    // the lower name stays challenger, the higher withdraws into acceptor.
     if (rpsFunChallengeResolve) {
-      rpsFunLastJ = Date.now()
-      logEvent('rps-fun', `${username} accepted our fun challenge`)
-      const resolve = rpsFunChallengeResolve
-      rpsFunChallengeResolve = null
-      resolve(name)
+      const me = (bot.username || '').toLowerCase()
+      if (me < name.toLowerCase()) {
+        logEvent('rps-fun', `dual fun challenge with ${username} — we win tiebreak, awaiting their accept`)
+      } else {
+        logEvent('rps-fun', `dual fun challenge with ${username} — withdrawing (they win tiebreak)`)
+        rpsFunWithdrewTo = name
+        const resolve = rpsFunChallengeResolve
+        rpsFunChallengeResolve = null
+        resolve('withdrew')
+      }
     } else if (!activeTask.name && !rpsState && !rpsFunBusy && idleWanderEnabled) {
       const now = Date.now()
       if (now - rpsFunLastJ < 5000) {
@@ -4450,11 +4476,20 @@ function trackFireCoordination (username, message) {
           return
         }
       }
-      rpsFunBusy = true
       logEvent('rps-fun', `${username} challenged us to fun RPS — accepting`)
-      runFunRpsAcceptor(name)
-        .catch(e => logEvent('rps-fun', `acceptor error: ${e.message}`))
-        .finally(() => { rpsFunBusy = false })
+      // runFunRpsAcceptor self-manages rpsFunBusy now.
+      runFunRpsAcceptor(name).catch(e => logEvent('rps-fun', `acceptor error: ${e.message}`))
+    }
+    return
+  }
+  if (code === 'm') {
+    // Fun-RPS acceptance of our .j challenge.
+    if (rpsFunChallengeResolve) {
+      rpsFunLastJ = Date.now()
+      logEvent('rps-fun', `${username} accepted our fun challenge`)
+      const resolve = rpsFunChallengeResolve
+      rpsFunChallengeResolve = null
+      resolve(name)
     }
     return
   }

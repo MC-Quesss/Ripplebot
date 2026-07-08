@@ -7,7 +7,46 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
-## 2026-07-07 — Free-play session: motor-control races observed from inside (day 46398)
+## 2026-07-08 — Crew session: brain upgrade, chat-volume tuning, south double-harvest (day 46399)
+
+Full three-bot crew present (Roz, Musebot, Rainbot6032/Private). Deployed a batch
+onto Roz via one restart (all internal, none chat-protocol-breaking):
+
+- **Claude brain → Opus 4.8 (DONE, verified live).** `claude.js`: default model
+  `claude-opus-4-6`→`claude-opus-4-8`, dropped `temperature` (400s on 4.7+),
+  hardened text extraction to find the text block (not `content[0]`, which can be
+  a thinking block), added `stop_reason==='refusal'` guard. `brain` ctl reports
+  `claude-opus-4-8`, healthy.
+- **Chat was too busy — two fixes.** (1) *Flavor gate ignored general chat.*
+  `expressiveGateOpen` only checked `lastExpressiveAt` (last flavor line), so a
+  squirrel/ambient comment could fire seconds after a game or conversation
+  (observed: squirrel 3s after an RPS match ended). Added `EXPRESSIVE_WAIT_FOR_QUIET`
+  (ambient/wildlife/squirrel/butterfly/music) requiring ~30s since `lastChatActivityAt`.
+  (2) *Bot-to-bot chatter.* `BOT_EXCHANGE_START_COOLDOWN_MS` 90s→5min (env-tunable)
+  so Roz stops answering Muse's every idle musing. NOTE: "wheat is breathing
+  easier" wasn't a musing — it was a genuine reply to Muse that landed 1s after a
+  game command by coincidence; the router/reply path is separate from the flavor gate.
+- **South double-harvest bug (root-caused, both ends).** Roz + Muse both harvested
+  the south field; north abandoned. From Roz's side: Roz correctly took south after
+  hearing Muse claim `.n` (north), but Muse *physically harvested south while its
+  chat claim stayed north* — a claim-vs-behavior divergence invisible to Roz (had
+  Muse announced `.s`, the alphabetical conflict-resolver would have made Roz yield).
+  Muse's operator fixed it from the inside (commit `6d75915`): stale `duties` set
+  surviving an `await` in `runSustainFarm`, so Rung 4 harvested a field no longer
+  owned. Cure: re-derive `duties = myDuties()` unconditionally before Rung 4. Pulled
+  into Roz. See [[fire-overhaul-pass2]].
+
+**Method limit surfaced:** multi-bot coordination bugs can only be half-diagnosed
+from Roz's single log — I see Roz's internals + the shared *chat*, but not Muse's
+role state. Full root-cause needs Muse's/Private's logs. The crew shares code via
+one git repo (`origin git@github.com:MC-Quesss/Ripplebot.git`); Muse's operator
+commits from a separate identity. Git fetch/push fails from Claude's sandbox (SSH,
+no key) — merge cached refs offline, the user drives pushes.
+
+Still uncommitted on Roz (user drives commits/pushes to share with crew): the
+flavor-gate fix + brain upgrade. Still pending from prior session:
+[[motor-lock-fix-pending]]. The RPS-bail `pendingWork` fix from this session is
+committed and live but not yet observed on a real bail.
 
 ### New ability: "play a game" / "play RPS" triggers fun RPS (staged, 2026-07-07)
 
