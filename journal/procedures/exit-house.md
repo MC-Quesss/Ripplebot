@@ -25,6 +25,20 @@ From [[../places/house-center]] to [[../places/outside-orientation]]. Pressure p
 - Stood on chest → walked off into wall. **Mitigation: y check.**
 - Used `control forward` with duration → wildly variable; sometimes died from suffocation in door. **Mitigation: never duration-based control through doors.**
 
+## Update 2026-07-07 — proactive threshold strafe (user fix, verified 3/3)
+
+User insight: most first-attempt exit hangups were the **north-jamb catch at
+x≈-270.8** — the reactive right-strafe pulses rescued poorly (observed same
+evening: 3 pulses, still "didn't clear door", full retry needed). Fix: a
+**proactive one-shot 150ms LEFT (south, +z) strafe fired as x crosses -270.3**,
+steering around the jamb before it catches. `walkUntilAxis` gained a
+`thresholdStrafe: { at, strafe, ms }` option; the exit walk passes
+`{ at: -270.3, strafe: 'left', ms: 150 }`. Reactive right-pulse kept as fallback.
+
+Verified with 3 consecutive enter→exit drills: every exit logged
+`threshold strafe left 150ms at x≈-270.3..-270.5` then `arrived (-275, 64, 573)
+onPad=true` ~1.2s later — zero snags, zero retries, first attempt every time.
+
 ## Related
 - [[../places/orientation-blocks]]
 - [[../places/yaw-convention]]

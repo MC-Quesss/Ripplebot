@@ -136,7 +136,11 @@ at ≥85% → harvest/bake/deposit, (4) wheat halves at ≥85% → harvest → p
   `@tick`. See `journal/procedures/keep-the-fire-going.md` for the full protocol table.
 - The hopper is a **draining bio-fuel intake** — deposits use a robust quick-move that verifies
   by inventory delta (a "Server rejected transaction" log line is benign; the item still moves).
-  **All hopper writes hold the `.k` lock: one bot feeds at a time, hard invariant.**
+  **The `.k` hopper lock is held ONLY by the un-jam routine** (plantballs sitting in the
+  intake with no potato → feed one potato at a time, 20s wait each, lock held through the
+  waits so nobody dumps items mid-diagnosis). Checks and ordinary deposits (plantballs,
+  potato harvests) are lock-free (2026-07-07). Raw wheat/seeds are refused at
+  `depositToHopper()` — plantballs + potatoes only.
 - Fields trigger at **≥85% mature**; a `waiting duties=[...]` heartbeat in `bot.log` every
   20 polls surfaces a stall.
 

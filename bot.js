@@ -1765,9 +1765,13 @@ function verifyAtOrientation (pt, xzTol = 1.5, yTol = 0.6) {
 // `unstickMs`: how long to hold the strafe pulse (short; just enough to clear).
 // `snagWindow`: how long with no axis progress before we consider it a snag.
 // `snagThreshold`: min axis delta over the window to count as "progressing".
+// `thresholdStrafe`: { at, strafe, ms } — proactive one-shot pulse fired when
+//   the axis crosses `at`, steering around a known catch point (door jamb)
+//   before the reactive snag detector would have to rescue us.
 async function walkUntilAxis ({
   axis, target, direction = 'gte', maxMs = 8000, bailOnDamage = false,
   unstickStrafe = null, unstickMs = 200, snagWindow = 500, snagThreshold = 0.1,
+  thresholdStrafe = null,
 }) {
   const startHp = bot.health ?? 20
   const startDeaths = deathCount
@@ -1778,6 +1782,7 @@ async function walkUntilAxis ({
     let lastProgressAt = start
     let strafeActive = null
     let strafeOffAt = 0
+    let thresholdFired = false
     const timer = setInterval(() => {
       const now = Date.now()
       const val = bot.entity?.position?.[axis] ?? 0
@@ -1786,6 +1791,18 @@ async function walkUntilAxis ({
       if (strafeActive && now >= strafeOffAt) {
         bot.setControlState(strafeActive, false)
         strafeActive = null
+      }
+
+      // Proactive threshold pulse (one-shot) — see doc comment above.
+      if (thresholdStrafe && !thresholdFired && !strafeActive) {
+        const crossed = direction === 'lte' ? val <= thresholdStrafe.at : val >= thresholdStrafe.at
+        if (crossed) {
+          thresholdFired = true
+          strafeActive = thresholdStrafe.strafe
+          strafeOffAt = now + (thresholdStrafe.ms || 150)
+          bot.setControlState(thresholdStrafe.strafe, true)
+          logEvent('walk_until', `threshold strafe ${thresholdStrafe.strafe} ${thresholdStrafe.ms || 150}ms at ${axis}=${val.toFixed(2)}`)
+        }
       }
 
       // Track progress in the desired direction.
@@ -2021,52 +2038,25 @@ async function runIdleWanderToFurnace () {
   }
 
   if (countOnHand('potato') >= 1) {
-    // This wander-time hopper check predates the fire overhaul and is the
-    // only feeder for bots NOT on fire duty — but the one-at-a-time invariant
-    // is universal, so it runs under the hopper lock like every other writer.
-    await acquireChatLock(hopperLock)
-    try {
-      await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-      const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
-      if (hopperBlock) {
-        const win = await bot.openContainer(hopperBlock)
-        const slots = win.slots.slice(0, win.slots.length - 36)
-        const ballCount = slots.reduce((n, s) => n + (s && s.name === 'unknown' ? s.count : 0), 0)
-        const hasFuel = slots.some(s => s && (s.name === 'wheat' || s.name === 'potato'))
-        win.close()
-        if (ballCount > 0 && !hasFuel && (hopperLastBallCount < 0 || ballCount >= hopperLastBallCount)) {
-          logEvent('idle-wander', `hopper stuck (balls=${ballCount}, last=${hopperLastBallCount}) — feeding 1 potato`)
-          hopperLastBallCount = ballCount
-          const containerSize = 5
-          const win2 = await bot.openContainer(hopperBlock)
-          const playerSlots = win2.slots.slice(containerSize)
-          const srcIdx = playerSlots.findIndex(s => s && s.name === 'potato')
-          if (srcIdx >= 0) {
-            const winSlot = containerSize + srcIdx
-            const count = playerSlots[srcIdx].count
-            try {
-              await bot.clickWindow(winSlot, 1, 0)
-              await bot.clickWindow(1, 1, 0)
-              if (count > 2) await bot.clickWindow(winSlot, 0, 0)
-              else if (count === 2) {
-                const emptyIdx = playerSlots.findIndex((s, i) => i !== srcIdx && !s)
-                if (emptyIdx !== -1) await bot.clickWindow(containerSize + emptyIdx, 0, 0)
-                else await bot.clickWindow(winSlot, 0, 0)
-              }
-            } catch (e) {
-              // Benign on this server — the click usually lands anyway.
-              logEvent('idle-wander', `hopper click rejected (benign): ${e.message}`)
-            }
-          }
-          try { win2.close() } catch (_) {}
-        } else if (ballCount > 0) {
-          logEvent('idle-wander', `hopper draining (balls=${ballCount}, last=${hopperLastBallCount}, fuel=${hasFuel})`)
-          hopperLastBallCount = ballCount
-        } else {
-          hopperLastBallCount = -1
-        }
+    // Wander-time hopper peek — lock-free (2026-07-07 policy: only the un-jam
+    // routine locks). This is the only jam-checker for bots NOT on fire duty.
+    // Jam = plantballs sitting with no potatoes; the cure is clearJammedHopper's
+    // one-potato-at-a-time + 20s waits (it takes the lock itself).
+    await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+    const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
+    if (hopperBlock) {
+      const win = await bot.openContainer(hopperBlock)
+      const slots = win.slots.slice(0, win.slots.length - 36)
+      const ballCount = slots.reduce((n, s) => n + (s && s.name === 'unknown' ? s.count : 0), 0)
+      const hasPotato = slots.some(s => s && s.name === 'potato')
+      win.close()
+      if (ballCount > 0 && !hasPotato) {
+        logEvent('idle-wander', `hopper jammed (balls=${ballCount}, no potato) — running un-jam routine`)
+        await clearJammedHopper()
+      } else if (ballCount > 0) {
+        logEvent('idle-wander', `hopper digesting (balls=${ballCount}, potato present)`)
       }
-    } finally { releaseChatLock(hopperLock) }
+    }
   }
 
   await sleep(1500 + Math.floor(Math.random() * 2000))
@@ -3376,24 +3366,32 @@ async function feedHopperOneAtATime (waitMs, { requireSustain = false } = {}) {
   return !stillJammed
 }
 
-async function clearJammedHopper () {
+// THE un-jam routine — the ONLY hopper-lock holder (user spec, 2026-07-07).
+// Jam = plantballs sitting in the intake with no potatoes. Cure: feed ONE
+// potato at a time, waiting 20s per potato (second pass 30s) to see if the
+// balls start draining. The lock is held for the whole routine INCLUDING the
+// waits, so other bots don't dump unexpected items in mid-diagnosis.
+async function clearJammedHopper ({ requireSustain = false } = {}) {
   if (countOnHand('potato') < 1) {
     logEvent('sustain-hopper', 'no fuel on hand to clear jam')
     return false
   }
-  const cleared = await feedHopperOneAtATime(20000, { requireSustain: true })
-  if (cleared) {
-    logEvent('sustain-hopper', 'hopper cleared on first pass (20s waits)')
-    return true
-  }
-  logEvent('sustain-hopper', 'first pass failed — retrying with 30s waits')
-  const cleared2 = await feedHopperOneAtATime(30000, { requireSustain: true })
-  if (cleared2) {
-    logEvent('sustain-hopper', 'hopper cleared on second pass (30s waits)')
-  } else {
-    logEvent('sustain-hopper', 'hopper still jammed after both passes')
-  }
-  return cleared2
+  await acquireChatLock(hopperLock)
+  try {
+    const cleared = await feedHopperOneAtATime(20000, { requireSustain })
+    if (cleared) {
+      logEvent('sustain-hopper', 'hopper cleared on first pass (20s waits)')
+      return true
+    }
+    logEvent('sustain-hopper', 'first pass failed — retrying with 30s waits')
+    const cleared2 = await feedHopperOneAtATime(30000, { requireSustain })
+    if (cleared2) {
+      logEvent('sustain-hopper', 'hopper cleared on second pass (30s waits)')
+    } else {
+      logEvent('sustain-hopper', 'hopper still jammed after both passes')
+    }
+    return cleared2
+  } finally { releaseChatLock(hopperLock) }
 }
 
 // ── Multi-bot fire-duty coordination ────────────────────────────────────────
@@ -4109,8 +4107,9 @@ function makeChatLock (label, claimCode, releaseCode, ttlMs) {
   return { label, claimCode, releaseCode, ttlMs, holder: null, at: 0, waiters: [] }
 }
 const benchLock = makeChatLock('bench', '.b', '.f', 60_000)
-// Hopper TTL must outlast a full jam-clear session (7 feeds x 30s waits).
-const hopperLock = makeChatLock('hopper', '.k', '.l', 4 * 60_000)
+// Hopper TTL must outlast a full two-pass un-jam session held under one lock
+// (7 feeds × 20s + 7 × 30s waits + travel ≈ 6.5 min worst case).
+const hopperLock = makeChatLock('hopper', '.k', '.l', 8 * 60_000)
 
 function lockIsFree (lock) {
   if (!lock.holder) return true
@@ -4193,9 +4192,10 @@ function releaseBench () {
   }
 }
 
-// HARD INVARIANT: potatoes go into the hopper ONE AT A TIME, one bot at a
-// time — simultaneous feeding corrupts the bio-fuel intake. Every hopper
-// write (deposits and jam-clears) goes through this lock.
+// Lock policy (user, 2026-07-07): the hopper lock is ONLY held by the un-jam
+// routine (clearJammedHopper). Plain checks and deposits — plantballs, full
+// potato harvests — run lock-free; the intake digests concurrent deposits
+// fine. The old every-write lock is retired.
 // HARD INVARIANT (user rule, 2026-07-07): raw wheat and seeds JAM the intake —
 // only plantballs and potatoes are legal feed. Craft grain into plantballs
 // first (stash_wheat / deposit_named do this). Guarded here so every caller,
@@ -4206,12 +4206,9 @@ async function depositToHopper (itemName, opts = {}) {
     logEvent('hopper-guard', `refused ${itemName} — raw grain jams the intake; craft plantballs first`)
     throw new Error(`${itemName} jams the bio-fuel intake — craft plantballs first (use stash_wheat)`)
   }
-  await acquireChatLock(hopperLock)
-  try {
-    await ensureInsideHouse()
-    await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-    return await depositQuickMove(itemName, HOPPER, opts)
-  } finally { releaseChatLock(hopperLock) }
+  await ensureInsideHouse()
+  await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+  return await depositQuickMove(itemName, HOPPER, opts)
 }
 
 // Parse other bots' chat for fire-duty coordination lines. Called for every
@@ -4577,26 +4574,25 @@ async function runPotatoCycle (label = 'potato cycle') {
   return true
 }
 
-// Rung 1 of the priority ladder: THE fire. Peek into the bio-fuel hopper; if
-// plant balls are sitting in the intake, feed potatoes one at a time until it
-// drains. Runs under the hopper lock — one bot in the intake, always.
+// Rung 1 of the priority ladder: THE fire. Peek into the bio-fuel hopper —
+// lock-free (2026-07-07 policy: only the un-jam routine locks). Jam =
+// plantballs sitting with no potatoes; clearJammedHopper takes the lock.
 const HOPPER_PATROL_MS = 5 * 60 * 1000
 let nextHopperPatrolAt = 0
 async function sustainHopperPatrol () {
-  await acquireChatLock(hopperLock)
-  try {
-    await ensureInsideHouse()
-    await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-    const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
-    if (!hopperBlock) { logEvent('sustain-hopper', 'patrol: hopper block not loaded'); return }
-    const win = await bot.openContainer(hopperBlock)
-    const slots = win.slots.slice(0, win.slots.length - 36)
-    const jammed = slots.some(s => s && s.name === 'unknown')
-    win.close()
-    if (!jammed) { logEvent('sustain-hopper', 'patrol: hopper clear'); return }
-    logEvent('sustain-hopper', 'patrol: balls sitting in the intake — feeding to clear')
-    await clearJammedHopper()
-  } finally { releaseChatLock(hopperLock) }
+  await ensureInsideHouse()
+  await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+  const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
+  if (!hopperBlock) { logEvent('sustain-hopper', 'patrol: hopper block not loaded'); return }
+  const win = await bot.openContainer(hopperBlock)
+  const slots = win.slots.slice(0, win.slots.length - 36)
+  const hasBalls = slots.some(s => s && s.name === 'unknown')
+  const hasPotato = slots.some(s => s && s.name === 'potato')
+  win.close()
+  if (!hasBalls) { logEvent('sustain-hopper', 'patrol: hopper clear'); return }
+  if (hasPotato) { logEvent('sustain-hopper', 'patrol: balls + potato present — digesting, not jammed'); return }
+  logEvent('sustain-hopper', 'patrol: balls sitting with no potato — running un-jam routine')
+  await clearJammedHopper({ requireSustain: true })
 }
 
 // One wheat cycle for a half ('north-field'|'south-field'|'all'): harvest with
@@ -5813,9 +5809,6 @@ async function tryMorningPlantBalls () {
 const HOUSE_CENTER = { x: -268, y: 65, z: 572 }
 const OUTSIDE_ORIENTATION = { x: -275, y: 64, z: 572 }
 // Sheep-pen gate pads. Mirror the door pad pattern: one tile each side of
-// ── Background hopper jam check ─────────────────────────────────────────────
-let hopperLastBallCount = -1
-
 // the gate, both at the same y, single-tile, walkable on first pathfind.
 const PEN_GATE       = { x: -278, y: 64, z: 574 }
 const PEN_OUTSIDE    = { x: -278, y: 64, z: 573 }  // pad north of gate (outside the pen)
@@ -5995,7 +5988,14 @@ async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
     return b
   }
 
-  const walk = await walkUntilAxis({ axis: 'x', target: -275, direction: 'lte', maxMs: 8000, bailOnDamage: true, unstickStrafe: EXIT_STRAFE, unstickMs: EXIT_STRAFE_MS })
+  const walk = await walkUntilAxis({
+    axis: 'x', target: -275, direction: 'lte', maxMs: 8000, bailOnDamage: true,
+    unstickStrafe: EXIT_STRAFE, unstickMs: EXIT_STRAFE_MS,
+    // Tiny south nudge just as the threshold is crossed (user, 2026-07-07):
+    // pre-empts the north-jamb catch at x≈-270.8 behind most first-attempt
+    // exit hangups. Facing west, 'left' = +z = south.
+    thresholdStrafe: { at: -270.3, strafe: 'left', ms: 150 },
+  })
 
   bot.world.getBlock = origGetBlockExit
   if (walk.died) throw new Error('died crossing door')
@@ -8159,7 +8159,27 @@ const CHAT_HANDLERS = [
       if (sustainState.active) {
         bot.chat(`I am — covering ${describeFireDuties()}.`)
       } else {
-        setTimeout(() => bot.chat('Not me, not right now.'), 4000 + Math.random() * 3000)
+        // Off duty: give the keepers first right of reply (user, 2026-07-07 —
+        // Roz waited but still said "not me" after Private answered). Listen
+        // during the wait; only if NOBODY claims the fire — in chat now, or in
+        // our tracked crew claims — do we admit we're not keeping it.
+        const POSITIVE_RE = /\bI am\b.*\bcovering\b/i
+        let keeperAnswered = false
+        const listener = (username, message) => {
+          if (username === bot.username) return
+          if (POSITIVE_RE.test(message)) keeperAnswered = true
+        }
+        bot.on('chat', listener)
+        setTimeout(() => {
+          bot.removeListener('chat', listener)
+          if (keeperAnswered || fireCrew.size > 0) {
+            logEvent('fire-status', keeperAnswered
+              ? 'staying quiet — a keeper answered'
+              : `staying quiet — known crew: ${[...fireCrew.keys()].join(', ')}`)
+            return
+          }
+          bot.chat('Not me, not right now.')
+        }, 4000 + Math.random() * 3000)
       }
     },
   },

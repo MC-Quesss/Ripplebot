@@ -9,6 +9,22 @@ Reverse-chronological. Each session a header. Raw observations land here first; 
 
 ## 2026-07-07 — Free-play session: motor-control races observed from inside (day 46398)
 
+### Follow-up same session: door threshold strafe (user fix) — verified 3/3
+
+- User: "strafe left (south) a tiny bit just as they cross the threshold" on
+  exit. Implemented as `thresholdStrafe` option in `walkUntilAxis` (proactive
+  one-shot pulse at an axis crossing); exit walk fires 150ms left at x=-270.3,
+  pre-empting the north-jamb catch at x≈-270.8. Reactive right-pulse kept as
+  fallback. Drilled 3 consecutive enter→exit cycles: threshold strafe fired
+  each time, `onPad=true` ~1.2s later, **zero snags / zero retries** — vs. the
+  same evening's pre-fix exit (3 failed pulses + full retry). Details in
+  [[../procedures/exit-house]].
+- Also answered: Private's back-to-back `.k`/`.l` pairs = two item types
+  deposited in sequence (plantballs then raw potatoes; each `depositToHopper`
+  call cycles the lock independently). Correct pairing, no overlap; Roz was
+  observed interleaving cleanly between Private's two cycles (98ms handoff) —
+  per-item lock granularity working as intended.
+
 ### Follow-up same session: RPS "Shoot!" ceremony regression fixed
 
 - User report: no point emote visible at the shoot, and no one says "Shoot!" in
