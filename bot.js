@@ -845,22 +845,87 @@ if (PERSONA !== 'default') {
 
 function botPersonaKey () { return PERSONA }
 
-// The persona's voice generator (Ollama). Health-checked in the background;
-// when unreachable, expressive speech is silent — functional speech unaffected.
-llm.init({ logFn: logEvent })
-
 const claude = require('./claude')
 claude.init({ logFn: logEvent })
+
+// Brain mode — how chat understanding and the bot's voice are produced:
+//   local          — the bot's own small model (Ollama/oMlx) does everything.
+//   remote         — chat driven externally via bot-ctl; local model classifies.
+//   claude         — Claude handles spoken-to chat + actions; the local model
+//                    still runs the cheap prefilter AND the ambient/idle voice.
+//   claude-super   — Claude does EVERYTHING, including the ambient/idle voice
+//                    and the nightly diary. The local model is never started.
+//   claude-private — like claude-super, but autonomous/ambient expression is
+//                    simply silent (no timer-driven API calls). Reactive-only:
+//                    for boxes too small to run both a local model and the game.
+const CLAUDE_MODES = new Set(['claude', 'claude-super', 'claude-private'])
+const KNOWN_BRAIN_MODES = new Set(['local', 'remote', ...CLAUDE_MODES])
 let brainMode = (process.env.BRAIN_MODE || 'local').toLowerCase()
-if (brainMode === 'claude' && !claude.status().hasKey) {
-  logEvent('brain', 'BRAIN_MODE=claude but no API key found — falling back to local')
+if (!KNOWN_BRAIN_MODES.has(brainMode)) {
+  // A typo'd mode silently behaving as local would start Ollama on a box that
+  // can't afford it — fail loudly instead.
+  logEvent('brain', `unknown BRAIN_MODE "${brainMode}" — falling back to local (known: ${[...KNOWN_BRAIN_MODES].join(', ')})`)
   brainMode = 'local'
-} else if (brainMode === 'claude') {
-  logEvent('brain', `starting in claude mode (${claude.status().model})`)
-} else if (brainMode === 'remote') {
-  logEvent('brain', 'starting in remote mode (chat driven externally via bot-ctl)')
+}
+if (CLAUDE_MODES.has(brainMode) && !claude.status().hasKey) {
+  logEvent('brain', `BRAIN_MODE=${brainMode} but no API key found — falling back to local`)
+  brainMode = 'local'
 }
 const CLAUDE_PREFILTER = (process.env.CLAUDE_PREFILTER || 'local').toLowerCase()
+
+// Capability predicates (functions, so a runtime `brain` switch is honoured):
+const usesClaudeBrain = () => CLAUDE_MODES.has(brainMode)                         // chat via claude.brainChat
+const localOff = () => brainMode === 'claude-super' || brainMode === 'claude-private' // local model never touched
+const ambientViaClaude = () => brainMode === 'claude-super'                        // idle/ambient voice + diary via Claude
+
+// The persona's voice generator (Ollama). Health-checked in the background;
+// when unreachable, expressive speech is silent — functional speech unaffected.
+// Started lazily and only when the mode uses a local model; the no-local claude
+// modes never touch it (so the box can spend its resources on the game instead).
+let localInited = false
+function ensureLocalInited () {
+  if (localInited) return
+  llm.init({ logFn: logEvent })
+  localInited = true
+}
+if (!localOff()) ensureLocalInited()
+
+if (brainMode === 'claude') logEvent('brain', `starting in claude mode (${claude.status().model}); prefilter=${CLAUDE_PREFILTER}`)
+else if (brainMode === 'claude-super') logEvent('brain', `starting in claude-super mode (${claude.status().model}) — local model off, full ambient + diary via Claude`)
+else if (brainMode === 'claude-private') logEvent('brain', `starting in claude-private mode (${claude.status().model}) — local model off, reactive only`)
+else if (brainMode === 'remote') logEvent('brain', 'starting in remote mode (chat driven externally via bot-ctl)')
+
+// Autonomous/ambient persona text (idle remarks, greet flavour, music-journal
+// notes, the nightly diary). Normally the local voice; in claude-super the
+// Claude brain speaks it. claude-private is EXPLICITLY silent here — not merely
+// "llm happens to be uninitialized" — so a runtime brain switch into
+// claude-private truly stops the local model being used for ambient speech.
+function expressiveGenerate (opts) {
+  if (ambientViaClaude()) return claude.generateLine(opts)
+  if (localOff()) return Promise.resolve(null) // claude-private: guaranteed ambient silence
+  return llm.generateLine(opts)
+}
+// Multi-line persona text (bedtime story, nightly diary). `reactive` story
+// requests reach Claude in ANY no-local mode; the autonomous diary follows the
+// ambient rule (Claude in claude-super, silent in claude-private).
+function expressiveStory (opts, { reactive = false } = {}) {
+  if (ambientViaClaude() || (reactive && localOff())) return claude.generateStory(opts)
+  if (localOff()) return Promise.resolve(null) // claude-private ambient: guaranteed silence
+  return llm.generateStory(opts)
+}
+
+// "Special circumstances" gate for musings that cost API money (claude-super;
+// user policy 2026-07-11): timer/scan-driven impulses (idle ambient, wildlife)
+// NEVER call the API, and event-driven impulses muse only when a human player
+// is around to hear it. Local modes are unaffected — qwen musings stay chatty.
+const AMBIENT_EVENT_KINDS = new Set(['music', 'craft', 'victory', 'bedtime_suggest', 'rps', 'bot_chat'])
+function humanNearby (radius = 16) {
+  return nearbyPlayers(radius).some(p => !looksLikeBot(p.username))
+}
+function claudeAmbientAllowed (kind) {
+  if (!ambientViaClaude()) return true
+  return AMBIENT_EVENT_KINDS.has(kind) && humanNearby()
+}
 
 
 // Shared world context for LLM-generated speech.
@@ -933,7 +998,7 @@ async function tryWriteDiary () {
     ownTail ? `Your previous entry, for continuity:\n...${ownTail}` : null,
     peers.length ? `${peers.join('\n\n')}\n\nIf a housemate's entry touches something you experienced too, you may nod to it.` : null,
   ].filter(Boolean).join('\n\n'))
-  const entry = await llm.generateStory({
+  const entry = await expressiveStory({
     system: personaSpec.systemPrompt,
     exemplars: personaSpec.exemplars,
     context,
@@ -1037,9 +1102,9 @@ function markRecordHeard (recordName, { via = 'self' } = {}) {
   logEvent('music', `heard ${recordName} (via ${via}); times=${m.timesHeard} day=${m.lastHeardDay}`)
   // Sometimes write a private impression into the journal — a note to self,
   // never chatted. Ollama down = no note this time; the counters still update.
-  if (Math.random() < 0.6) {
+  if (Math.random() < 0.6 && claudeAmbientAllowed('music')) {
     const info = recordInfo(recordName)
-    llm.generateLine({
+    expressiveGenerate({
       system: personaSpec.systemPrompt,
       exemplars: personaSpec.exemplars,
       context: buildExpressiveContext(`"${info.title}" (the ${info.color} disc) is playing on the jukebox${via === 'self' ? ' — you just put it on' : ` — ${via} put it on`}. Write ONE short private sentence for your journal about what this song makes you feel or remember. It is a note to yourself, not chat.`),
@@ -2222,7 +2287,7 @@ function buildExpressiveContext (situation) {
   // Self-knowledge: brain mode + journal, so questions like "what brain are
   // you running?" or "do you keep a journal?" get truthful in-voice answers
   // instead of confabulation.
-  parts.push(`About yourself: your voice and chat-understanding currently run in "${brainMode}" brain mode (local = your own small model on the farm, claude = a large cloud model, remote = driven by an outside operator). The farm keeps a journal — a shared vault of notes on places, procedures, recipes, and observations that the operator maintains — and you write your own diary entry in it each night at bedtime. You may talk about your brain mode, the journal, and your diary plainly when asked.`)
+  parts.push(`About yourself: your voice and chat-understanding currently run in "${brainMode}" brain mode (local = your own small model on the farm; claude = a large cloud model for chat while the small model handles idle voice; claude-super = the large cloud model does everything, including your idle voice and diary; claude-private = the large cloud model, and you only speak when spoken to; remote = driven by an outside operator). The farm keeps a journal — a shared vault of notes on places, procedures, recipes, and observations that the operator maintains — and you write your own diary entry in it each night at bedtime. You may talk about your brain mode, the journal, and your diary plainly when asked.`)
   const inv = (bot.inventory?.items() || []).sort((a, b) => b.count - a.count).slice(0, 5).map(i => `${i.count}× ${i.name}`)
   parts.push(inv.length ? `Carrying: ${inv.join(', ')}.` : 'Your pockets are empty.')
   if (activeTask.name) parts.push(`You are in the middle of: ${activeTask.name}.`)
@@ -2281,12 +2346,13 @@ function asActionText (line) {
 // the persona spec, speak through the gate. The model may PASS; Ollama being
 // down means silence. Returns whether a line was spoken.
 async function impulseExpressive (kind, situation, { me = false, delayMs = 0, skipGate = false } = {}) {
+  if (!claudeAmbientAllowed(kind)) return false // API-cost musings: special circumstances only
   if (!skipGate && !expressiveGateOpen(kind)) return false
   if (delayMs) {
     await sleep(delayMs)
     if (!skipGate && !expressiveGateOpen(kind)) return false // something else spoke while we waited
   }
-  const gen = () => llm.generateLine({
+  const gen = () => expressiveGenerate({
     system: personaSpec.systemPrompt,
     exemplars: personaSpec.exemplars,
     context: buildExpressiveContext(me ? `${situation}\n\n${actionTextFormatNote()}` : situation),
@@ -3867,11 +3933,18 @@ async function runFunRpsChallenger () {
   // leaving a ~4s window where a simultaneous rival's .j was ignored.)
   const acceptPromise = new Promise(resolve => { rpsFunChallengeResolve = resolve })
   bot.chat('/me .j')
-  const said = await impulseExpressive('rps',
+  // Flavor line is cosmetic — fire it WITHOUT awaiting. Duty RPS has no such
+  // line and its handshake stays tight; a blocking ~4s impulse here delayed the
+  // accept/withdraw path and the match setup by that long, desyncing the
+  // ready↔chant timing (acceptor got "no chant" while the challenger was still
+  // catching up). Send it async so the match handshake starts immediately.
+  impulseExpressive('rps',
     'You want to play a quick game of rock-paper-scissors with one of the other bots — just for fun, no stakes. Challenge them in one short playful sentence. Do not use a specific name.',
     { skipGate: true }
-  ).catch(() => false)
-  if (!said) bot.chat('Anyone up for rock-paper-scissors?')
+  // Only speak the canned fallback while the challenge is still open — a slow
+  // generation can resolve false 30-45s later (after the 15s accept race, or
+  // mid-match), and a stale invitation confuses the other bots' routers.
+  ).then(said => { if (!said && rpsFunChallengeResolve) bot.chat('Anyone up for rock-paper-scissors?') }).catch(() => {})
   const accepted = await Promise.race([
     acceptPromise,
     sleep(15000).then(() => false)
@@ -8564,13 +8637,13 @@ async function runTellStory (user, topic) {
       'Tell a short, vivid story from your personal experience or memory. Be specific — names, places, sensory details. ' +
       'This is YOUR story, told in YOUR voice. Make it feel like a campfire moment.'
     )
-    const lines = await llm.generateStory({
+    const lines = await expressiveStory({
       system: personaSpec.systemPrompt,
       exemplars: personaSpec.exemplars,
       context,
       lines: 5,
       maxChars: 240,
-    })
+    }, { reactive: true })
     if (!lines || !lines.length) {
       bot.chat("I... had something. It's gone now.")
       return
@@ -8713,8 +8786,17 @@ async function routeChat (username, message, { namedMe, fromBot }) {
     return
   }
 
-  if (brainMode === 'claude') {
-    if (CLAUDE_PREFILTER === 'local') {
+  if (usesClaudeBrain()) {
+    // claude-private is reactive-only IN CODE, not just by prompt: unaddressed
+    // lines never reach the API. "Addressed" = nickname match or the followed
+    // player speaking (namedMe already folds in implicitlyAddressed). Overheard
+    // human conversations and unnamed bot chatter cost nothing.
+    if (brainMode === 'claude-private' && !namedMe) return
+
+    // The cheap local prefilter exists only in plain `claude` mode. claude-super
+    // has no local model, so every surviving line goes straight to Claude —
+    // brainChat itself decides whether the line is worth answering.
+    if (brainMode === 'claude' && CLAUDE_PREFILTER === 'local') {
       const verdict = await llm.classify({
         system: buildRouterSystemPrompt(),
         user: [
@@ -8736,6 +8818,12 @@ async function routeChat (username, message, { namedMe, fromBot }) {
       if (fromBot) return replyToBotTurn(username, message)
     }
 
+    // A bot line reaching brainChat IS a bot-exchange turn — arm the same
+    // bookkeeping replyToBotTurn keeps, or botExchangeAllows never sees an
+    // exchange start and BOT_CHAT_DEPTH is a dead letter on this path (two
+    // no-local bots could ping-pong paid calls forever).
+    if (fromBot) beginBotExchangeTurn(username)
+
     const expressiveCtx = buildExpressiveContext(
       `<${username}> just said: "${message}"\n` +
       (namedMe ? 'This message is addressed to you.' : 'This message was said to the room.') +
@@ -8748,6 +8836,10 @@ async function routeChat (username, message, { namedMe, fromBot }) {
       chatHistory,
     })
     if (!result) {
+      if (localOff()) {
+        logEvent('claude', `brainChat returned null — no local fallback in ${brainMode} mode`)
+        return
+      }
       logEvent('claude', 'brainChat returned null — falling back to local')
       return routeChatLocal(username, message, { namedMe, fromBot })
     }
@@ -8824,6 +8916,13 @@ async function executeClaudeResponse (username, message, result, { namedMe, from
     text = text.replace(/[^\x00-\xFF]/g, '')
     while (text.startsWith('/')) text = text.slice(1).trim()
     if (text) {
+      // Replying to a bot: pace like replyToBotTurn (≥5s) so two Claude bots
+      // converse at robot-smalltalk speed, not API speed — and count the turn
+      // against BOT_CHAT_DEPTH.
+      if (fromBot) {
+        await sleep(5_000 + Math.random() * 7_000)
+        recordBotExchangeTurn()
+      }
       facePlayer(username).catch(() => {})
       const chunks = splitChatLines(text, 230)
       for (let i = 0; i < chunks.length; i++) {
@@ -9429,6 +9528,25 @@ function resetBotExchange () {
   botExchange = { partner: null, turns: 0, lastAt: 0 }
 }
 
+// Start-or-refresh the exchange window with a bot partner. ONE home for this
+// bookkeeping — both reply paths (replyToBotTurn locally, the Claude brain via
+// routeChat) must arm it, or botExchangeAllows gates against state nobody writes.
+function beginBotExchangeTurn (username) {
+  const now = Date.now()
+  if (botExchange.partner !== username || now - botExchange.lastAt > BOT_EXCHANGE_RESET_MS) {
+    botExchange = { partner: username, turns: 0, lastAt: now }
+    lastBotExchangeStartAt = now
+  } else {
+    botExchange.lastAt = now
+  }
+}
+
+// Count a turn actually spoken to a bot (Claude-brain path).
+function recordBotExchangeTurn () {
+  botExchange.turns++
+  botExchange.lastAt = Date.now()
+}
+
 // Cheap pre-check the router runs BEFORE spending a classification on a
 // bot line: is there any budget left in (or available for) an exchange with
 // this partner? Keeps two LLMs from "finding each other interesting" forever.
@@ -9445,13 +9563,7 @@ function botExchangeAllows (username) {
 // is generated AT FIRE TIME with the full chat tail, so the model sees
 // everything said during the wait and PASSes if the topic moved on.
 function replyToBotTurn (username, message) {
-  const now = Date.now()
-  if (botExchange.partner !== username || now - botExchange.lastAt > BOT_EXCHANGE_RESET_MS) {
-    botExchange = { partner: username, turns: 0, lastAt: now }
-    lastBotExchangeStartAt = now
-  } else {
-    botExchange.lastAt = now
-  }
+  beginBotExchangeTurn(username)
   if (botExchange.turns >= BOT_CHAT_DEPTH) return
   const turn = botExchange.turns + 1
   const lastTurn = turn >= BOT_CHAT_DEPTH
@@ -9529,28 +9641,38 @@ function handleCommand (cmd) {
       return { ok: true, count: deathCount }
     }
     case 'llm': {
-      return { ok: true, ...llm.status(), persona: PERSONA, personaName: personaSpec.name, botChatDepth: BOT_CHAT_DEPTH, brainMode, claude: claude.status() }
+      // In no-local modes an un-inited local model reports off:true — not the
+      // misleading healthy:false of a crashed Ollama box.
+      const local = localInited ? llm.status() : { healthy: false, off: true }
+      return { ok: true, ...local, persona: PERSONA, personaName: personaSpec.name, botChatDepth: BOT_CHAT_DEPTH, brainMode, claude: claude.status() }
     }
     case 'brain': {
       const newMode = String(args.mode || '').toLowerCase()
-      if (newMode === 'claude') {
+      if (newMode && !KNOWN_BRAIN_MODES.has(newMode)) {
+        return { ok: false, error: `unknown mode "${newMode}" (known: ${[...KNOWN_BRAIN_MODES].join(', ')})` }
+      }
+      if (CLAUDE_MODES.has(newMode)) {
         const st = claude.status()
         if (!st.hasKey) return { ok: false, error: 'CLAUDE_API_KEY / ANTHROPIC_API_KEY not set in .env' }
-        brainMode = 'claude'
-        logEvent('brain', `switched to claude (${st.model})`)
-        return { ok: true, mode: 'claude', model: st.model, prefilter: CLAUDE_PREFILTER }
+        brainMode = newMode
+        if (!localOff()) ensureLocalInited() // plain `claude` still uses the local prefilter/voice
+        claude.revive() // operator switch re-arms after an auth-error mute
+        logEvent('brain', `switched to ${newMode} (${st.model})`)
+        return { ok: true, mode: newMode, model: st.model, prefilter: newMode === 'claude' ? CLAUDE_PREFILTER : 'none', localOff: localOff(), ambientViaClaude: ambientViaClaude() }
       }
       if (newMode === 'local') {
+        ensureLocalInited()
         brainMode = 'local'
         logEvent('brain', 'switched to local')
         return { ok: true, mode: 'local', model: llm.status().model }
       }
       if (newMode === 'remote') {
+        ensureLocalInited() // remote still classifies via the local model
         brainMode = 'remote'
         logEvent('brain', 'switched to remote (chat driven externally via bot-ctl)')
         return { ok: true, mode: 'remote' }
       }
-      return { ok: true, mode: brainMode, local: llm.status(), claude: claude.status(), prefilter: CLAUDE_PREFILTER }
+      return { ok: true, mode: brainMode, local: localInited ? llm.status() : { off: true }, claude: claude.status(), prefilter: brainMode === 'claude' ? CLAUDE_PREFILTER : 'none', localOff: localOff(), ambientViaClaude: ambientViaClaude() }
     }
     case 'mem': {
       // Memory counters: {"action":"mem"}

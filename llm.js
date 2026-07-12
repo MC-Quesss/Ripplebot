@@ -114,6 +114,11 @@ function init ({ logFn } = {}) {
   if (healthTimerId.unref) healthTimerId.unref()
 }
 
+// ── Shared persona-voice helpers ─────────────────────────────────────────────
+// Exported for claude.js: the two voice backends (local model here, Claude API
+// there) must obey the SAME rules and sanitization, so the rules live once, in
+// this module, and claude.js supplies only its transport. Requiring llm.js has
+// no side effects — the health loop starts only when init() is called.
 function buildSystemPrompt (personaPrompt, exemplars, maxChars) {
   const parts = [personaPrompt]
   if (exemplars && exemplars.length) {
@@ -244,9 +249,9 @@ function classify ({ system, user, timeoutMs = CLASSIFY_TIMEOUT_MS }) {
 // maxChars), or null on failure. Does NOT respect the single-flight `generating`
 // lock — stories are rare and explicitly requested, so they can overlap with
 // ambient generation timing out naturally.
-async function generateStory ({ system, exemplars, context, maxChars = 200, lines = 5, timeoutMs = 60_000 }) {
-  if (!healthy) return null
-  const storySystem = [
+// Story-mode twin of buildSystemPrompt — shared with claude.js (see above).
+function buildStorySystem (system, exemplars, maxChars, lines) {
+  return [
     system,
     exemplars && exemplars.length
       ? 'Lines you have said before, in your true voice:\n' + exemplars.map(e => `- ${e}`).join('\n')
@@ -260,6 +265,25 @@ async function generateStory ({ system, exemplars, context, maxChars = 200, line
     'Each line should feel like a natural pause in speech — as if you are telling this to someone sitting beside you by a fire. ' +
     'Separate each line with a newline character.',
   ].filter(Boolean).join('\n\n')
+}
+
+// Story-mode twin of sanitize — split, per-line clean (numbering stripped,
+// '/'-lines DROPPED, PASS dropped), cap at `lines`. Shared with claude.js.
+function cleanStoryLines (text, maxChars, lines) {
+  const raw = stripThinking(text)
+  if (!raw) return null
+  const result = raw.split('\n')
+    .map(l => l.replace(/[Ā-￿\u{10000}-\u{10FFFF}]/gu, '').replace(/^["'`\d.\-)]+\s*/, '').replace(/["'`]+$/g, '').replace(/\s+/g, ' ').trim())
+    .filter(l => l && !/^PASS\b/i.test(l) && !l.startsWith('/'))
+    .map(l => l.length > maxChars ? (l.slice(0, maxChars).includes(' ') ? l.slice(0, l.slice(0, maxChars).lastIndexOf(' ')) : l.slice(0, maxChars)) : l)
+    .filter(Boolean)
+    .slice(0, lines)
+  return result.length ? result : null
+}
+
+async function generateStory ({ system, exemplars, context, maxChars = 200, lines = 5, timeoutMs = 60_000 }) {
+  if (!healthy) return null
+  const storySystem = buildStorySystem(system, exemplars, maxChars, lines)
   try {
     const res = await fetchWithTimeout(`${LLM_URL}/v1/chat/completions`, {
       method: 'POST',
@@ -277,15 +301,7 @@ async function generateStory ({ system, exemplars, context, maxChars = 200, line
     }, timeoutMs)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
-    const raw = stripThinking(data?.choices?.[0]?.message?.content)
-    if (!raw) return null
-    const result = raw.split('\n')
-      .map(l => l.replace(/[Ā-￿\u{10000}-\u{10FFFF}]/gu, '').replace(/^["'`\d.\-)]+\s*/, '').replace(/["'`]+$/g, '').replace(/\s+/g, ' ').trim())
-      .filter(l => l && !/^PASS\b/i.test(l) && !l.startsWith('/'))
-      .map(l => l.length > maxChars ? (l.slice(0, maxChars).includes(' ') ? l.slice(0, l.slice(0, maxChars).lastIndexOf(' ')) : l.slice(0, maxChars)) : l)
-      .filter(Boolean)
-      .slice(0, lines)
-    return result.length ? result : null
+    return cleanStoryLines(data?.choices?.[0]?.message?.content, maxChars, lines)
   } catch (e) {
     log('llm', `story generation failed (${e.message})`)
     return null
@@ -296,4 +312,8 @@ function status () {
   return { healthy, url: LLM_URL, model: LLM_MODEL, classifyPending }
 }
 
-module.exports = { init, generateLine, generateStory, classify, status, checkHealth }
+module.exports = {
+  init, generateLine, generateStory, classify, status, checkHealth,
+  // shared persona-voice helpers (used by claude.js — keep the backends in lockstep)
+  buildSystemPrompt, buildStorySystem, sanitize, cleanStoryLines,
+}

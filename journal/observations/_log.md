@@ -7,6 +7,58 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-07-11 — Local-off brain modes for resource-starved boxes (code only, bot offline)
+
+Bot was **not running** this session (ctl socket ECONNREFUSED) — pure code work.
+
+**Problem (from Quesss):** three boxes, each a bot. Private is a weak box that can
+*just* run its local model (Ollama/gemma) — but not the local model *and* the game
+client at once. The local model in claude mode is only a prefilter that hands off
+to Claude anyway. So: add a `BRAIN_MODE` that turns the local model off completely
+and lets the Claude API do all the heavy lifting.
+
+**Key finding while tracing the code:** the local model was doing *two* jobs, not
+one — (1) the cheap chat prefilter, and (2) the **only** source of the bot's
+autonomous/ambient voice (idle remarks, greet flavour, music-journal notes, nightly
+diary). `claude.js` had no voice path — even Roz-proper in `claude` mode leans on
+local Qwen for ambient one-liners. So "turn off local" forced a decision about the
+ambient voice. User chose **build both tiers**.
+
+**Implemented (2026-07-11, not yet run live):**
+- `claude-super` — Claude does everything incl. ambient voice + diary; local off.
+- `claude-private` — reactive only (speaks when spoken to/commanded); ambient +
+  diary silent; local off. Reactive story requests still reach Claude.
+- `claude.js`: new `generateLine`/`generateStory` (persona-voice twins of `llm.js`,
+  same sanitize/PASS/refusal contract). Unit-tested against a mocked API, 14/15
+  (the 1 was a wrong test expectation — double-space collapse is correct/consistent).
+- `bot.js`: predicates `usesClaudeBrain()`/`localOff()`/`ambientViaClaude()`; shims
+  `expressiveGenerate`/`expressiveStory`; `ensureLocalInited()` gates `llm.init()`
+  so the local model is never started in the no-local modes; `routeChat` +
+  `brain` ctl updated. `local`/`remote`/`claude` behaviour unchanged.
+
+Per-bot config, **not** chat-protocol-breaking — Private can run `claude-private`
+without the crew restarting together. Next: run live on Private, confirm it plays
+the game with the local model off and Claude answering.
+
+**Same day, later — review + fix pass.** Full 8-angle code review surfaced 10
+findings; all fixed and verified (16/16 mocked-API tests). Highlights: the
+bot-to-bot depth cap was *never armed* on the Claude path (state written only in
+`replyToBotTurn`, unreachable in no-local modes → potential unbounded Opus
+ping-pong — now `beginBotExchangeTurn`/`recordBotExchangeTurn` shared by both
+paths); voice prompt-rules/sanitize deduped into `llm.js` exports so the two
+backends can't drift; cost policy set by Quesss: **claude-private replies only
+when addressed (in code)**, **claude-super musings only on events with a human
+audience** (timer musings never call the API), claude-super chat stays
+model-decides. Auth errors mute all Claude calls (revive via `brain` ctl switch);
+unknown BRAIN_MODE fails loudly; runtime switch into claude-private now truly
+silences ambient local speech. CLAUDE.md Key Constraints corrected.
+
+Also captured Quesss's **mad-lib story engine** idea (4 arcs × swappable
+character/environment sets, jokes-style selection, no per-telling inference) —
+deferred until after the live test; saved to operator memory.
+
+See [[claude-brain-mode]].
+
 ## 2026-07-08 — Crew session: brain upgrade, chat-volume tuning, south double-harvest (day 46399)
 
 Full three-bot crew present (Roz, Musebot, Rainbot6032/Private). Deployed a batch

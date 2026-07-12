@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Ripplebot ("Roz") is a Mineflayer bot (`bot.js`, ~6500 lines, plus `llm.js` for the Ollama-backed voice and chat router) for a modded Minecraft 1.12.2 Forge server. It connects via Microsoft auth, runs autonomous behaviors (auto-sleep, auto-eat, auto-greet, idle wander, ambient actions, hostile retreat), and exposes a TCP JSON control API on `127.0.0.1:25580` for external orchestration. Each bot instance pairs with its own Ollama box (`LLM_URL`/`LLM_MODEL` in `.env`); the LLM is both the bot's conversational voice and its chat router.
+Ripplebot ("Roz") is a Mineflayer bot (`bot.js`, ~6500 lines, plus `llm.js` for the Ollama-backed voice and chat router and `claude.js` for the Claude-API brain/voice) for a modded Minecraft 1.12.2 Forge server. It connects via Microsoft auth, runs autonomous behaviors (auto-sleep, auto-eat, auto-greet, idle wander, ambient actions, hostile retreat), and exposes a TCP JSON control API on `127.0.0.1:25580` for external orchestration. Each bot instance pairs with its own Ollama box (`LLM_URL`/`LLM_MODEL` in `.env`); the LLM is both the bot's conversational voice and its chat router.
 
 ## Commands
 
@@ -57,8 +57,8 @@ Commands are JSON objects: `{"action":"<name>", "args":{...}}`. Key actions:
 
 ## Key Constraints
 
-- **Near-single-file architecture.** All bot logic is in `bot.js`; the only extracted module is `llm.js` (Ollama health-check, `generateLine`, `classify`).
-- **Chat requires the LLM.** Since the 2026-06-11 router refactor, only the 13 named reflex commands work without Ollama. Everything else (natural-language commands, conversation) needs the bot's Ollama box reachable.
+- **Near-single-file architecture.** All bot logic is in `bot.js`; the extracted modules are `llm.js` (local Ollama voice/classify + the shared persona-voice helpers: prompt rules, sanitize, story cleaning) and `claude.js` (Claude API brain + voice transport, which imports those helpers so the two backends can't drift).
+- **Chat requires an LLM — which one depends on `BRAIN_MODE`.** `local`/`remote`/`claude` need the bot's Ollama box reachable (in `claude` mode it prefilters and speaks the ambient voice). `claude-super`/`claude-private` never start the local model: all chat runs through the Claude API (`claude-super` also muses ambiently, gated to events-with-a-human-audience; `claude-private` is reactive-only — replies solely when addressed). The 13 named reflex commands always work with no LLM at all. See `journal/procedures/claude-brain-mode.md`.
 - **Modded 1.12.2 Forge.** Many blocks report empty names, GUIs don't fire standard mineflayer events, and protocol-level workarounds are required throughout.
 - **No combat.** The bot has no weapons/armor logic — Don't panic - hostile detection triggers a kill command to eliminate the hostile mob.
 - **Door traversal uses `walk_until` with axis-target stopping.** Pathfinder cannot navigate through doors on this server. See `data/places.md` for the exact procedure.
