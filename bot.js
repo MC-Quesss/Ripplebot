@@ -927,6 +927,32 @@ function claudeAmbientAllowed (kind) {
   return AMBIENT_EVENT_KINDS.has(kind) && humanNearby()
 }
 
+// ── Quiet hours ──────────────────────────────────────────────────────────────
+// "quiet hours" spoken by any HUMAN (no addressing needed — every bot in
+// earshot obeys) puts the bot in silent-working mode: fire duty, dot-code
+// coordination, reflex commands, and auto-sleep all keep running, but ZERO
+// LLM/API engagement happens — no chat replies, no ambient musings, no music
+// notes, no diary, no fun-RPS banter. "rise and shine" unlocks. Deterministic
+// regex in the chat handler (works with the API unreachable, costs nothing) —
+// this is how the crew runs overnight without racking up a token bill.
+// State persists across restarts: a 4am crash-relaunch comes back still quiet.
+const QUIET_ON_RE = new RegExp(process.env.QUIET_ON_PHRASE || 'quiet hours', 'i')
+const QUIET_OFF_RE = new RegExp(process.env.QUIET_OFF_PHRASE || 'rise and shine', 'i')
+const QUIET_STATE_PATH = path.join(__dirname, 'data', 'quiet.json')
+let quietMode = false
+try { quietMode = !!JSON.parse(fs.readFileSync(QUIET_STATE_PATH, 'utf8')).quiet } catch {}
+if (quietMode) logEvent('quiet', 'starting in quiet hours (persisted) — LLM/API engagement off')
+function setQuietMode (on, via) {
+  if (quietMode === on) return false
+  quietMode = on
+  try {
+    fs.mkdirSync(path.dirname(QUIET_STATE_PATH), { recursive: true })
+    fs.writeFileSync(QUIET_STATE_PATH, JSON.stringify({ quiet: on }))
+  } catch (e) { logEvent('quiet', `state save failed: ${e.message}`) }
+  logEvent('quiet', `${on ? 'ON' : 'OFF'} (${via})`)
+  return true
+}
+
 
 // Shared world context for LLM-generated speech.
 // Keep persona identity in personas/*.json, and keep place/world facts here.
@@ -985,6 +1011,10 @@ function peerDiaryTails () {
 
 async function tryWriteDiary () {
   if (PERSONA === 'default') return
+  // Quiet hours: skip BEFORE marking the day, so the first bedtime after
+  // "rise and shine" writes an entry again. Overnight in-game days are ~20min
+  // real time — ungated this would be dozens of API calls by morning.
+  if (quietMode) return
   const day = bot.time?.day
   if (typeof day !== 'number' || day === lastDiaryDay) return
   if (!bot.isSleeping) return // write once tucked in for the night
@@ -1102,7 +1132,7 @@ function markRecordHeard (recordName, { via = 'self' } = {}) {
   logEvent('music', `heard ${recordName} (via ${via}); times=${m.timesHeard} day=${m.lastHeardDay}`)
   // Sometimes write a private impression into the journal — a note to self,
   // never chatted. Ollama down = no note this time; the counters still update.
-  if (Math.random() < 0.6 && claudeAmbientAllowed('music')) {
+  if (Math.random() < 0.6 && !quietMode && claudeAmbientAllowed('music')) {
     const info = recordInfo(recordName)
     expressiveGenerate({
       system: personaSpec.systemPrompt,
@@ -2326,13 +2356,20 @@ function buildExpressiveContext (situation) {
 // which render as nonsense ("Muse Observe!") — so the prompt states the format
 // and asActionText() verifies the render before anything reaches chat.
 function actionTextFormatNote () {
-  return `Format: your line renders as action text after your name — chat will show "~${bot.username} <your line>". Write ONE short third-person stage direction that completes that sentence: start with a lowercase present-tense verb ("watches...", "frets over...", "recalculates..."). Stay in persona through word choice, not exclamations. No first person, no quotation marks, no exclamation openers, and never include your own name.`
+  const shown = NICKNAME || bot.username
+  return `Format: your line renders as action text after your name — chat will show "* ${shown} <your line>". Write ONE short third-person stage direction that completes that sentence: start with a lowercase present-tense verb ("watches...", "frets over...", "recalculates..."). Stay in persona through word choice, not exclamations. No first person, no quotation marks, no exclamation openers, and never include your own name ("${shown}").`
 }
 
 function asActionText (line) {
   let t = line.trim().replace(/^["'`*~]+|["'`*~]+$/g, '').trim()
-  t = t.replace(new RegExp(`^${bot.username}[:,]?\\s+`, 'i'), '') // model echoed the name
-  t = t.replace(/^\/me\s+/i, '')
+  // The server renders /me as "* <nick> <line>". The old guard stripped only
+  // the ACCOUNT name (Ripplebot) — but the model echoes the display nick
+  // (Roz), which sailed through and rendered "* Roz Roz watches..." in chat.
+  // Strip every one of our names from the head, repeatedly (doubles happen).
+  t = t.replace(/^\/me\s+/i, '') // strip an echoed /me FIRST — a name can hide behind it
+  const myNames = [...new Set([bot.username, NICKNAME, personaSpec.name].filter(Boolean))]
+  const nameHead = new RegExp(`^(?:${myNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})[:,]?\\s+`, 'i')
+  while (nameHead.test(t)) t = t.replace(nameHead, '')
   if (!t) return null
   // First-person openers and vocative interjections can't follow "~Name " —
   // drop the line rather than print gibberish.
@@ -2346,6 +2383,7 @@ function asActionText (line) {
 // the persona spec, speak through the gate. The model may PASS; Ollama being
 // down means silence. Returns whether a line was spoken.
 async function impulseExpressive (kind, situation, { me = false, delayMs = 0, skipGate = false } = {}) {
+  if (quietMode) return false // quiet hours: no generated speech, no API calls
   if (!claudeAmbientAllowed(kind)) return false // API-cost musings: special circumstances only
   if (!skipGate && !expressiveGateOpen(kind)) return false
   if (delayMs) {
@@ -3920,6 +3958,7 @@ function rpsFunRivalName () {
 
 async function runFunRpsChallenger () {
   if (rpsFunBusy) return null
+  if (quietMode) return null // quiet hours: no banter games overnight
   if (isBedtime()) return null
   if (insideHouse()) return null
   if (sustainState.active && !sustainState.potatoRole) return null
@@ -5012,7 +5051,11 @@ async function runSustainFarm (user) {
         if (dueHalves.length) {
           const harvestHalf = dueHalves.length === 2 ? 'all' : `${dueHalves[0]}-field`
           const scan = scanKnownWheatFields(dueHalves.length === 2 ? null : dueHalves[0])
-          logEvent('sustain', `wheat ready (mature=${scan.mature}/${scan.expected}, ${scan.maturePct.toFixed(0)}%) — cycle ${sustainState.cycles + 1} half=${harvestHalf}`)
+          // Say WHY it fired: a pending-work resume can trigger below the 85%
+          // threshold, and a bare percentage there reads like a threshold bug.
+          const pendingHalves = dueHalves.filter(h => sustainState.pendingWork.has(h))
+          const why = pendingHalves.length ? `resuming pending work (${pendingHalves.join('+')})` : '>=85% mature'
+          logEvent('sustain', `wheat ready (mature=${scan.mature}/${scan.expected}, ${scan.maturePct.toFixed(0)}%; ${why}) — cycle ${sustainState.cycles + 1} half=${harvestHalf}`)
           sustainState.cycles++
           // Recoverable try — path failures, door snags etc. skip this cycle
           // and retry next poll. Only AbortError + inactive kills the loop.
@@ -8767,6 +8810,7 @@ function buildClaudeChatHistory () {
 }
 
 async function routeChat (username, message, { namedMe, fromBot }) {
+  if (quietMode) return // quiet hours: no LLM/API engagement at all
   if (fromBot && !botExchangeAllows(username)) return
 
   if (brainMode === 'remote') {
@@ -8818,36 +8862,91 @@ async function routeChat (username, message, { namedMe, fromBot }) {
       if (fromBot) return replyToBotTurn(username, message)
     }
 
-    // A bot line reaching brainChat IS a bot-exchange turn — arm the same
-    // bookkeeping replyToBotTurn keeps, or botExchangeAllows never sees an
-    // exchange start and BOT_CHAT_DEPTH is a dead letter on this path (two
-    // no-local bots could ping-pong paid calls forever).
-    if (fromBot) beginBotExchangeTurn(username)
-
-    const expressiveCtx = buildExpressiveContext(
-      `<${username}> just said: "${message}"\n` +
-      (namedMe ? 'This message is addressed to you.' : 'This message was said to the room.') +
-      (fromBot ? ' The speaker is another robot.' : ' The speaker is a human player.')
-    )
-    const chatHistory = buildClaudeChatHistory()
-    const result = await claude.brainChat({
-      systemPrompt: buildClaudeBrainSystemPrompt(),
-      userMessage: expressiveCtx,
-      chatHistory,
-    })
-    if (!result) {
-      if (localOff()) {
-        logEvent('claude', `brainChat returned null — no local fallback in ${brainMode} mode`)
-        return
-      }
-      logEvent('claude', 'brainChat returned null — falling back to local')
-      return routeChatLocal(username, message, { namedMe, fromBot })
-    }
-    await executeClaudeResponse(username, message, result, { namedMe, fromBot })
-    return
+    return enqueueClaudeBrainTurn(username, message, { namedMe, fromBot })
   }
 
   return routeChatLocal(username, message, { namedMe, fromBot })
+}
+
+// ── Claude-brain burst merge + serialization ─────────────────────────────────
+// Bots chunk their replies into 2-3 chat lines milliseconds apart (and humans
+// type fast). Routing each line to its own CONCURRENT brainChat produced
+// duplicate answers — neither call saw the other's reply, so the bot said the
+// same thing twice and paid twice (observed live 2026-07-12, Roz answering
+// Private's two-line messages with two near-identical replies). Fix: buffer
+// lines per speaker for a short window, merge the burst into ONE call, and
+// serialize calls on a promise chain so each sees the previous reply in the
+// chat tail and the model can PASS instead of repeating itself.
+const CLAUDE_BURST_MS = 1800
+const CLAUDE_ROUTE_MAX_PENDING = 3
+const claudeBursts = new Map() // username -> { lines, namedMe, fromBot, timer }
+let claudeRouteChain = Promise.resolve()
+let claudeRoutePending = 0
+
+function enqueueClaudeBrainTurn (username, message, { namedMe, fromBot }) {
+  let b = claudeBursts.get(username)
+  if (!b) {
+    b = { lines: [], namedMe: false, fromBot, timer: null }
+    claudeBursts.set(username, b)
+  }
+  b.lines.push(message)
+  b.namedMe = b.namedMe || namedMe
+  if (b.timer) clearTimeout(b.timer)
+  b.timer = setTimeout(() => {
+    claudeBursts.delete(username)
+    if (claudeRoutePending >= CLAUDE_ROUTE_MAX_PENDING) {
+      logEvent('claude', `route backlog (${claudeRoutePending}) — dropping burst from ${username}`)
+      return
+    }
+    claudeRoutePending++
+    claudeRouteChain = claudeRouteChain
+      .then(() => runClaudeBrainTurn(username, b.lines, { namedMe: b.namedMe, fromBot: b.fromBot }))
+      .catch(e => logEvent('claude', `brain turn error: ${e.message}`))
+      .finally(() => { claudeRoutePending-- })
+  }, CLAUDE_BURST_MS)
+  if (b.timer.unref) b.timer.unref()
+}
+
+async function runClaudeBrainTurn (username, lines, { namedMe, fromBot }) {
+  // Re-check the gates at fire time — quiet hours may have started, the mode
+  // may have switched, or an earlier queued turn may have used up the exchange
+  // budget while this burst waited.
+  if (quietMode || !usesClaudeBrain()) return
+  if (fromBot && !botExchangeAllows(username)) return
+  // A bot line reaching brainChat IS a bot-exchange turn — arm the same
+  // bookkeeping replyToBotTurn keeps, or botExchangeAllows never sees an
+  // exchange start and BOT_CHAT_DEPTH is a dead letter on this path (two
+  // no-local bots could ping-pong paid calls forever).
+  if (fromBot) beginBotExchangeTurn(username)
+
+  const said = lines.length === 1
+    ? `just said: "${lines[0]}"`
+    : `just said, over ${lines.length} quick lines:\n${lines.map(l => `"${l}"`).join('\n')}\nAnswer the whole message ONCE — do not respond line by line.`
+  const expressiveCtx = buildExpressiveContext(
+    `<${username}> ${said}\n` +
+    (namedMe ? 'This message is addressed to you.' : 'This message was said to the room.') +
+    (fromBot ? ' The speaker is another robot.' : ' The speaker is a human player.')
+  )
+  const chatHistory = buildClaudeChatHistory()
+  const result = await claude.brainChat({
+    systemPrompt: buildClaudeBrainSystemPrompt(),
+    userMessage: expressiveCtx,
+    chatHistory,
+  })
+  if (!result) {
+    if (localOff()) {
+      logEvent('claude', `brainChat returned null — no local fallback in ${brainMode} mode`)
+      return
+    }
+    logEvent('claude', 'brainChat returned null — falling back to local')
+    return routeChatLocal(username, lines[lines.length - 1], { namedMe, fromBot })
+  }
+  // Hold the chain only long enough for the REPLY to be spoken (covers the
+  // 5-12s bot-reply pacing) — a long-running action (harvest, bake) must not
+  // block the chat queue behind it; the task system guards action concurrency.
+  const done = executeClaudeResponse(username, lines.join(' / '), result, { namedMe, fromBot })
+    .catch(e => logEvent('claude', `executeClaudeResponse error: ${e.message}`))
+  await Promise.race([done, sleep(15_000)])
 }
 
 async function routeChatLocal (username, message, { namedMe, fromBot }) {
@@ -8981,6 +9080,20 @@ bot.on('chat', (username, message) => {
   rememberChatPhrase(message)
   rememberRecentChat(username, message)
   const fromBot = looksLikeBot(username)
+
+  // Quiet-hours triggers: human-only, deterministic, no addressing needed.
+  // Checked before ANY routing so they work with the LLM/API down and cost
+  // nothing. The ack is canned — one line per bot, then silence.
+  if (!fromBot) {
+    if (QUIET_ON_RE.test(message)) {
+      if (setQuietMode(true, `chat by ${username}`)) bot.chat('Quiet hours. Keeping the fire going, silently.')
+      return
+    }
+    if (QUIET_OFF_RE.test(message)) {
+      if (setQuietMode(false, `chat by ${username}`)) bot.chat('Good morning. I am listening again.')
+      return
+    }
+  }
   if (fromBot) {
     trackFireCoordination(username, message)
     // A line with a machine core is coordination plumbing (spoken-dialog
@@ -9646,6 +9759,11 @@ function handleCommand (cmd) {
       const local = localInited ? llm.status() : { healthy: false, off: true }
       return { ok: true, ...local, persona: PERSONA, personaName: personaSpec.name, botChatDepth: BOT_CHAT_DEPTH, brainMode, claude: claude.status() }
     }
+    case 'quiet': {
+      // {"action":"quiet"} → status; {"args":{"enabled":true|false}} → set.
+      if (typeof args.enabled === 'boolean') setQuietMode(args.enabled, 'ctl')
+      return { ok: true, quiet: quietMode }
+    }
     case 'brain': {
       const newMode = String(args.mode || '').toLowerCase()
       if (newMode && !KNOWN_BRAIN_MODES.has(newMode)) {
@@ -9672,7 +9790,7 @@ function handleCommand (cmd) {
         logEvent('brain', 'switched to remote (chat driven externally via bot-ctl)')
         return { ok: true, mode: 'remote' }
       }
-      return { ok: true, mode: brainMode, local: localInited ? llm.status() : { off: true }, claude: claude.status(), prefilter: brainMode === 'claude' ? CLAUDE_PREFILTER : 'none', localOff: localOff(), ambientViaClaude: ambientViaClaude() }
+      return { ok: true, mode: brainMode, quiet: quietMode, local: localInited ? llm.status() : { off: true }, claude: claude.status(), prefilter: brainMode === 'claude' ? CLAUDE_PREFILTER : 'none', localOff: localOff(), ambientViaClaude: ambientViaClaude() }
     }
     case 'mem': {
       // Memory counters: {"action":"mem"}

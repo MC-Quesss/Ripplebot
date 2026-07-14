@@ -57,7 +57,53 @@ Also captured Quesss's **mad-lib story engine** idea (4 arcs × swappable
 character/environment sets, jokes-style selection, no per-telling inference) —
 deferred until after the live test; saved to operator memory.
 
-See [[claude-brain-mode]].
+**Evening — fire-overhaul pendingWork resume VERIFIED LIVE (2-bot).** Quesss
+reported "harvested 10 tiles, interrupted, won't harvest until 80%" — log
+forensics showed the opposite: south field triggered at 98%, RPS challenge
+paused the harvest at tile 10/54 (remainder marked pendingWork), RPS aborted
+("rival never signalled ready"), and the *same second* cycle 2 fired at 80% —
+below the 85% threshold, via the pendingWork bypass — swept all 54 tiles,
+gained 43 wheat, crafted plantballs, deposited 26 to the hopper, flag cleared.
+Exactly the F4 design. The scare was a misleading log line (bare percentage
+reads like a threshold decision) — `wheat ready` now logs *why* it fired
+(`resuming pending work (south)` vs `>=85% mature`).
+
+Secondary observation: the duty-RPS challenger retries every ~8s with no
+backoff while the rival is busy (Private was deep in conversation with
+Namamom). Converged after ~10 attempts when Private counter-challenged; cost
+is dot-code chat noise only, no LLM calls. Possible future nicety: a short
+challenge-retry cooldown (local pacing, not protocol-breaking).
+
+**Roz restarted onto the new code at 02:55 UTC in claude-super — live test
+began.** Local model confirmed off (no `[llm]` init). Two issues surfaced fast:
+
+1. **Answering twice (diagnosed + fixed):** Private chunks replies into 2-3
+   chat lines ms apart; each line got its own CONCURRENT brainChat call, so
+   neither reply saw the other — Roz said "I will take north" twice and paid
+   twice. Fix: per-speaker burst buffer (1.8s), merged into ONE call,
+   serialized on a promise chain so each call sees the previous reply; chain
+   hold is bounded (15s) so long actions don't block the chat queue.
+2. **"A bit chatty" overnight cost (fixed): quiet hours.** Human says
+   **"quiet hours"** → all bots keep working with ZERO LLM/API engagement;
+   **"rise and shine"** unlocks. Deterministic regex, canned acks, state
+   persisted to `data/quiet.json` so a crash-relaunch stays quiet. New note:
+   [[quiet-hours]]. Gates: routeChat, impulseExpressive, music notes, diary,
+   fun-RPS. Reflex commands + fire duty unaffected.
+
+Both need a Roz restart to take effect (and crew pulls for Muse/Private to
+obey the phrases).
+
+**2026-07-13: "* Roz Roz ..." /me doubling fixed.** `asActionText` stripped
+only the ACCOUNT name (Ripplebot) from a generated action line, but the server
+renders /me with the display nick (Roz) — which is the name the model actually
+echoes, so it sailed through and chat showed "* Roz Roz watches...". Now all
+of the bot's names (account, nick, persona) are stripped from the head,
+repeatedly (doubles happen), with `/me` stripped first since a name can hide
+behind it; `actionTextFormatNote` also now shows the model the real render
+("* Roz ...") and names the exact name to avoid. Verified with 6/6 strip
+tests. Needs the same pending restart.
+
+See [[claude-brain-mode]], [[keep-the-fire-going]].
 
 ## 2026-07-08 — Crew session: brain upgrade, chat-volume tuning, south double-harvest (day 46399)
 
