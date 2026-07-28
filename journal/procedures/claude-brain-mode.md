@@ -26,6 +26,15 @@ event-driven musings (`music`, `craft`, `victory`, `bedtime_suggest`, `rps`,
 Local modes are unaffected — qwen musings stay chatty. The nightly diary in
 claude-super is exempt (once per day, bounded).
 
+> **⚠ 2026-07-27: "bounded" is wrong.** `tryWriteDiary` keys on `bot.time.day` —
+> an *in-game* day, ~10.6 minutes real. Measured from the diary file: **up to 91
+> entries in one real calendar day**, median 25. Each is an Opus call at
+> `maxTokens: 1024` with a full context + tails, making the diary the most
+> expensive recurring call in the bot — and the only one exempted from the cost
+> gate. It went unnoticed because every one of those calls was failing with a 400
+> (see the temperature bug below). Fix direction: gate on real elapsed time, not
+> `bot.time.day`. See [[../observations/_log]] (2026-07-27).
+
 **claude-private "addressed"** = nickname match or the followed player speaking
 — checked in `routeChat` before any API call, so overheard human conversations
 and unnamed bot chatter cost nothing.
@@ -103,3 +112,38 @@ lazily starts it if it was never initialised at boot.
 - **Cost bounds**: bot-exchange depth cap armed on the Claude path (was dead — unbounded bot-to-bot Opus loops possible); claude-private addressed-only gate in code; claude-super ambient gated to events + human audience; single-flight voice lock; auth-error mute with `claude.revive()` escape hatch; `callApi` shared request core (brainChat + voice).
 - **Robustness**: unknown `BRAIN_MODE` fails loudly to local; runtime switch into claude-private now truly silences ambient local speech (`expressiveGenerate`/`expressiveStory` check `localOff()` explicitly); `llm` ctl reports `off:true` instead of a fake crash; RPS canned fallback only fires while the challenge is still open; CLAUDE.md Key Constraints corrected.
 Still pending: live test (planned: this box first, then Private).
+
+2026-07-27 — **the live test's verdict, found in the log: the Claude voice has
+never once succeeded.** `claude.js` `callVoice` passes `temperature: 0.7`; the
+model in use (`claude-opus-4-8`) rejects it outright:
+
+```
+[claude] voice API error 400: `temperature` is deprecated for this model.
+```
+
+85 such errors in `bot.log`, **0 successful voice calls, ever** — first at
+2026-07-12T02:59Z, the day after the modes were built, continuing to the present.
+`callApi` only includes the field when non-null (`...(temperature != null ? …)`),
+and `callVoice` is its **only** caller that passes one. That single asymmetry is
+the whole bug: `brainChat` omits temperature and works perfectly, which is why
+Roz converses normally and the outage stayed invisible.
+
+**Blast radius — everything routed through `generateLine`/`generateStory` in a
+no-local mode:** nightly diary, idle/ambient one-liners, greet flavour,
+music-journal notes, RPS banter (`impulseExpressive`). In `claude-super` the
+local model is never started, so there is no fallback — these are simply silent.
+Reactive chat is unaffected.
+
+**Why nobody noticed:** the diary logs its failure as
+`no entry generated (LLM unavailable or passed)` — one message for two very
+different causes (backend broken vs. model declining), and `tryWriteDiary`
+swallows the reason with `.catch(() => null)`. A green-looking log line was
+reporting a hard 400. See [[../observations/_log]] (2026-07-27).
+
+**Fix:** delete `temperature: 0.7,` from `callVoice` in `claude.js` (~line 132).
+One line; needs a bot restart. Not cross-bot protocol-breaking — but Muse and
+Private run the same `claude.js`, so any bot in a no-local mode has the same
+dead voice.
+
+**Also corrected here:** this note's header and Config section say Opus 4.6;
+`claude.js` actually defaults to `claude-opus-4-8` (`CLAUDE_MODEL` overrides).

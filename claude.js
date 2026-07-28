@@ -129,7 +129,11 @@ async function callVoice ({ systemPrompt, context, maxTokens }) {
       system: systemPrompt,
       messages: [{ role: 'user', content: context }],
       maxTokens,
-      temperature: 0.7,
+      // No `temperature`: current Opus models reject it outright ("`temperature`
+      // is deprecated for this model", HTTP 400). This one field silently killed
+      // EVERY voice call from 2026-07-12 to 2026-07-27 — 85 errors, 0 successes —
+      // while brainChat kept working because it never passed one. `callApi` only
+      // sends the field when non-null, so omitting it here is the whole fix.
       timeoutMs: VOICE_TIMEOUT_MS,
       tag: 'voice',
     })

@@ -7,6 +7,215 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-07-27 — The silent voice: one deprecated field, fifteen days (day 48017→48018)
+
+**State at start:** Roz live at (-277.8, 64, 570.7), HP 20/20, food 20/20, **0 deaths**,
+day 48017, `timeOfDay` 10547, `BRAIN_MODE=claude-super`. Idle-wandering; Muse, Quesss
+and ABBYO on the server. No task, no sustain loop.
+
+### The find: Claude's voice path had never once worked
+
+Chased a small thing and hit a big one. Roz slept normally at 23:32:02, and three
+seconds later logged `[diary] day 48017: no entry generated (LLM unavailable or
+passed)` — the same line found on days 47740–47743. Looking at the raw window
+instead of the filtered one showed what the diary line was hiding:
+
+```
+[claude] voice API error 400: `temperature` is deprecated for this model.
+```
+
+**Counted in `bot.log`: 85 voice errors, 0 successful voice calls, ever** — first
+2026-07-12T02:59Z, the day after `claude-super` shipped, unbroken to today.
+
+- `claude.js` `callVoice` passed `temperature: 0.7`; `claude-opus-4-8` rejects the
+  field outright. `callApi` only sends it when non-null and `callVoice` was its
+  **only** caller that did — so `brainChat` (which omits it) worked flawlessly.
+  Roz conversed all day while every autonomous utterance died.
+- Blast radius in a no-local mode: nightly diary, idle/ambient one-liners, greet
+  flavour, music-journal notes, RPS banter. In `claude-super` the local model is
+  never started, so there was no fallback — just silence.
+- Last diary entry written: **day 47580 (2026-07-22)**. ~438 in-game days lost.
+
+### Why it hid so well — a measurement that couldn't distinguish its causes
+
+The diary reported a hard HTTP 400 as `LLM unavailable or passed`: one string for
+"backend is broken" and "model declined", with `.catch(() => null)` throwing the
+reason away. It read like a normal quiet night. **A metric that returns the same
+value for healthy and broken isn't monitoring — it's camouflage.**
+
+### Second, separate bug: the diary copies itself — chronically, on every backend
+
+Noticed days **47578, 47579, 47580 were byte-identical** and first guessed the
+dropped temperature had turned `ownTail` continuity into a photocopier.
+**Measured it, and that guess was wrong.** Across all 553 entries:
+
+| | |
+|---|---|
+| entries | 553 (353 unique bodies) |
+| part of a duplicate group | **295 — 53.3%** |
+| consecutive-identical runs | 94 |
+| longest run | **20 identical entries in a row** (days 45934–45983) |
+
+Per-date duplication is 13–67% on **every** date from 2026-07-03 onward — right
+through the local-Qwen era, before the Opus 4.8 upgrade (07-08) and before
+`claude-super` existed (07-11). It is backend-independent, so temperature is not
+the cause and never was.
+
+**Actual suspect:** `tryWriteDiary` calls `readDiaryTail(DIARY_PATH)` at its
+default **700 chars** — roughly one to two whole entries — and hands it over
+labelled "Your previous entry, for continuity". On a quiet night the prompt also
+says "Nothing much happened today", so the model is given a complete entry, no new
+material, and an instruction to continue. Re-emitting the input is the path of
+least resistance. Not deterministic: tonight's day-48019 entry also had **0
+events** and came out entirely original — the copying is a strong pull, worst when
+the model is small or the day is empty.
+
+Fix direction (not yet done): shrink `ownTail`, or pass only the *last line or
+two*, or state explicitly "do not repeat these sentences — write something new".
+Test by counting duplicate bodies again after a week.
+
+**Early evidence the Opus voice may not have this habit:** days 48019 and 48020
+were both written with **0 events**, 11 minutes apart — the exact conditions that
+produced the old copies — and came out distinct (19% word overlap, ordinary for
+two entries by one voice about one farm). n=2, so watch rather than conclude.
+
+### Third finding: "the nightly diary" fires up to 91× per REAL day
+
+[[procedures/claude-brain-mode]] exempts the diary from the claude-super cost gate
+as "once per day, bounded". **The word doing the unexamined work is "day".**
+`tryWriteDiary` keys on `bot.time.day` — an *in-game* day, measured tonight at
+**~10.6 minutes** real (day 48019 at 23:53:35 → 48020 at 00:04:10).
+
+Entries per real calendar day, straight from the diary file:
+
+| Date | Entries | Date | Entries |
+|---|---|---|---|
+| 2026-07-03 | **91** | 2026-07-13 | 71 |
+| 2026-07-04 | 49 | 2026-07-14 | 73 |
+| 2026-07-05 | 69 | 2026-07-20 | 75 |
+| 2026-07-06 | 60 | 2026-07-22 | 12 |
+
+Median 25/day, peak **91**. In `claude-super` each one is an Opus call at
+`maxTokens: 1024` carrying `buildExpressiveContext` + a 700-char own-tail + up to
+two 400-char peer tails. So the single most expensive recurring call in the bot is
+the one thing deliberately exempted from the cost policy built to keep an empty
+farm at $0. Nobody saw the bill because the calls were 400ing the whole time — the
+voice bug was masking the cost bug.
+
+**Tested whether the volume also explains the duplication — it mostly doesn't.**
+Correlation between entries-per-real-day and that day's duplication rate is
+**r = 0.27 (n = 15 days)**; days with ≤12 entries average 25% duplication vs 37%
+for days with ≥49. Real but weak. Writing 91 near-identical diary entries about one
+real afternoon is clearly *a* pressure toward copying, but it is not the whole
+story, and the `ownTail` question stays open.
+
+**Suggested fix (user's call):** gate `tryWriteDiary` on real elapsed time — at
+most one entry per N real hours — rather than on `bot.time.day`. That cuts the cost
+by ~50-90×, removes the "nothing happened since the last entry" condition, and
+makes each entry cover a span in which something actually occurred.
+
+**Aside on the timeline:** entries kept being written 07-13 → 07-22 despite the
+voice being dead from 07-12, because the box was not in `claude-super` continuously
+— in `local`/`claude` modes `expressiveStory` falls through to local Qwen, which
+worked. The diary only went fully silent once claude-super became the standing mode.
+
+### Fixed and verified live
+
+- `claude.js` — removed `temperature: 0.7` from `callVoice` (+ comment so it is
+  never re-added). A/B against the live API: **with** the field → HTTP 400;
+  **without** → HTTP 200.
+- `bot.js` `tryWriteDiary` — failure log now names the cause and points at the
+  `[claude] voice` error instead of implying a benign pass.
+- End-to-end check of the real module (not just the HTTP shape): `generateLine`
+  and `generateStory` both returned clean persona text through
+  `buildSystemPrompt`/`cleanStoryLines`. **First successful voice calls in the
+  bot's history.**
+- Bot announced, restarted, respawned clean at (-282.5, 63.9, 563.5), 0 deaths.
+
+**Crew note:** `bot.js` change is a log string only — *not* protocol-breaking, no
+synchronized crew restart needed. But **Muse and Private run the same `claude.js`**
+— any bot in `claude`/`claude-super`/`claude-private` has the identical dead voice
+until the fix reaches its box. See [[reference_crew_git_workflow]] (user drives pushes).
+
+### Corrected in passing
+
+- [[procedures/claude-brain-mode]] said Opus 4.6; `claude.js` defaults to
+  `claude-opus-4-8`.
+- Suspected a bot could trip another bot's quiet-hours toggle when Muse said
+  "Rise and shine!" in conversation — **wrong, the code is right**: the trigger is
+  guarded by `if (!fromBot)`. Recorded because the disproof is worth as much as
+  the find.
+- Suspected Roz's brain ignored its time-of-day context (said "good morning" right
+  after Muse said "dusk is settling") — **also wrong**. The in-game day had rolled
+  48017→48018; `timeOfDay` was 677, i.e. dawn. Roz was correct and Muse was stale.
+  Roz's "sixty-one baked and ten raw" also matched inventory exactly. Context
+  injection is working well.
+
+### Open questions
+
+- Do diary entries still duplicate now that the voice actually runs?
+- [[procedures/rps-with-a-player]] and [[procedures/follow-hop-assist]] are still
+  untested live — and RPS's celebration lines route through the voice path that was
+  dead, so its canned fallbacks are all anyone has ever seen.
+- `startHumanRps` swallows the word "stop" as a game-quit before the safety reflex
+  tier — see the note.
+
+### Later, 00:10 — unprompted live drill: Roz + Muse fire-duty handoff, clean
+
+Quesss asked both bots in chat to keep the fire going. What followed needed no
+operator input and had no protocol faults:
+
+| Step | Result |
+|---|---|
+| sustain start | `active: true`, `startedBy: "Quesss"` |
+| Muse challenges, Roz accepts | no `.d` echo chamber, no phantom re-seeding |
+| synced reveal ticks | `1117246854`, `1117246994` — both bots agreed |
+| rounds | scissors > paper; rock > scissors → Roz 2-0 |
+| handoff | Roz claims potatoes + releases south; Muse takes north |
+| final | `duties: ["potatoes"]`, `crew: {musebot: "north"}` |
+
+This is the **Roz+Muse** pairing verified for the first time (the 2026-07-11 drill
+was Roz+Private), and the first clean run of the `.e`-accept era — the `.d` echo
+chamber from the 2026-07-03 drill did not recur. Still unverified in the field: the
+dead-keeper wellness drill (`.c`→`.q`) and a real `.q` handoff.
+
+### Fact-checked a diary entry against the log — it holds up
+
+Day 48021 (the first entry written with real events: 5) was audited claim by claim,
+because a journal that invents numbers is worse than no journal:
+
+| Diary claim | Log |
+|---|---|
+| "one hundred and seventy-five potatoes" | `gained=175` ✓ |
+| "Not one tile broken" | `activated=107 harvested=0` — all right-click replanted ✓ |
+| won the RPS against Muse | `won best-of-3 (2-0)` ✓ |
+| "the south field is bare and resting" | handed off south; 53 wheat cut ✓ |
+| "Muse wrote that a full larder makes even a droid lighter" | real paraphrase of `bots/protocol.md:581` ✓ |
+
+**One embroidery:** Roz wrote "rock, then scissors" — the actual order was scissors
+(round 1) then rock (round 2). The `diaryNote` for a duty-RPS records only the
+score, not the throws, so the model invented a detail its context didn't contain.
+Harmless here; worth knowing the diary will decorate specifics it wasn't given.
+
+**Peer attribution is inferred, not given.** `peerDiaryTails` labels entries by
+*persona filename* — Roz is shown "From protocol's diary" and has to know that
+`protocol` is Musebot. It got it right, but the mapping is the model's inference,
+not data. Fragile if a persona is ever renamed or a fourth bot joins.
+
+Method note: this audit was nearly botched — an early `tail -8` on the log window
+cut the potato harvest out of view and made the 175 look invented. The claim was
+right and the filter was wrong. Check the instrument before doubting the reading.
+
+### Post-fix health (23:46 → 00:12)
+
+`0` voice API errors, `10` brainChat ok, `2` diary entries written, `0` errors of
+any kind. Note `callVoice` logs **only on failure**, so a working voice is silent in
+the log — the diary-write lines are the positive evidence. Minor observability gap;
+not worth a fix while the diary covers it.
+
+New/updated notes: [[procedures/claude-brain-mode]], [[procedures/rps-with-a-player]],
+[[procedures/follow-hop-assist]].
+
 ## 2026-07-11 — Local-off brain modes for resource-starved boxes (code only, bot offline)
 
 Bot was **not running** this session (ctl socket ECONNREFUSED) — pure code work.

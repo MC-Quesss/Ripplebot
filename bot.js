@@ -1028,15 +1028,22 @@ async function tryWriteDiary () {
     ownTail ? `Your previous entry, for continuity:\n...${ownTail}` : null,
     peers.length ? `${peers.join('\n\n')}\n\nIf a housemate's entry touches something you experienced too, you may nod to it.` : null,
   ].filter(Boolean).join('\n\n'))
+  let storyErr = null
   const entry = await expressiveStory({
     system: personaSpec.systemPrompt,
     exemplars: personaSpec.exemplars,
     context,
     lines: 4,
     maxChars: 240,
-  }).catch(() => null)
+  }).catch(e => { storyErr = e; return null })
   if (!entry || !entry.length) {
-    logEvent('diary', `day ${day}: no entry generated (LLM unavailable or passed)`)
+    // Say which of the two it was. The old wording ("LLM unavailable or passed")
+    // read as benign and hid a hard API 400 for 15 days — see the temperature
+    // bug in journal/procedures/claude-brain-mode.md (2026-07-27).
+    const why = storyErr
+      ? `threw: ${storyErr.message}`
+      : `backend returned nothing (brain=${brainMode}) — look for a [claude] voice / [llm] error just above; a bare PASS means the model declined`
+    logEvent('diary', `day ${day}: no entry — ${why}`)
     return
   }
   try {
@@ -3854,6 +3861,7 @@ let rpsCurrentRival = null // set for the duration of a match — routes .t/.a l
 let rpsChantResolve = null // resolve for the challenger's chant (.t<round> @<tick>)
 let rpsLastChant = null // { from, round, tick, at } — buffered so a chant that beats the listener isn't lost
 let rpsAbortResolve = null // armed per match; .a from the rival fires it
+let rpsHumanState = null // { player, resolve } — armed while a human match waits on the player's typed throw
 
 function rpsWinner (a, b) {
   if (a === b) return 'tie'
@@ -4035,7 +4043,10 @@ async function startFunRps (user) {
     bot.chat('I am on fire duty right now — have me stand down first and I will play.')
     return
   }
-  if (!rpsFunRivalName()) { bot.chat('No other unit nearby to play against.'); return }
+  if (!rpsFunRivalName()) {
+    bot.chat('No other unit nearby — but I will play YOU. Say "play RPS with me".')
+    return
+  }
   if (insideHouse()) {
     try {
       await runGoOutside('play RPS')
@@ -4047,6 +4058,121 @@ async function startFunRps (user) {
   }
   const started = await runFunRpsChallenger()
   if (!started) bot.chat('Could not get a game going — maybe next time.')
+}
+
+// ── Human-vs-bot RPS ─────────────────────────────────────────────────────────
+// A player challenges the bot directly ("play RPS with me"). None of the
+// bot-vs-bot machinery applies: no machine codes, no meet spot, no synced
+// reveal ticks — the ceremony runs on human time wherever we stand. The bot
+// commits its throw at the top of the round, the player types theirs after
+// "Shoot!", and only then does the bot reveal the pre-committed pick (user,
+// 2026-07-13: bot-reveals-first lets the player counter-pick — the bot must
+// hold its throw until the player has called). The capture listener
+// (rpsHumanState) is armed only while a round waits and only for the rival
+// player, so everyone else's chatter still flows to the router.
+async function startHumanRps (user) {
+  facePlayer(user).catch(() => {})
+  if (isBedtime()) { bot.chat('Not now — it is nearly bedtime. A game in the morning?'); return }
+  if (rpsFunBusy || rpsState || rpsHumanState || rpsCurrentRival) { bot.chat('Already mid-match — watch this one first.'); return }
+  if (sustainState.active && !sustainState.potatoRole) {
+    bot.chat('I am on fire duty right now — have me stand down first and I will play.')
+    return
+  }
+  rpsFunBusy = true
+  rpsCurrentRival = user // holds the bedtime/wander/ambient gates for the match
+  try {
+    await runHumanRpsMatch(user)
+  } catch (e) {
+    logEvent('rps-human', `match error: ${e.message}`)
+  } finally {
+    rpsFunBusy = false
+    rpsCurrentRival = null
+    rpsHumanState = null
+  }
+}
+
+function waitHumanThrow (player, ms) {
+  const answer = new Promise(resolve => { rpsHumanState = { player, resolve } })
+  const reminder = setTimeout(() => {
+    if (rpsHumanState) bot.chat('Type rock, paper, or scissors!')
+  }, Math.floor(ms / 2))
+  return Promise.race([answer, sleep(ms).then(() => null)])
+    .finally(() => { clearTimeout(reminder); rpsHumanState = null })
+}
+
+async function runHumanRpsMatch (player) {
+  logEvent('rps-human', `match with ${player} — best of 3`)
+  sendEmote('wave')
+  bot.chat(`Best two out of three, ${player}! On "Shoot!" type rock, paper, or scissors — mine is already picked, and I show it once you throw.`)
+  await sleep(2500)
+  const throws = ['r', 'p', 's']
+  let myWins = 0, theirWins = 0
+  for (let round = 1; round <= 10; round++) {
+    // Committed HERE, before the player throws — revealed only after.
+    const myThrow = throws[Math.floor(Math.random() * 3)]
+    logEvent('rps-human', `round ${round}: committed ${RPS_NAMES[myThrow]}`)
+    await facePlayer(player).catch(() => {})
+    sendEmote('salute')
+    bot.chat(`Rock, paper, scissors — round ${round}!`)
+    await sleep(3000)
+    sendEmote('point')
+    bot.chat('Shoot!')
+    const got = await waitHumanThrow(player, 30000)
+    if (!got) {
+      logEvent('rps-human', `round ${round}: no throw from ${player} — ending`)
+      bot.chat(`No throw came — I had ${RPS_NAMES[myThrow]} waiting! We can pick this up whenever you like.`)
+      return null
+    }
+    if (got.quit) {
+      logEvent('rps-human', `${player} called it off in round ${round}`)
+      sendEmote('wave')
+      bot.chat('Calling it here — good game!')
+      return null
+    }
+    bot.chat(`/me shoots ${RPS_NAMES[myThrow]}`)
+    await sleep(800)
+    const result = rpsWinner(myThrow, got.throw)
+    logEvent('rps-human', `round ${round}: ${RPS_NAMES[myThrow]} vs ${RPS_NAMES[got.throw]} → ${result}`)
+    if (result === 'tie') {
+      bot.chat("It's a tie!")
+      await sleep(1500)
+      continue
+    }
+    if (result === 'win') myWins++
+    else theirWins++
+    if (myWins >= 2) {
+      sendEmote('headbang')
+      const said = await impulseExpressive('rps',
+        `You just won a friendly best-of-3 rock-paper-scissors match ${myWins}-${theirWins} against ${player} — a human player, not a bot. Celebrate with playful gloating — one short sentence.`,
+        { skipGate: true }
+      ).catch(() => false)
+      if (!said) bot.chat('Ha! I win!')
+      diaryNote(`won a friendly rock-paper-scissors match against ${player} (${myWins}-${theirWins})`)
+      await sleep(2000)
+      return 'win'
+    }
+    if (theirWins >= 2) {
+      sendEmote('weep')
+      const said = await impulseExpressive('rps',
+        `You just lost a friendly best-of-3 rock-paper-scissors match ${myWins}-${theirWins} to ${player} — a human player, not a bot. React with playful concession — one short sentence.`,
+        { skipGate: true }
+      ).catch(() => false)
+      if (!said) bot.chat('Good game! You got me.')
+      diaryNote(`lost a friendly rock-paper-scissors match to ${player} (${myWins}-${theirWins})`)
+      await sleep(2000)
+      return 'lose'
+    }
+    if (result === 'win') {
+      sendEmote(Math.random() < 0.5 ? 'clap' : 'yes')
+      bot.chat(`That's ${myWins}-${theirWins}!`)
+    } else {
+      sendEmote('shrug')
+      bot.chat(`That's ${myWins}-${theirWins}...`)
+    }
+    await sleep(2000)
+  }
+  bot.chat("Ten rounds and no winner — we'll call that a draw!")
+  return 'draw'
 }
 
 async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
@@ -8465,7 +8591,8 @@ const CHAT_HANDLERS = [
   {
     name: 'play_rps',
     pattern: /\b(play (a |another )?game|(play|do|start) (some )?(rps|rock[ -]?paper[ -]?scissors)|rock[ -]?paper[ -]?scissors|up for a game)\b/i,
-    handler: (user) => startFunRps(user),
+    // "with me / against us" = the player wants to be the rival, not a spectator.
+    handler: (user, text) => /\b(with|against|vs\.?)\s+(me|us)\b/i.test(text || '') ? startHumanRps(user) : startFunRps(user),
   },
 ]
 
@@ -8571,8 +8698,12 @@ const CHAT_INTENTS = {
   check_furnace: { hint: 'report what is cooking in the furnace', run: () => reportFurnace() },
   look_at_sun: { hint: 'look up at the sun and gaze for a moment', run: () => lookAtSun() },
   play_rps: {
-    hint: 'play a game / play rock-paper-scissors with another bot for fun (no stakes)',
+    hint: 'play a game / play rock-paper-scissors against ANOTHER BOT for fun (no stakes) — the speaker just watches',
     run: (user) => startFunRps(user),
+  },
+  play_rps_human: {
+    hint: 'play rock-paper-scissors against the SPEAKER themself ("play RPS with me", "let\'s play, you and me", "I challenge you")',
+    run: (user) => startHumanRps(user),
   },
   follow: {
     hint: 'start following the speaker (or args.player if they name someone else)',
@@ -9190,6 +9321,23 @@ bot.on('chat', (username, message) => {
     snoozeWheatReadyAlerts(username)
   }
 
+  // Human-RPS throw capture: while a match with a player waits on their
+  // throw, their plain-chat "rock/paper/scissors" (or a call to quit) is
+  // consumed here — before the reflex tier and the router — so game moves
+  // never leak into conversation handling. Only the rival player's lines are
+  // captured, and only while a round is actually waiting.
+  if (rpsHumanState && !fromBot && username === rpsHumanState.player) {
+    const t = /\b(rock|paper|scissors)\b/i.exec(message)
+    if (t) {
+      rpsHumanState.resolve({ throw: RPS_WORD_TO_CODE[t[1].toLowerCase()] })
+      return
+    }
+    if (/\b(stop|quit|never ?mind|cancel|enough|no more|i'?m (done|out))\b/i.test(message)) {
+      rpsHumanState.resolve({ quit: true })
+      return
+    }
+  }
+
   // Reflex tier: deterministic commands, only when addressed by name. Safety
   // commands (stop, stand down) live here so they never wait on inference.
   // When following a player, anything they say is implicitly addressed to us.
@@ -9304,6 +9452,43 @@ bot.on('physicsTick', () => {
   if (!bot.pathfinder.isMoving() || !(bot.pathfinder.goal instanceof goals.GoalFollow)) {
     bot.pathfinder.setGoal(new goals.GoalFollow(followEntity, followDist), true)
   }
+})
+
+// Follow hop assist (the "auto-jump" client setting, for bots): modded 1-block
+// obstacles (beehives, modded-tree leaves) report empty names, so pathfinder
+// penalizes them to Infinity and ends up pushing against them instead of
+// jumping. Block data is unreliable there, so detect the stall by motion, not
+// geometry: following, out of reach of the target, no horizontal progress for
+// a while → pulse jump to clear the lip. Jump is re-asserted every tick of the
+// pulse because pathfinder (whose physicsTick listener runs before this one)
+// sets jump=false on flat path segments. Skips farmland so the crop guard
+// keeps winning, and clears the pulse if follow ends mid-hop.
+let hopAnchor = null // { x, z, t } — last position that counted as progress
+let hopPulseUntil = 0
+let lastHopPulse = 0
+bot.on('physicsTick', () => {
+  const now = Date.now()
+  if (!followTarget || !followEntity || insideHouse()) {
+    if (hopPulseUntil) { hopPulseUntil = 0; bot.setControlState('jump', false) }
+    hopAnchor = null
+    return
+  }
+  if (now < hopPulseUntil) { bot.setControlState('jump', true); return }
+  if (hopPulseUntil) { hopPulseUntil = 0; bot.setControlState('jump', false) }
+  const me = bot.entity?.position
+  if (!me) return
+  const followDist = followChainPos === 1 ? 2 : 3
+  if (me.distanceTo(followEntity.position) <= followDist + 0.5) { hopAnchor = null; return }
+  if (!hopAnchor || Math.abs(me.x - hopAnchor.x) + Math.abs(me.z - hopAnchor.z) > 0.2) {
+    hopAnchor = { x: me.x, z: me.z, t: now }
+    return
+  }
+  if (now - hopAnchor.t < 1200 || now - lastHopPulse < 2500) return
+  const below = bot.blockAt(me.offset(0, -0.5, 0))
+  if (below && below.name === 'farmland') return
+  lastHopPulse = now
+  hopPulseUntil = now + 400
+  logEvent('follow', `hop assist: stalled ${((now - hopAnchor.t) / 1000).toFixed(1)}s at ${posStr(me)} — pulsing jump`)
 })
 
 // LookAt removed. Previously we tracked the nearest player's head every 500ms
