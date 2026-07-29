@@ -74,10 +74,33 @@ Fix direction (not yet done): shrink `ownTail`, or pass only the *last line or
 two*, or state explicitly "do not repeat these sentences — write something new".
 Test by counting duplicate bodies again after a week.
 
-**Early evidence the Opus voice may not have this habit:** days 48019 and 48020
-were both written with **0 events**, 11 minutes apart — the exact conditions that
-produced the old copies — and came out distinct (19% word overlap, ordinary for
-two entries by one voice about one farm). n=2, so watch rather than conclude.
+**Early evidence the Opus voice may not have this habit:** days 48019–48022, five
+consecutive entries, **all distinct** — three of them written with **0 events**,
+~10 minutes apart, the exact conditions that produced the old copies. Against a
+53% historical baseline that is encouraging, but n=5 and sustain is now generating
+real events, so it is not yet a clean result.
+
+**A third hypothesis, tested and mostly rejected — peer contamination.**
+`peerDiaryTails` feeds Roz the last 400 chars of every *other* bot's diary. Muse's
+diary (`bots/protocol.md`) **has not been written since 2026-07-21** — Muse's voice
+is dead from the same temperature bug — so Roz has been re-reading one identical
+frozen block every ~10 minutes. Roz's triplicated days 47578–47580 do end on a line
+lifted verbatim from it, in Muse's register, not Roz's:
+
+> "If I may say so, I never knew I could find such peace in doing nothing…"
+
+Measured across the whole file, though, the effect is **narrow**:
+
+| | |
+|---|---|
+| Roz lines appearing verbatim in Muse's diary | 16 (all the *same* line) |
+| Roz entries containing ≥1 such line | 16 / 556 — **2.9%** |
+| Duplicate-group entries explained by it | **13 of 295 — ~4%** |
+
+So peer bleed is real, reproducible, and a genuine argument for un-freezing Muse's
+voice — but it does **not** explain the duplication. 282 of 295 duplicates remain
+unaccounted for. Recorded because the tempting story (frozen peer tail → copying)
+was checked and came back small; `ownTail` is still the leading untested suspect.
 
 ### Third finding: "the nightly diary" fires up to 91× per REAL day
 
