@@ -302,11 +302,34 @@ Short legs keep every pathfinder goal inside loaded chunks, which is the whole
 reason a single 235-block `pathfind` cannot work here.
 
 ```bash
-./bot-ctl '{"action":"routes"}'                              # list routes
-./bot-ctl '{"action":"walk_route","args":{"legs":6}}'         # stage 1 only
-./bot-ctl '{"action":"walk_route"}'                           # the whole route
-./bot-ctl '{"action":"walk_route","args":{"reverse":true}}'    # igloo → farm
+./bot-ctl '{"action":"routes"}'                                    # list routes
+./bot-ctl '{"action":"walk_route","args":{"legs":6}}'               # stage 1 only
+./bot-ctl '{"action":"walk_route"}'                                 # the whole route
+./bot-ctl '{"action":"walk_route","args":{"reverse":true}}'          # igloo → farm
+./bot-ctl '{"action":"walk_route","args":{"from_nearest":true}}'     # start at the closest leg
 ```
+
+### Chat commands (added 2026-07-30)
+
+Any bot running this code answers to these when **addressed by nickname** —
+"Private, go to the igloo", "Roz, come home":
+
+| Say | Does |
+|---|---|
+| go / walk / head / travel / journey **to the igloo** | walks the route |
+| come home / come back / walk home / go home | walks it **in reverse** |
+
+Both live in the **reflex tier** (`CHAT_HANDLERS`), not the LLM router, because
+they commit the bot to a ~90-second unattended walk and must not depend on
+inference being up. The igloo pattern requires a **movement verb**, so merely
+talking about the igloo ("who built the igloo?") does not send anyone 235 blocks
+south. `walk_to_igloo` / `walk_home` also exist as `CHAT_INTENTS` so the router
+catches looser phrasings ("take a trip out to the ice house").
+
+Both use `fromNearest`, which drops legs already behind the bot — so "come home"
+works from anywhere along the route, not just from the far end. Both refuse while
+another task is running, and "come home" answers "I am already home" inside the
+60-block home radius.
 
 Hop assist was also given a **scoped opt-in** (`hopAssistScope`) so it can run
 without a follow; `runWalkRoute` holds it for the duration. It is deliberately
