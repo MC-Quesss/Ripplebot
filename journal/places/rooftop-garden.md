@@ -46,11 +46,42 @@ Two [[../creatures/fertilizer-worm|fertilizer worms]] at:
 Together they provide full 3×3 coverage of the 2×6 garden (with some overlap
 at z=573). Same pattern as the wheat and potato fields.
 
+## Update — 2026-07-29 (bot stood on the roof)
+
+Roz reached the roof for the first time, following [[../bots/operator|Quesss]] up
+in follow mode. Two earlier claims are wrong:
+
+- **The garden is 3×6, not 2×6.** `find_blocks` from the roof returned 18
+  farmland tiles, all metadata=7: **x = -269, -268, -267** × **z = 570–575**.
+  The x=-269 column was missed on the 2026-07-07 survey from inside the house.
+  Crop-band z-ranges are unchanged; whether the x=-269 column carries the same
+  three species is untested.
+- **The roof grass surface extends at least to x = -264**, not just to the
+  x=-266 border. Roz stood on `grass` at (-264, 69, 573) — so the walkable roof
+  is wider than the garden strip, and the east edge is still unmeasured.
+
+**The roof is bot-reachable**, and it needs no stairway, ladder, or door — there
+is a **terrain ramp east of the wheat field**, climbing y 64 → 70 at
+x ≈ -262..-265, z ≈ 562–572. This answers the open question below and is the
+first confirmed bot visit to y=70.
+
+**Correction, same day:** the first write-up of this credited the climb to
+follow mode's [[../procedures/follow-hop-assist|hop assist]]. It did not.
+Auditing every hop-assist event in that session put all of them in the western
+approach to the [[igloo]], none at the ramp — and the bot later walked the same
+climb **unaided** under `walk_route`, six legs in 7.6 seconds with the assist
+armed and silent. The ramp is just walkable ground. Route:
+[[../procedures/farm-to-igloo]].
+
 ## Open Questions
 
 - ~~What are crop types 4701, 4727, 4726?~~ — **Identified** (user, 2026-07-07):
   soybeans, bellpeppers, parsnip.
-- Can the bot reach the roof? No stairway or ladder path is documented.
+- ~~Can the bot reach the roof?~~ — **Yes** (2026-07-29): follow mode, see Update
+  above. A standalone pathfind route to the roof is still undocumented.
+- How far east/north does the roof surface actually run? Confirmed walkable to
+  x=-264 at z=573; edges unmeasured.
+- Does the x=-269 farmland column carry the same soybean/bellpepper/parsnip bands?
 - Who planted this garden? (Player-built, not bot-accessible.)
 - What do these crops produce when harvested? (Now that we know the names, check
   if any are used in recipes.)

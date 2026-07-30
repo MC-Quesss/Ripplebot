@@ -7,6 +7,71 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-07-29 — Five walks to the igloo: mapping a route by repetition (day 48195→48197)
+
+**State at start:** bot not running; launched clean. Roz spawned at (-266.5, 65, 571.6),
+HP 20/20, food 20/20, **0 deaths**, day 48195, `timeOfDay` 2299, `BRAIN_MODE=claude-super`.
+ABBYO and Quesss on the server; no task, no sustain loop.
+
+Quesss led Roz on foot from the farm to a **snow igloo** in the cold biome and back,
+five times, deliberately repeating the walk so the route could be measured instead of
+guessed. Roz followed the whole way (chat-reflex `follow`, never the ctl API). Position
+was sampled at **1 Hz** for the entire session — ~1720 blocks of walking.
+
+### Results
+
+- **New destination**: [[../places/igloo]] at the frozen lake, standing spot
+  (-330, 63, 790). Snow floor y=63, **two double beds** at (-322..-323, 64, 800..801),
+  torches at y=66. **Not entered** — Quesss's call, route first. Near but distinct from
+  [[../places/ice-castle]] (~51 blocks west).
+- **New route note**: [[../procedures/farm-to-igloo]] — canonical form is three stages,
+  **field center → roof garden → igloo**, so the house front door (and the modded-door
+  problem) is not on the route at all.
+- **The route is a chain of waists and forks, not a corridor.** All five runs converge to
+  within 2–4 blocks at z≈580 and at z≈704 (the sand landmark), and diverge into **two
+  distinct lanes** at z 650–690 — 19 blocks apart at the widest, 3 runs west over a hill,
+  2 runs east around it.
+- **Two ramps pinned to under a block**: the field↔roof ramp at (-265, 562) (runs 4 & 5,
+  opposite directions) and the **lake-ice ramp at (-328.4, 802)** (runs 2, 4, 5 — x agrees
+  within 0.4 blocks).
+- **[[../procedures/follow-hop-assist]] verified live** for the first time:
+  `[follow] hop assist: stalled 1.2s at -297, 63, 549 — pulsing jump`. It also carried Roz
+  onto the **house roof (y=70)** — previously an open question in
+  [[../places/rooftop-garden]], answered yes.
+- **[[../places/rooftop-garden]] corrected**: the garden is **3×6, not 2×6** (an x=-269
+  farmland column was missed in the 2026-07-07 survey), and the walkable roof extends at
+  least to x=-264.
+- **Night walking is survivable**: two hostiles over ~800 blocks of night travel (creeper
+  at z≈710, skeleton at (-286, 69, 729)), both eliminated by the watchdog in 2s, **zero
+  damage**. Auto-sleep stands down while `followTarget` is set (`bot.js` `tryAutoSleep`),
+  so a follow is never abandoned for bedtime.
+- Zero deaths, zero damage, and **zero position jumps >12 blocks/sec** across all five
+  runs — the follow genuinely walks terrain rather than rubber-banding.
+
+### Method notes (and two mistakes worth keeping)
+
+- **Averaging bimodal traces is wrong.** With two runs the z 650–690 spread looked like
+  measurement noise and the tempting move was to split the difference — which would have
+  routed the bot up a hill neither walker climbed. It took four runs to see the gap.
+- **Reading a maximum instead of a distribution.** The hill at z 658–678 was first called
+  a "13-block snowy slope" from the snow-layer max of y=79. The histogram says otherwise:
+  y69=120 blocks, y72–y79 only a handful each. The mass is a **gentle plateau at y=69**,
+  and run 3 crossed it with zero 2-block steps.
+- **The z-binning tool breaks where the route turns.** Past z≈770 the path runs west, so
+  one z bin holds a long east-west stretch and phase differences masquerade as forks.
+- Two tracker processes were briefly alive (a broken first launch). Verified by
+  timestamp-uniqueness and a kill test that only one ever wrote — no double-counting.
+
+### Open questions
+
+- **Can Roz walk it alone?** Untested and the main one. Theory: a single 228-block
+  `pathfind` fails because the server only ships chunks near the player, so A* cannot see
+  unloaded terrain — but a chain of ~25-block legs down the waypoint list should work.
+- What are the igloo's **wall blocks**? Floor, beds and torches all scan fine; the walls
+  appear in **no** block scan, so they are almost certainly empty-name modded blocks.
+- Where is the igloo's entrance, can the bot traverse it, and are the two double beds
+  usable for overnight stays away from the farm?
+
 ## 2026-07-27 — The silent voice: one deprecated field, fifteen days (day 48017→48018)
 
 **State at start:** Roz live at (-277.8, 64, 570.7), HP 20/20, food 20/20, **0 deaths**,

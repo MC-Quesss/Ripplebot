@@ -35,7 +35,10 @@ A network of notes mapping the known parts of this world. Each note is a single 
 - [[places/wheat-field]] — primary work site
 - [[places/potato-patch]] — secondary work site
 - [[places/water-hazard-west-of-potatoes]] — oval pond west of the potato patch, keep out
-- [[places/rooftop-garden]] — discovered 2026-07-07; 2×6 modded crop garden on the house roof
+- [[places/rooftop-garden]] — discovered 2026-07-07; modded crop garden on the house roof (**3×6**, corrected 2026-07-29) — and the trailhead for the igloo route
+- [[places/igloo]] — snow igloo by the frozen lake, ~235 blocks south-southwest; two double beds; interior unexplored
+- [[places/snow-line-midway]] — biome-boundary landmark halfway to the igloo
+- [[procedures/farm-to-igloo]] — the route: field → roof → igloo, mapped from five traced walks
 - [[procedures/right-click-harvest]] — current main loop (wheat)
 - [[procedures/harvest-potatoes-right-click]] — confirmed for potatoes (single-tile)
 - [[recipes/bread]] — first recipe learned

@@ -2170,9 +2170,32 @@ async function runIdleWanderToFurnace () {
   await sleep(1500 + Math.floor(Math.random() * 2000))
 }
 
+// Idle wander is a HOME-LOCAL behaviour. Every activity it can pick — inside,
+// field, pen, furnace — sits within ~30 blocks of the house, and runGoInside()
+// falls back to manual walking when the pathfinder cannot plan, which from far
+// away means an unmanaged cross-map trek that knows nothing about the route.
+// On 2026-07-30 that trek fired 3.5s after a completed farm→igloo walk,
+// abandoned the destination, and shortcut the way home across the modded light
+// blocks by the sheep pen (user: "stop shortcutting on the way back"). Away
+// from home, idle wander does nothing: getting back is the job of walk_route
+// (which goes over the roof garden and down to the field from the north) or of
+// a follow.
+const IDLE_WANDER_HOME_RADIUS = 60
+function distanceFromHome () {
+  const p = bot.entity?.position
+  if (!p) return 0
+  return Math.hypot(p.x - HOUSE_CENTER.x, p.z - HOUSE_CENTER.z)
+}
+
 async function tryIdleWander () {
   if (!idleWanderEnabled) return
   if (idleWanderBusy()) return
+
+  const homeDist = distanceFromHome()
+  if (homeDist > IDLE_WANDER_HOME_RADIUS) {
+    logEvent('idle-wander', `${homeDist.toFixed(0)}b from home — standing by (idle wander is home-local; use walk_route to come back)`)
+    return
+  }
 
   // Bedtime overrides wandering. If the bot is outside, the only idle move is
   // homeward; if already inside, let auto-sleep handle the bed itself.
@@ -9271,19 +9294,27 @@ bot.on('chat', (username, message) => {
   }
 
   // Story-time coordination: come inside early, suppress auto-sleep, gather near the beds.
+  // Respects taskBusy() exactly the way tryAutoSleep does — a crewmate's chat line must
+  // not hijack a long task. On 2026-07-30 this fired mid-walk_route from 164 blocks out,
+  // fought the route's pathfinding for 40s, dragged Roz ~150 blocks back toward the farm
+  // and failed the leg by 180 blocks. Tasks handle their own bedtime; story time waits.
   if (fromBot && /let's head inside/i.test(message) && !storyTimeActive && !goInsideBusy) {
-    logEvent('story-time', `${username} called everyone inside — heading in`)
-    storyNightDay = bot.time?.day ?? storyNightDay
-    ;(async () => {
-      try {
-        if (!insideHouse()) {
-          if (inPen()) await runGoOutOfPen()
-          await runGoInside()
+    if (taskBusy()) {
+      logEvent('story-time', `${username} called everyone inside — ignoring, ${activeTask.name} is running`)
+    } else {
+      logEvent('story-time', `${username} called everyone inside — heading in`)
+      storyNightDay = bot.time?.day ?? storyNightDay
+      ;(async () => {
+        try {
+          if (!insideHouse()) {
+            if (inPen()) await runGoOutOfPen()
+            await runGoInside()
+          }
+        } catch (e) {
+          logEvent('story-time', `couldn't get inside: ${e.message}`)
         }
-      } catch (e) {
-        logEvent('story-time', `couldn't get inside: ${e.message}`)
-      }
-    })()
+      })()
+    }
   }
   if (fromBot && message === 'Gather round, everyone.' && !storyTimeActive) {
     storyNightDay = bot.time?.day ?? storyNightDay
@@ -9467,9 +9498,18 @@ bot.on('physicsTick', () => {
 let hopAnchor = null // { x, z, t } — last position that counted as progress
 let hopPulseUntil = 0
 let lastHopPulse = 0
+// Scoped opt-in for hop assist without a follow (2026-07-29). Follow was the
+// only consumer for a long time, but the house roof — the trailhead for
+// [[farm-to-igloo]] — can ONLY be climbed with the assist, and that route has
+// to run without a human leading it. Set to a label by whoever wants the
+// assist; cleared in their finally block. Deliberately NOT ungated globally:
+// jump pulses during farm tasks or door traversals are how this bot has died
+// before (drift into the furnace), so the assist stays off by default.
+let hopAssistScope = null
 bot.on('physicsTick', () => {
   const now = Date.now()
-  if (!followTarget || !followEntity || insideHouse()) {
+  const following = followTarget && followEntity
+  if ((!following && !hopAssistScope) || insideHouse()) {
     if (hopPulseUntil) { hopPulseUntil = 0; bot.setControlState('jump', false) }
     hopAnchor = null
     return
@@ -9478,8 +9518,15 @@ bot.on('physicsTick', () => {
   if (hopPulseUntil) { hopPulseUntil = 0; bot.setControlState('jump', false) }
   const me = bot.entity?.position
   if (!me) return
-  const followDist = followChainPos === 1 ? 2 : 3
-  if (me.distanceTo(followEntity.position) <= followDist + 0.5) { hopAnchor = null; return }
+  if (following) {
+    const followDist = followChainPos === 1 ? 2 : 3
+    if (me.distanceTo(followEntity.position) <= followDist + 0.5) { hopAnchor = null; return }
+  } else if (!bot.pathfinder.isMoving()) {
+    // Scoped mode has no follow target to measure "close enough" against, so
+    // gate on actually trying to walk somewhere — never pulse jump while idle.
+    hopAnchor = null
+    return
+  }
   if (!hopAnchor || Math.abs(me.x - hopAnchor.x) + Math.abs(me.z - hopAnchor.z) > 0.2) {
     hopAnchor = { x: me.x, z: me.z, t: now }
     return
@@ -9489,8 +9536,143 @@ bot.on('physicsTick', () => {
   if (below && below.name === 'farmland') return
   lastHopPulse = now
   hopPulseUntil = now + 400
-  logEvent('follow', `hop assist: stalled ${((now - hopAnchor.t) / 1000).toFixed(1)}s at ${posStr(me)} — pulsing jump`)
+  logEvent(following ? 'follow' : 'hop-assist', `hop assist${following ? '' : ` (${hopAssistScope})`}: stalled ${((now - hopAnchor.t) / 1000).toFixed(1)}s at ${posStr(me)} — pulsing jump`)
 })
+
+// ── Named overland routes ────────────────────────────────────────────────
+// The pathfinder cannot plan a 200-block walk on this server: the server only
+// ships chunks near the bot, so a single distant goal asks A* to search terrain
+// that isn't loaded. Walking a chain of short legs keeps every goal inside
+// loaded chunks — and gives us a checkpoint to verify progress honestly.
+//
+// farm_to_igloo was traced at 1 Hz across five follow-walks with Quesss on
+// 2026-07-29. Every y comes from those traces rather than being guessed,
+// because pathTo()'s arrival test is |bot.y - leg.y| <= 1.5 regardless of the
+// horizontal range — a wrong y stalls the bot on a leg it is already standing
+// on. Full measurements, the z 650–690 lane fork, and why the roof start is
+// mandatory: journal/procedures/farm-to-igloo.md
+const ROUTES = {
+  farm_to_igloo: {
+    label: 'farm → igloo',
+    legs: [
+      // Stage 1: field → roof, passing NORTH of the sheep pen (fence at
+      // x -282..-274, z 574..578). Hold z <= 570 through here or you are in
+      // the fences — going around the sheep is worse than going over the roof.
+      { x: -283, y: 64, z: 561, range: 2, note: 'wheat field center' },
+      { x: -274, y: 64, z: 561, range: 2, note: 'east leg, north of the pen' },
+      { x: -267, y: 64, z: 563, range: 2, note: 'ramp approach' },
+      { x: -264, y: 65, z: 562, range: 2, note: 'ramp foot — needs hop assist' },
+      { x: -262, y: 68, z: 564, range: 2, note: 'mid-ramp' },
+      { x: -264, y: 70, z: 572, range: 2, note: 'roof deck — trailhead' },
+      // Roof south edge. Load-bearing waypoint, do NOT remove: without it the
+      // 8-block gap between the deck and waist A lets the pathfinder route
+      // AROUND the house instead of over the roof, which lands the bot on the
+      // modded light blocks near (-273, 68, 574) or inside the sheep pen
+      // (user, 2026-07-30). Both directions must cross the roof — going home
+      // means over the garden and down to the field from the north.
+      { x: -265, y: 70, z: 575, range: 2, note: 'roof south edge — never shortcut around the house' },
+      // Stage 2: the long southward corridor. The waists are tight (all five
+      // runs within 2–4 blocks); the middle third is a fork and forgiving.
+      // These legs take the hill lane — 3 of 5 runs, and the shorter one.
+      { x: -265, y: 69, z: 580, range: 3, note: 'waist A' },
+      { x: -263, y: 69, z: 600, range: 4, note: 'corridor' },
+      { x: -252, y: 68, z: 630, range: 5, note: 'mid drift' },
+      { x: -264, y: 69, z: 670, range: 5, note: 'fork — hill lane' },
+      { x: -265, y: 67, z: 704, range: 3, note: 'waist B — the sand' },
+      // Stage 3: west, then down. The approach runs SOUTH to z~810 and then
+      // due WEST along that lane; it is not a diagonal. Three runs agree to
+      // within 1 block per x-bin here.
+      { x: -284, y: 68, z: 725, range: 4, note: 'westward turn' },
+      { x: -295, y: 68, z: 767, range: 4, note: 'west run' },
+      { x: -305, y: 68, z: 804, range: 4, note: 'south onto the z~808 lane' },
+      { x: -315, y: 69, z: 811, range: 4, note: 'west along the lane' },
+      { x: -325, y: 67, z: 808, range: 3, note: 'lane end' },
+      { x: -328, y: 64, z: 802, range: 2, note: 'lake-ice ramp — 3-block drop' },
+      { x: -330, y: 63, z: 790, range: 2, note: 'arrival — outside the igloo' },
+    ],
+  },
+}
+
+// Walk a named route leg by leg. Reports per-leg outcomes instead of a single
+// pass/fail, because "which leg broke" is the only useful answer when a long
+// walk fails.
+//
+// Deliberately does NOT call yieldToBedtime(): that helper pathfinds to
+// field_east_approach and walks into the house, which from the igloo end is a
+// single ~200-block pathfind home — the very thing this chain exists to avoid.
+// Night walking is survivable here (five traced runs, two hostiles, both
+// cleared by the watchdog in 2s, zero damage), so bedtime is logged and the
+// walk continues.
+async function runWalkRoute (routeName, { reverse = false, maxLegs = 0 } = {}) {
+  const route = ROUTES[routeName]
+  if (!route) return { ok: false, error: `unknown route: ${routeName}`, known: Object.keys(ROUTES) }
+  const gate = startTask('walk_route', `${route.label}${reverse ? ' reversed' : ''}`)
+  if (!gate.allowed) return { ok: false, error: 'busy', task: gate.current, detail: gate.detail }
+  const myGen = abortGen
+  const startDeaths = deathCount
+  let legs = reverse ? [...route.legs].reverse() : route.legs
+  // maxLegs walks only a prefix of the chain — for testing one rung of the
+  // ladder at a time instead of committing to the whole 235-block walk.
+  if (maxLegs > 0 && maxLegs < legs.length) legs = legs.slice(0, maxLegs)
+  const results = []
+  hopAssistScope = `walk_route:${routeName}`
+  logEvent('route', `walking ${route.label}${reverse ? ' reversed' : ''} — ${legs.length} legs, hop assist on`)
+  if (isBedtime()) logEvent('route', 'starting after bedtime — walking through the night by design')
+  try {
+    // A route that starts outdoors cannot be walked from indoors: the
+    // pathfinder cannot cross this server's door, so leg 1 would be planned
+    // straight through a wall. Waking up in bed and setting off is the normal
+    // case, so run the proven exit procedure first rather than refusing.
+    if (insideHouse()) {
+      logEvent('route', 'inside the house — running the exit procedure first')
+      if (bot.isSleeping) { try { bot.wake() } catch (e) { /* already awake */ } }
+      try {
+        await runGoOutside('route walk', { skipTimeCheck: true })
+      } catch (e) {
+        logEvent('route', `couldn't get outside: ${e.message}`)
+        return { ok: false, error: `couldn't get outside: ${e.message}`, results }
+      }
+      checkAbort(myGen)
+    }
+    for (let i = 0; i < legs.length; i++) {
+      checkAbort(myGen)
+      // HP 20 after a respawn is not "healed" — a death mid-route means the
+      // world is not what the trace said it was. Stop and report.
+      if (deathCount !== startDeaths) {
+        logEvent('route', `aborting at leg ${i + 1}/${legs.length}: died en route`)
+        return { ok: false, error: 'died en route', leg: i + 1, results }
+      }
+      const leg = legs[i]
+      const range = leg.range ?? 3
+      const t0 = Date.now()
+      await pathTo(leg, range, 40000)
+      const p = bot.entity?.position
+      const off = p ? Math.hypot(p.x - leg.x, p.z - leg.z) : Infinity
+      // pathTo() returns true when the pathfinder merely stops moving, so
+      // verify arrival by distance rather than trusting its verdict.
+      const reached = off <= range + 1.5
+      results.push({ leg: i + 1, note: leg.note, reached, off: +off.toFixed(1), ms: Date.now() - t0 })
+      logEvent('route', `leg ${i + 1}/${legs.length} ${reached ? 'ok' : 'MISSED'} — ${leg.note}, off by ${off.toFixed(1)}b in ${Date.now() - t0}ms`)
+      // A small miss is sloppiness and the next leg usually recovers it. A big
+      // one means we are lost, and walking the next leg from the wrong place
+      // only digs deeper.
+      if (off > 12) {
+        logEvent('route', `stopping: ${off.toFixed(1)} blocks off leg ${i + 1} — lost, not sloppy`)
+        return { ok: false, error: 'lost', leg: i + 1, off: +off.toFixed(1), results }
+      }
+    }
+    logEvent('route', `${route.label}${reverse ? ' reversed' : ''} complete — ${legs.length} legs`)
+    return { ok: true, route: routeName, reverse, legs: legs.length, results }
+  } catch (e) {
+    if (e instanceof AbortError) return { ok: false, error: 'aborted', results }
+    logEvent('route', `failed: ${e.message}`)
+    return { ok: false, error: e.message, results }
+  } finally {
+    hopAssistScope = null
+    bot.setControlState('jump', false)
+    endTask('walk_route')
+  }
+}
 
 // LookAt removed. Previously we tracked the nearest player's head every 500ms
 // for presence, but the interval stole yaw mid-walk and caused drift-into-
@@ -10637,6 +10819,29 @@ function handleCommand (cmd) {
       // Toggle the continuous lookAt-nearest-player behavior, or query it.
       if (typeof args.enabled === 'boolean') lookAtEnabled = args.enabled
       return { ok: true, enabled: lookAtEnabled }
+    }
+    case 'routes': {
+      // List known overland routes and their leg counts.
+      return {
+        ok: true,
+        routes: Object.entries(ROUTES).map(([name, r]) => ({
+          name, label: r.label, legs: r.legs.length,
+          from: r.legs[0].note, to: r.legs[r.legs.length - 1].note,
+        })),
+      }
+    }
+    case 'walk_route': {
+      // args: { route, reverse?, legs? } — walk a named route leg by leg.
+      // `legs` limits how many legs to attempt, for testing a prefix of the
+      // chain without committing to the whole walk.
+      const name = args.route || 'farm_to_igloo'
+      if (!ROUTES[name]) return { ok: false, error: `unknown route: ${name}`, known: Object.keys(ROUTES) }
+      let maxLegs = 0
+      if (args.legs !== undefined) {
+        maxLegs = Number(args.legs)
+        if (!Number.isFinite(maxLegs) || maxLegs < 1) return { ok: false, error: 'legs must be a positive number' }
+      }
+      return runWalkRoute(name, { reverse: !!args.reverse, maxLegs })
     }
     case 'follow': {
       // args: { username }  — start following named player. Omit username to stop.
