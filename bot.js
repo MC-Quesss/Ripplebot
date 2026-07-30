@@ -8371,6 +8371,54 @@ const CHAT_HANDLERS = [
     },
   },
   {
+    // "Roz, go to the igloo" / "walk to the igloo" / "head over to the igloo".
+    // Reflex tier on purpose: this commits the bot to a ~90s unattended walk,
+    // so it must not depend on inference being up. Requires a movement verb so
+    // that merely *talking* about the igloo ("who built the igloo?") does not
+    // send anyone 235 blocks south. Route, measurements and hazards:
+    // journal/procedures/farm-to-igloo.md
+    name: 'walk_to_igloo',
+    pattern: /\b(?:go|goto|walk|head|travel|journey|hike|run|set\s*off|make\s+your\s+way)\b[^.!?]{0,30}\bigloo\b/i,
+    handler: (user) => {
+      if (taskBusy()) { bot.chat(`I am in the middle of ${activeTask.name} — tell me to stop first.`); return }
+      abortGen++
+      followTarget = null; followEntity = null; followChainPos = 0
+      sustainPause('walk_route')
+      bot.chat('Setting off for the igloo — over the roof garden, then south. Give me a minute and a half.')
+      runWalkRoute('farm_to_igloo', { fromNearest: true })
+        .then((r) => {
+          if (r.ok) bot.chat('I have reached the igloo. Standing on the frozen lake outside it.')
+          else bot.chat(`I did not get there — ${r.error}, at leg ${r.leg ?? '?'}.`)
+        })
+        .catch(e => logEvent('route', `chat walk to igloo failed: ${e.message}`))
+        .finally(() => sustainResume('walk_route ended'))
+    },
+  },
+  {
+    // "Roz, come home" / "come back" / "walk home". Walks the route in reverse,
+    // which is what keeps the return over the roof garden and down to the field
+    // from the north instead of shortcutting through the modded lights and the
+    // sheep pen (user, 2026-07-30).
+    name: 'walk_home',
+    pattern: /\b(?:come|walk|head|get|go|make\s+your\s+way)\s+(?:back\s+)?home\b|\bcome\s+back\b/i,
+    handler: (user) => {
+      if (taskBusy()) { bot.chat(`I am in the middle of ${activeTask.name} — tell me to stop first.`); return }
+      const away = distanceFromHome()
+      if (away <= IDLE_WANDER_HOME_RADIUS) { bot.chat('I am already home.'); return }
+      abortGen++
+      followTarget = null; followEntity = null; followChainPos = 0
+      sustainPause('walk_route')
+      bot.chat(`On my way home — ${away.toFixed(0)} blocks, over the roof and down to the field.`)
+      runWalkRoute('farm_to_igloo', { reverse: true, fromNearest: true })
+        .then((r) => {
+          if (r.ok) bot.chat('Home again, standing in the wheat field.')
+          else bot.chat(`I got stuck coming home — ${r.error}, at leg ${r.leg ?? '?'}.`)
+        })
+        .catch(e => logEvent('route', `chat walk home failed: ${e.message}`))
+        .finally(() => sustainResume('walk_route ended'))
+    },
+  },
+  {
     name: 'farewell',
     pattern: /\b(bye|goodbye|good\s*bye|see\s*ya|later|gotta\s*go|peace|take\s*care|night|g'?night|cya)\b/i,
     handler: (user) => {
@@ -8667,6 +8715,23 @@ const CHAT_INTENTS = {
   go_to_field: {
     hint: 'walk to / head towards / go stand in the wheat field WITHOUT harvesting (use for "walk to the field", "go to the wheat field", "go stand in the wheat")',
     run: () => { abortGen++; return runGoToWheatField() },
+  },
+  walk_to_igloo: {
+    hint: 'travel to the igloo / the snow igloo / the ice house by the frozen lake, ~235 blocks south-southwest — a ~90s walk. NOT for questions about the igloo, only for actually going there',
+    run: () => {
+      abortGen++
+      followTarget = null; followEntity = null; followChainPos = 0
+      return runWalkRoute('farm_to_igloo', { fromNearest: true })
+    },
+  },
+  walk_home: {
+    hint: 'come back home / return to the farm from somewhere far away (e.g. from the igloo). Walks the igloo route in reverse, over the roof garden and down to the field from the north',
+    run: () => {
+      if (distanceFromHome() <= IDLE_WANDER_HOME_RADIUS) { bot.chat('I am already home.'); return }
+      abortGen++
+      followTarget = null; followEntity = null; followChainPos = 0
+      return runWalkRoute('farm_to_igloo', { reverse: true, fromNearest: true })
+    },
   },
   harvest_potatoes: {
     hint: 'harvest/dig the potato patch',
@@ -9603,7 +9668,7 @@ const ROUTES = {
 // Night walking is survivable here (five traced runs, two hostiles, both
 // cleared by the watchdog in 2s, zero damage), so bedtime is logged and the
 // walk continues.
-async function runWalkRoute (routeName, { reverse = false, maxLegs = 0 } = {}) {
+async function runWalkRoute (routeName, { reverse = false, maxLegs = 0, fromNearest = false } = {}) {
   const route = ROUTES[routeName]
   if (!route) return { ok: false, error: `unknown route: ${routeName}`, known: Object.keys(ROUTES) }
   const gate = startTask('walk_route', `${route.label}${reverse ? ' reversed' : ''}`)
@@ -9611,6 +9676,25 @@ async function runWalkRoute (routeName, { reverse = false, maxLegs = 0 } = {}) {
   const myGen = abortGen
   const startDeaths = deathCount
   let legs = reverse ? [...route.legs].reverse() : route.legs
+  // fromNearest drops the legs already behind us, so "come home" works from
+  // anywhere along the route instead of only from the far end. Without it, a
+  // reverse walk started halfway would first trek back to the igloo to reach
+  // leg 1.
+  if (fromNearest && legs.length) {
+    const p = bot.entity?.position
+    if (p) {
+      let best = 0
+      let bestDist = Infinity
+      legs.forEach((l, i) => {
+        const d = Math.hypot(p.x - l.x, p.z - l.z)
+        if (d < bestDist) { bestDist = d; best = i }
+      })
+      if (best > 0) {
+        logEvent('route', `starting at leg ${best + 1}/${legs.length} — nearest to us (${bestDist.toFixed(0)}b), skipping the rest`)
+        legs = legs.slice(best)
+      }
+    }
+  }
   // maxLegs walks only a prefix of the chain — for testing one rung of the
   // ladder at a time instead of committing to the whole 235-block walk.
   if (maxLegs > 0 && maxLegs < legs.length) legs = legs.slice(0, maxLegs)
@@ -10841,7 +10925,7 @@ function handleCommand (cmd) {
         maxLegs = Number(args.legs)
         if (!Number.isFinite(maxLegs) || maxLegs < 1) return { ok: false, error: 'legs must be a positive number' }
       }
-      return runWalkRoute(name, { reverse: !!args.reverse, maxLegs })
+      return runWalkRoute(name, { reverse: !!args.reverse, maxLegs, fromNearest: !!args.from_nearest })
     }
     case 'follow': {
       // args: { username }  — start following named player. Omit username to stop.

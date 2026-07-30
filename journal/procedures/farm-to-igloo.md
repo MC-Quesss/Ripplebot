@@ -246,7 +246,30 @@ Notes on the numbers:
 - Leg 10 has now returned 4.2 blocks / 6626 ms on three consecutive runs.
 - Zero deaths, zero damage, no hop-assist firings anywhere on the route.
 
-### Aftermath: the bot immediately undoes the journey
+### RETURN TRIP VERIFIED — 19/19 reversed, roof crossed, pen avoided (2026-07-30)
+
+`{"action":"walk_route","args":{"reverse":true}}` from the igloo, traced at 1 Hz
+(145 samples) so the path could be audited rather than trusted:
+
+```
+ROOF CROSSING (y >= 69.5):
+  00:27:21  (-263.5, 70.2, 577.2)   roof south edge
+  00:27:22  (-262.5, 69.9, 572.4)   roof deck
+
+PEN FOOTPRINT (x -282..-274, z 574..578):  0 samples — never entered
+NEAR THE LIGHT BLOCK (-273, 68, 574):      0 samples — stayed clear
+```
+
+All 19 legs reached, ~74 seconds, ending at wheat field center. Tightest arrival
+was the **ramp foot at 0.6 blocks**. The bot then walked itself indoors and slept
+normally — correct, because back inside the 60-block home radius the ordinary
+home behaviours resume.
+
+This is the direct answer to "stop shortcutting on the way back": the roof south
+edge waypoint is what makes the return cross the garden instead of skirting the
+house through the lights.
+
+### Aftermath (FIXED 2026-07-30): the bot used to undo the journey
 
 3.5 s after the task ended, `[idle-wander] heading inside` fired and began
 manually walking her the 235 blocks home from the igloo:
@@ -257,12 +280,20 @@ manually walking her the 235 blocks home from the igloo:
 00:18:38 [go-inside] not at outside_orientation (dx=45.28, dz=170.3)
 ```
 
-**Unfixed.** Arriving is worthless if the bot leaves three seconds later, and the
-unmanaged return is exactly the walk that strands her on the modded lights by the
-pen. The idle-wander activities (`inside`, `field`, `pen`, `furnace`) are all
-home-centric and none of them make sense 235 blocks from home. Options: suppress
-idle wander for a while after a route completes, or gate idle wander on being
-near home. Needs a decision before this route is useful for anything but a demo.
+**Fixed**: `tryIdleWander()` now returns early beyond a **60-block home radius**
+(`IDLE_WANDER_HOME_RADIUS`, measured from `HOUSE_CENTER`). Every activity it can
+pick — `inside`, `field`, `pen`, `furnace` — is home-local, and `runGoInside()`
+falls back to *manual* walking when the pathfinder cannot plan, which from far
+away is an unmanaged cross-map trek. One flaw, two symptoms: it abandoned the
+destination *and* it shortcut the way home through the lights.
+
+Verified live: standing at the igloo, the timer logged
+
+```
+[idle-wander] 229b from home — standing by (idle wander is home-local; use walk_route to come back)
+```
+
+twice across timer cycles, and she stayed put until told to walk back.
 
 ## Autonomous walking — implemented 2026-07-29, stage 1 verified
 
