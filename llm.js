@@ -125,6 +125,15 @@ function buildSystemPrompt (personaPrompt, exemplars, maxChars) {
     parts.push('Lines you have said before, in your true voice:\n' +
       exemplars.map(e => `- ${e}`).join('\n'))
   }
+  // Crew pronouns. Stated here because nothing else in the prompt says it, and a
+  // model with a gap guesses from the name — which is how Roz's diary ended up
+  // calling Private "he" (journal/bots/private.md). This is the shared prompt
+  // builder for BOTH backends (local Ollama and the Claude API), so the rule
+  // reaches every bot in every BRAIN_MODE.
+  parts.push(
+    'The crew: Private (in-game name Rainbot6032) is female — always she/her. ' +
+    'If you do not know somebody\'s pronouns, use they/them; never guess them from a name.'
+  )
   parts.push(
     `Rules: Reply with exactly ONE line of in-game Minecraft chat, under ${maxChars} characters. ` +
     'Plain text only — no quotation marks around the line, no narration, no emoji, ' +

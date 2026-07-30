@@ -535,6 +535,9 @@ bot.once('spawn', () => {
 // Controlled by autoSleepEnabled (on by default). Disable via {"action":"auto_sleep","args":{"enabled":false}}.
 let autoSleepEnabled = true
 let autoSleepBusy = false
+// Latch so the "away from home, not sleeping" notice logs once per trip instead
+// of every 5s tick all night. Cleared when the bot is back inside HOME_RADIUS.
+let autoSleepAwayLogged = false
 let wasSleeping = false
 
 // Story time: a bot requests a story before bed; auto-sleep suppressed until it ends.
@@ -598,6 +601,22 @@ async function tryAutoSleep () {
     return
   }
   if (goInsideBusy || taskBusy() || penTraversalBusy) return
+  // Away from home, do not sleep and do NOT walk back (user, 2026-07-30:
+  // "DO NOT SHORTCUT"). The taskBusy() check above already protects the walk
+  // itself, but once a walk_route to the igloo ENDS, bedtime used to fire here
+  // and runGoInside() brute-forced a 235-block manual trek home, cutting across
+  // the modded lights by the sheep pen. Stay put instead; the way home is
+  // walk_route in reverse ("come home"), which crosses the roof garden and
+  // comes down to the field from the north.
+  const sleepHomeDist = distanceFromHome()
+  if (sleepHomeDist > HOME_RADIUS) {
+    if (!autoSleepAwayLogged) {
+      autoSleepAwayLogged = true
+      logEvent('auto-sleep', `${sleepHomeDist.toFixed(0)}b from home — no sleep, staying put (say "come home" to walk the route back)`)
+    }
+    return
+  }
+  autoSleepAwayLogged = false
   if (!insideHouse()) {
     logEvent('auto-sleep', 'bedtime but outside — heading in first')
     try { await runGoInside() } catch (e) {
@@ -2180,7 +2199,13 @@ async function runIdleWanderToFurnace () {
 // from home, idle wander does nothing: getting back is the job of walk_route
 // (which goes over the roof garden and down to the field from the north) or of
 // a follow.
-const IDLE_WANDER_HOME_RADIUS = 60
+// Shared "am I away from home?" radius, used by idle wander AND auto-sleep.
+// Beyond it, every home-local autonomous behaviour must stand down rather than
+// walk itself back, because runGoInside() falls back to MANUAL walking when the
+// pathfinder cannot plan — from the igloo that is a ~235-block trek that ignores
+// the route and cuts across the modded lights by the sheep pen. Coming home is
+// walk_route's job, in reverse, over the roof garden and round to the north.
+const HOME_RADIUS = 60
 function distanceFromHome () {
   const p = bot.entity?.position
   if (!p) return 0
@@ -2192,7 +2217,7 @@ async function tryIdleWander () {
   if (idleWanderBusy()) return
 
   const homeDist = distanceFromHome()
-  if (homeDist > IDLE_WANDER_HOME_RADIUS) {
+  if (homeDist > HOME_RADIUS) {
     logEvent('idle-wander', `${homeDist.toFixed(0)}b from home — standing by (idle wander is home-local; use walk_route to come back)`)
     return
   }
@@ -6553,6 +6578,19 @@ async function runGoOutside (activity, { skipTimeCheck = false } = {}) {
 // Wrap runGoInsideOnce with up to 3 retries on graceful failure.
 async function runGoInside () {
   if (goInsideBusy || penTraversalBusy) return // never enter the house mid-pen-traversal
+  // Single chokepoint for "do not brute-force a walk home" (user, 2026-07-30:
+  // "DO NOT SHORTCUT"). ~20 call sites can reach this function, several of them
+  // autonomous (auto-sleep, idle wander, bedtime yields, post-activity cleanup),
+  // and runGoInsideOnce() falls back to MANUAL walking when the pathfinder
+  // cannot plan. From the igloo that is a ~235-block trek straight across the
+  // modded lights by the sheep pen. Guarding every caller means missing one, so
+  // the refusal lives here: beyond HOME_RADIUS this is a no-op, and getting back
+  // is walk_route in reverse ("come home") over the roof garden.
+  const goInsideDist = distanceFromHome()
+  if (goInsideDist > HOME_RADIUS) {
+    logEvent('go-inside', `refusing: ${goInsideDist.toFixed(0)}b from home — that would be an unmanaged cross-map walk. Use walk_route reverse ("come home").`)
+    return
+  }
   goInsideBusy = true
   try {
     const startHP = bot.health ?? 20
@@ -8404,7 +8442,7 @@ const CHAT_HANDLERS = [
     handler: (user) => {
       if (taskBusy()) { bot.chat(`I am in the middle of ${activeTask.name} — tell me to stop first.`); return }
       const away = distanceFromHome()
-      if (away <= IDLE_WANDER_HOME_RADIUS) { bot.chat('I am already home.'); return }
+      if (away <= HOME_RADIUS) { bot.chat('I am already home.'); return }
       abortGen++
       followTarget = null; followEntity = null; followChainPos = 0
       sustainPause('walk_route')
@@ -8727,7 +8765,7 @@ const CHAT_INTENTS = {
   walk_home: {
     hint: 'come back home / return to the farm from somewhere far away (e.g. from the igloo). Walks the igloo route in reverse, over the roof garden and down to the field from the north',
     run: () => {
-      if (distanceFromHome() <= IDLE_WANDER_HOME_RADIUS) { bot.chat('I am already home.'); return }
+      if (distanceFromHome() <= HOME_RADIUS) { bot.chat('I am already home.'); return }
       abortGen++
       followTarget = null; followEntity = null; followChainPos = 0
       return runWalkRoute('farm_to_igloo', { reverse: true, fromNearest: true })
@@ -9671,6 +9709,15 @@ const ROUTES = {
 async function runWalkRoute (routeName, { reverse = false, maxLegs = 0, fromNearest = false } = {}) {
   const route = ROUTES[routeName]
   if (!route) return { ok: false, error: `unknown route: ${routeName}`, known: Object.keys(ROUTES) }
+  // Refuse to walk blind. Right after a (re)connect, bot.entity.position is
+  // briefly absent — the documented (0,0,0) spawn stall — and every arrival
+  // check here is distance-based, so a walk started then reports "off by
+  // Infinity" and aborts on leg 1. Wait a few seconds for a real position.
+  for (let i = 0; i < 20 && !bot.entity?.position; i++) await sleep(250)
+  if (!bot.entity?.position) {
+    logEvent('route', 'refusing to start: no position yet (still spawning?)')
+    return { ok: false, error: 'no position yet — bot is still spawning' }
+  }
   const gate = startTask('walk_route', `${route.label}${reverse ? ' reversed' : ''}`)
   if (!gate.allowed) return { ok: false, error: 'busy', task: gate.current, detail: gate.detail }
   const myGen = abortGen
@@ -9729,11 +9776,35 @@ async function runWalkRoute (routeName, { reverse = false, maxLegs = 0, fromNear
       const leg = legs[i]
       const range = leg.range ?? 3
       const t0 = Date.now()
-      await pathTo(leg, range, 40000)
+      // Retry a leg before believing it failed. pathTo() waits a fixed 150ms for
+      // the pathfinder to compute its first path and then treats
+      // !isMoving() as "stopped" — but a harder plan can still be computing at
+      // that point, so a leg can come back in ~300ms having never moved (seen
+      // 2026-07-30 on leg 15, which had succeeded three runs in a row). A fresh
+      // setGoal usually plans fine on the second ask.
+      let off = Infinity
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        checkAbort(myGen)
+        await pathTo(leg, range, 40000)
+        const q = bot.entity?.position
+        if (!q) break
+        off = Math.hypot(q.x - leg.x, q.z - leg.z)
+        if (off <= range + 1.5) break
+        if (attempt < 3) {
+          logEvent('route', `leg ${i + 1}/${legs.length} short by ${off.toFixed(1)}b after ${Date.now() - t0}ms — retrying (${attempt}/2)`)
+          await sleep(600) // let the pathfinder settle before asking again
+        }
+      }
       const p = bot.entity?.position
-      const off = p ? Math.hypot(p.x - leg.x, p.z - leg.z) : Infinity
-      // pathTo() returns true when the pathfinder merely stops moving, so
-      // verify arrival by distance rather than trusting its verdict.
+      // Losing position mid-walk is a different failure from being off course;
+      // say so rather than reporting an Infinity that JSON turns into null.
+      if (!p) {
+        logEvent('route', `stopping at leg ${i + 1}/${legs.length}: lost position mid-walk`)
+        return { ok: false, error: 'lost position mid-walk', leg: i + 1, results }
+      }
+      // `off` comes from the retry loop above — arrival is verified by distance,
+      // not by pathTo()'s verdict (it reports success when the pathfinder merely
+      // stops moving).
       const reached = off <= range + 1.5
       results.push({ leg: i + 1, note: leg.note, reached, off: +off.toFixed(1), ms: Date.now() - t0 })
       logEvent('route', `leg ${i + 1}/${legs.length} ${reached ? 'ok' : 'MISSED'} — ${leg.note}, off by ${off.toFixed(1)}b in ${Date.now() - t0}ms`)
@@ -9754,6 +9825,12 @@ async function runWalkRoute (routeName, { reverse = false, maxLegs = 0, fromNear
   } finally {
     hopAssistScope = null
     bot.setControlState('jump', false)
+    // Kill any stale pathfinder goal. pathTo() leaves its goal set when it bails
+    // early, so an aborted walk used to leave the bot still walking to the last
+    // waypoint with nobody supervising — observed 2026-07-30, it covered another
+    // 20 blocks after the walk had already reported "lost". Unmanaged movement
+    // is exactly what we are trying to stop.
+    bot.pathfinder.setGoal(null)
     endTask('walk_route')
   }
 }
