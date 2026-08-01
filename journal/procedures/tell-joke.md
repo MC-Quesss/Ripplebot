@@ -45,7 +45,22 @@ Roz tells a corny two-part joke when asked. Setup line first, punchline after a 
 
 ## Implementation
 
-`JOKES` array in bot.js, random selection with `Math.random()`. Chat handler `joke` registered before the `greeting` catch-all. Emote `*clap*` fires with the punchline (setup → 2.5s pause → clap + punchline).
+`JOKES` array in bot.js; selection is persona-weighted (`personaBiasForTags`) and avoids
+recently-heard setups (`pickAvoidingRecentPhrase`). Delivery is call-and-response: the bot
+says the setup, then the punchline lands on the first human reply (30s silence fallback).
+Emote `*clap*` fires with the punchline. Jokes with a `mid` line (e.g. "Know what I heard?")
+insert the mid emote and deliver the punchline 2.5s later.
+
+## Update — 2026-08-01: spoiled punchlines are conceded, not repeated
+
+If the room blurts the punchline before the bot ("GUMMY BEAR!", "a fsh") — human **or**
+another bot — the teller no longer delivers the same line. `punchlineGuessed()` in bot.js
+matches a full quote (punctuation/spacing-insensitive) or a short blurt (≤10 words)
+containing every distinctive word of the punchline; generic words are filtered by
+`PUNCHLINE_STOPWORDS`. On a guess the bot claps and concedes with a varied line from
+`JOKE_CONCEDE_LINES` ("HA! You got it. Everyone knows my material."). A non-guess reply
+still triggers normal delivery. Requires a bot restart to take effect (not
+protocol-breaking — jokes are local, so bots can restart independently).
 
 ## Related
 - [[emotes]]

@@ -7,6 +7,20 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-08-01 — Joke ability: don't repeat a spoiled punchline
+
+Code-only session (bot not launched). The room kept beating the bots to classic
+punchlines ("gummy bear", "a fsh") and the teller would still deliver the exact same
+line. Added spoiler detection to bot.js: `punchlineGuessed()` (full-quote match or
+short-blurt match on the punchline's distinctive words, `PUNCHLINE_STOPWORDS` filter)
+plus `concedePunchline()` — clap + a varied "you got it" line from `JOKE_CONCEDE_LINES`
+instead of the rerun. Bot spoilers concede too (previously bot lines never triggered
+delivery at all; a non-guess bot line still doesn't). Verified with a 32-case harness
+against the extracted matcher — all pass. Not protocol-breaking; each bot picks it up
+on its next restart.
+
+- Updated: [[../procedures/tell-joke]]
+
 ## 2026-07-29 — Five walks to the igloo: mapping a route by repetition (day 48195→48197)
 
 **State at start:** bot not running; launched clean. Roz spawned at (-266.5, 65, 571.6),

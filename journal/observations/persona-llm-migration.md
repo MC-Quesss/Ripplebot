@@ -76,3 +76,18 @@ Companion to [[todo-activity-system-refactor]]. Discussion of 2026-06-10.
   idunno, harvest/task announcements.
 - **gemma4 requires `think: false`** — it's a thinking model; without the flag every reply
   comes back as empty content (budget consumed by `message.thinking`).
+
+## Update — 2026-08-01: the local backend is per-box, not Ollama-everywhere
+
+The fleet split since this note was written. `llm.js` only ever speaks the
+LLM's HTTP API by URL + model name (`LLM_URL`/`LLM_MODEL` in `.env`), so the
+backend is a per-machine choice:
+
+- **Meeker boxes** — Ollama with **gemma4** (the setup described above; the
+  `think: false` requirement still applies to gemma4).
+- **More robust boxes** — **oMLX** serving **Qwen3.5-9B-MLX-4bit** (Roz's
+  current setup, verified in [[_log]] "LLM verified — Qwen3.5-9B-MLX-4bit").
+
+Docs and comments that said "Ollama" generically were swept to "local LLM"
+on 2026-08-01 (CLAUDE.md, llm.js, bot.js comments, live journal notes).
+Historical log entries keep their original wording — they were true when written.

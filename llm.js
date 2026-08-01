@@ -128,7 +128,7 @@ function buildSystemPrompt (personaPrompt, exemplars, maxChars) {
   // Crew pronouns. Stated here because nothing else in the prompt says it, and a
   // model with a gap guesses from the name — which is how Roz's diary ended up
   // calling Private "he" (journal/bots/private.md). This is the shared prompt
-  // builder for BOTH backends (local Ollama and the Claude API), so the rule
+  // builder for BOTH backends (the local LLM and the Claude API), so the rule
   // reaches every bot in every BRAIN_MODE.
   parts.push(
     'The crew: Private (in-game name Rainbot6032) is female — always she/her. ' +
@@ -205,7 +205,7 @@ async function generateLine ({ system, exemplars, context, maxChars = 200, timeo
 // One small JSON-mode call per incoming chat line. Runs on its own promise
 // chain, independent of generateLine's single-flight lock, so routing keeps
 // working while a long expressive generation is in flight. Each bot has its
-// own Ollama box, so per-line classification is cheap. Resolves a parsed
+// own local LLM box, so per-line classification is cheap. Resolves a parsed
 // object, or null for: unreachable, busy storm, timeout, or malformed JSON —
 // null means "stay silent", same failure philosophy as the voice.
 const CLASSIFY_TIMEOUT_MS = 15_000

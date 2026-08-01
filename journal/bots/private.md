@@ -28,7 +28,7 @@ failure mode to avoid: a wrong guess misgenders someone in a way the neutral
 default never would.
 
 Fixed at the source in `llm.js` `buildSystemPrompt()` — the prompt builder shared
-by **both** brain backends (local Ollama and the Claude API), so the rule reaches
+by **both** brain backends (the local LLM and the Claude API), so the rule reaches
 every bot in every `BRAIN_MODE`. The rule states Private's pronouns and instructs
 **they/them for anyone whose pronouns are not known**, rather than inferring from
 a name.

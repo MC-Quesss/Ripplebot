@@ -23,7 +23,7 @@ earshot obeys and acks once with a canned line:
 | **"rise and shine"** | quiet OFF | "Good morning. I am listening again." |
 
 - Matched by plain regex in the chat handler, before any routing — works even
-  with the API/Ollama unreachable, costs nothing.
+  with the API/local LLM unreachable, costs nothing.
 - Bot-spoken lines never trigger it (human-only).
 - Phrases tunable per bot via `QUIET_ON_PHRASE` / `QUIET_OFF_PHRASE` in `.env`.
 

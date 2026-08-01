@@ -76,7 +76,7 @@ announce in chat (chat is the only cross-machine channel).
 Music is also a bot-to-bot topic: an idle bot may ask a nearby bot
 `<nick>, have you heard "Title"?` — a **No** answer prompts the asker to put the
 record on for them; a **Yes** answer comes back with the responder's last-heard day
-and latest impression. Answers are deterministic (work without Ollama) and start
+and latest impression. Answers are deterministic (work without the local LLM) and start
 with Yes/No so the asker can parse them.
 
 ## Provenance

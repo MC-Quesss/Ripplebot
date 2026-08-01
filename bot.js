@@ -881,7 +881,7 @@ const CLAUDE_MODES = new Set(['claude', 'claude-super', 'claude-private'])
 const KNOWN_BRAIN_MODES = new Set(['local', 'remote', ...CLAUDE_MODES])
 let brainMode = (process.env.BRAIN_MODE || 'local').toLowerCase()
 if (!KNOWN_BRAIN_MODES.has(brainMode)) {
-  // A typo'd mode silently behaving as local would start Ollama on a box that
+  // A typo'd mode silently behaving as local would start the local LLM on a box that
   // can't afford it — fail loudly instead.
   logEvent('brain', `unknown BRAIN_MODE "${brainMode}" — falling back to local (known: ${[...KNOWN_BRAIN_MODES].join(', ')})`)
   brainMode = 'local'
@@ -897,7 +897,7 @@ const usesClaudeBrain = () => CLAUDE_MODES.has(brainMode)                       
 const localOff = () => brainMode === 'claude-super' || brainMode === 'claude-private' // local model never touched
 const ambientViaClaude = () => brainMode === 'claude-super'                        // idle/ambient voice + diary via Claude
 
-// The persona's voice generator (Ollama). Health-checked in the background;
+// The persona's voice generator (the local LLM). Health-checked in the background;
 // when unreachable, expressive speech is silent — functional speech unaffected.
 // Started lazily and only when the mode uses a local model; the no-local claude
 // modes never touch it (so the box can spend its resources on the game instead).
@@ -1157,7 +1157,7 @@ function markRecordHeard (recordName, { via = 'self' } = {}) {
   saveMusicMemory()
   logEvent('music', `heard ${recordName} (via ${via}); times=${m.timesHeard} day=${m.lastHeardDay}`)
   // Sometimes write a private impression into the journal — a note to self,
-  // never chatted. Ollama down = no note this time; the counters still update.
+  // never chatted. Local LLM down = no note this time; the counters still update.
   if (Math.random() < 0.6 && !quietMode && claudeAmbientAllowed('music')) {
     const info = recordInfo(recordName)
     expressiveGenerate({
@@ -1382,6 +1382,52 @@ const JOKES = [
 
 let pendingJoke = null
 let pendingJokeTimer = null
+
+// Words too generic to count as "guessing the punchline" on their own.
+const PUNCHLINE_STOPWORDS = new Set([
+  'a', 'an', 'the', 'and', 'because', 'it', 'was', 'is', 'be', 'he', 'she',
+  'his', 'her', 'they', 'their', 'there', 'you', 'your', 'i', 'me', 'my',
+  'of', 'in', 'to', 'at', 'that', 'this', 'just', 'no', 'one', 'had', 'has',
+  'got', 'get', 'for', 'with', 'case', 'say', 'said', 'nothing', 'each',
+  'other', 'up', 'out', 'dont', 'don',
+])
+
+// Did this chat line give away the pending joke's punchline? Matches a full
+// quote (spacing/punctuation-insensitive) or a short blurt containing every
+// distinctive word of the punchline ("gummy bear", "two tired", "fsh").
+function punchlineGuessed (message, joke) {
+  if (!joke || !joke.punchline) return false
+  const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
+  const squash = s => s.replace(/ /g, '')
+  const msg = norm(message)
+  const punch = norm(joke.punchline)
+  if (!msg || !punch) return false
+  if (msg.includes(punch) || squash(msg).includes(squash(punch))) return true
+  const sig = punch.split(' ').filter(w => w.length > 2 && !PUNCHLINE_STOPWORDS.has(w))
+  if (!sig.length || msg.split(' ').length > 10) return false
+  const msgWords = new Set(msg.split(' '))
+  const msgSquashed = squash(msg)
+  return sig.every(w => msgWords.has(w) || msgSquashed.includes(w))
+}
+
+const JOKE_CONCEDE_LINES = [
+  'HA! You got it. Everyone knows my material.',
+  'Yep, that\'s the one. This crowd is too quick for me.',
+  'Exactly. I can\'t get anything past you.',
+  'Correct! The classics travel fast around here.',
+  'That\'s it. I clearly need fresher jokes.',
+]
+
+// The room beat us to the punchline — applaud the guesser instead of
+// delivering the same line they just said.
+function concedePunchline () {
+  const joke = pendingJoke
+  pendingJoke = null
+  if (pendingJokeTimer) { clearTimeout(pendingJokeTimer); pendingJokeTimer = null }
+  if (!joke) return
+  sendEmote('clap')
+  bot.chat(pickAvoidingRecentPhrase(JOKE_CONCEDE_LINES))
+}
 
 function sendEmote (name) {
   const nameBytes = Buffer.from(name, 'utf8')
@@ -2435,8 +2481,8 @@ function asActionText (line) {
 // One expressive impulse: check the gate, optionally wait (the generation
 // happens AT FIRE TIME, after the wait, so the context already contains any
 // chat that arrived meanwhile — stale lines are never written), generate from
-// the persona spec, speak through the gate. The model may PASS; Ollama being
-// down means silence. Returns whether a line was spoken.
+// the persona spec, speak through the gate. The model may PASS; the local LLM
+// being down means silence. Returns whether a line was spoken.
 async function impulseExpressive (kind, situation, { me = false, delayMs = 0, skipGate = false } = {}) {
   if (quietMode) return false // quiet hours: no generated speech, no API calls
   if (!claudeAmbientAllowed(kind)) return false // API-cost musings: special circumstances only
@@ -8251,8 +8297,8 @@ async function runPlayRecord ({ title, color } = {}) {
     bot.chat(`Now playing: "${info.title}" — the ${info.color} disc.`)
     // Follow-up is the bot's OWN feeling about the song, in persona voice —
     // the factoid/lore stays available as background (buildExpressiveContext
-    // injects it for whatever's in the jukebox) but is never recited. Ollama
-    // down = just the announce, no follow-up.
+    // injects it for whatever's in the jukebox) but is never recited. Local
+    // LLM down = just the announce, no follow-up.
     impulseExpressive('music',
       `You just put the record on and the first notes of "${info.title}" are filling the farm. Say ONE short line about what this song makes YOU feel or remember — your own reaction, not facts or history about the disc.`,
       { skipGate: true, delayMs: 4000 }
@@ -8384,7 +8430,7 @@ const AS_YOU_WERE_LINES = [
 // work instantly and offline, and are deliberately few — everything else
 // (movement, farm chores, questions, banter) routes through the LLM. Safety
 // commands (stop, stand down) live here so they can never be hostage to
-// inference latency or a downed Ollama.
+// inference latency or a downed local LLM.
 const CHAT_HANDLERS = [
   {
     name: 'follow',
@@ -8726,7 +8772,7 @@ function extractMySegment (message) {
 // (2026-06-11) The phrase-matching Tier-A triggers, the conversation-window
 // machinery, and the regex fallthrough are gone. Every chat line that isn't a
 // named reflex command goes through one small JSON classification call on this
-// bot's own Ollama box. The router decides who was being addressed and whether
+// bot's own local LLM box. The router decides who was being addressed and whether
 // the line is a command (mapped to a whitelisted intent below), conversation,
 // or noise. No canned fallbacks: when the LLM is unreachable the bot simply
 // doesn't engage — same failure philosophy as the expressive voice.
@@ -9517,9 +9563,17 @@ bot.on('chat', (username, message) => {
 
   // A pending joke's punchline lands on the first human response (the 30s
   // timer in the joke handler is the fallback if the room stays silent).
-  if (pendingJoke && !fromBot) {
-    deliverPunchline()
-    return
+  // Exception: if the room already blurted the punchline — human or bot —
+  // concede with applause instead of repeating the line they just said.
+  if (pendingJoke) {
+    if (punchlineGuessed(message, pendingJoke)) {
+      concedePunchline()
+      return
+    }
+    if (!fromBot) {
+      deliverPunchline()
+      return
+    }
   }
 
   // Everything else — named conversation, unaddressed chatter, group-wide
@@ -10284,7 +10338,7 @@ function handleCommand (cmd) {
     }
     case 'llm': {
       // In no-local modes an un-inited local model reports off:true — not the
-      // misleading healthy:false of a crashed Ollama box.
+      // misleading healthy:false of a crashed local LLM box.
       const local = localInited ? llm.status() : { healthy: false, off: true }
       return { ok: true, ...local, persona: PERSONA, personaName: personaSpec.name, botChatDepth: BOT_CHAT_DEPTH, brainMode, claude: claude.status() }
     }
