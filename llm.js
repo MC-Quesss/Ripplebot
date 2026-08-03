@@ -269,6 +269,9 @@ function buildStorySystem (system, exemplars, maxChars, lines) {
     `Write ${lines} separate lines (under ${maxChars} characters each). ` +
     'Each line should be a rich, vivid thought — use the full length to paint a scene with sensory detail, emotion, or meaning. ' +
     'Do not write short choppy fragments. Make every line land. ' +
+    'If the request lists numbered story beats, follow them exactly: one line per beat, in order — ' +
+    'ONE continuous story in which every line carries the same characters forward and builds on the line before it. ' +
+    'Characters must want something, struggle, and be changed by the end. Never disconnected musings, and do not label lines with numbers or beat names. ' +
     'Plain text only — no quotation marks, no narration tags, no emoji, no numbering, ' +
     "and never a line starting with '/'. Stay in character. Keep it wholesome. " +
     'Each line should feel like a natural pause in speech — as if you are telling this to someone sitting beside you by a fire. ' +
@@ -282,7 +285,7 @@ function cleanStoryLines (text, maxChars, lines) {
   const raw = stripThinking(text)
   if (!raw) return null
   const result = raw.split('\n')
-    .map(l => l.replace(/[Ā-￿\u{10000}-\u{10FFFF}]/gu, '').replace(/^["'`\d.\-)]+\s*/, '').replace(/["'`]+$/g, '').replace(/\s+/g, ' ').trim())
+    .map(l => l.replace(/[Ā-￿\u{10000}-\u{10FFFF}]/gu, '').replace(/^line\s*\d+\s*[:.)\-]\s*/i, '').replace(/^["'`\d.\-)]+\s*/, '').replace(/["'`]+$/g, '').replace(/\s+/g, ' ').trim())
     .filter(l => l && !/^PASS\b/i.test(l) && !l.startsWith('/'))
     .map(l => l.length > maxChars ? (l.slice(0, maxChars).includes(' ') ? l.slice(0, l.slice(0, maxChars).lastIndexOf(' ')) : l.slice(0, maxChars)) : l)
     .filter(Boolean)

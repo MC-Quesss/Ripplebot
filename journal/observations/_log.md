@@ -7,6 +7,49 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-08-03 — Private's "Skipper" slip
+
+New persona feature (user request): Private acknowledges direct orders from
+human players by starting to say "Yes, Skipper!", catching herself, facepalming,
+and correcting to the real player's name. Six line variants, 20s cooldown,
+hooked at all three command paths (reflex / local router / Claude brain — slip
+leads the brain's reply). Farewells, questions, and emote/dance excluded.
+Harness-tested (gating, cooldown, name substitution, emote timing); live test
+on Private's next restart.
+
+- Updated: [[../bots/private]]
+
+## 2026-08-01 — Records shifted one slot right (user)
+
+Quesss moved every disc one column right in the kitchen chest: home slots now
+4/5, 13/14, 22/23 (columns 4–5; was 3/4, 12/13, 21/22). Updated
+`RECORD_HOME_SLOTS` in bot.js plus [[../chests/house-kitchen-chest]] and
+[[../items/music-records]]. Not live-verified — the chest GUI timed out twice
+(likely held open by the user mid-rearrangement); verify on next disc return.
+Roz was on fire duty (south, with rainbot6032 north) but idle; no task disrupted.
+Note: Far (5) now sits directly beside the DO-NOT-TOUCH pot (6).
+Running bot still has the old map in memory — takes effect on next restart.
+
+## 2026-08-01 — Story engine: mythic tale arcs (same session as joke fix below)
+
+Quesss reported Roz's stories "hit like random lines rather than a coherent story."
+Root cause: the story prompt asked for N separate vivid lines with zero narrative
+structure. Rebuilt storytelling as the deferred mad-lib engine (4 arcs × 4 casts ×
+4 settings) with 7-beat arc sheets modeled on classic folk-tale shapes (quest with
+trials, trickster-frees-the-gift, origin/pourquoi, stranger-by-the-fire) — the
+family's favorite bedtime books were the quality bar, structures borrowed, no text.
+One LLM line per beat; arc never repeats back-to-back; settings mythologize our own
+world (igloo lake, wheat, flock). `STORY_TIMEOUT_MS` 120s→180s. Harness-tested
+(arc data, no-repeat selection, label stripping) — live telling still to verify.
+
+Follow-up the same session: Quesss prefers stories that carry into the night —
+"better to start later than finish too early and have awkward waiting before
+sleep." Story-request window moved 9500–10500 → 11300–12400 (sunset), and the
+`tell_story` acceptance gate widened to 10300–15000 so an ask landing after
+bedtime isn't dropped after the crew has already gathered.
+
+- Updated: [[../procedures/storytelling-nights]]
+
 ## 2026-08-01 — Joke ability: don't repeat a spoiled punchline
 
 Code-only session (bot not launched). The room kept beating the bots to classic

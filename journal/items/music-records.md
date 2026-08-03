@@ -22,12 +22,14 @@ review with the user.
 
 | Item | Title | Label color | Length | Home slot | Factoid (background lore) |
 |---|---|---|---|---|---|
-| `record_cat` | Cat | green | 3:05 (185s) | 3 | **Quesss's favorite disc.** Like all our records it came from a dungeon chest — though legend tells of an older world where discs were farmed in a long dungeon corridor: a creeper baited behind doors and gates, skeleton arrows doing the rest. *(reviewed 2026-07-02)* |
-| `record_far` | Far | lime | 2:54 (174s) | 4 | A calm, drifting C418 melody — good for long afternoons out in the field. |
-| `record_mall` | Mall | purple | 3:17 (197s) | 12 | C418 wrote this one to feel like wandering an empty shopping mall — spacious and a little mysterious. |
-| `record_wait` | Wait | blue | 3:58 (238s) | 13 | C418 originally titled this one "Where are we now" — the most upbeat disc in the collection. |
-| `record_chirp` | Chirp | red | 3:05 (185s) | 21 | A funky retro C418 groove that sounds like a broadcast from another decade. |
-| `record_mellohi` | Mellohi | magenta | 1:36 (96s) | 22 | A short, melancholy waltz in three-four time — C418 at his most wistful. |
+| `record_cat` | Cat | green | 3:05 (185s) | 4 | **Quesss's favorite disc.** Like all our records it came from a dungeon chest — though legend tells of an older world where discs were farmed in a long dungeon corridor: a creeper baited behind doors and gates, skeleton arrows doing the rest. *(reviewed 2026-07-02)* |
+| `record_far` | Far | lime | 2:54 (174s) | 5 | A calm, drifting C418 melody — good for long afternoons out in the field. |
+| `record_mall` | Mall | purple | 3:17 (197s) | 13 | C418 wrote this one to feel like wandering an empty shopping mall — spacious and a little mysterious. |
+| `record_wait` | Wait | blue | 3:58 (238s) | 14 | C418 originally titled this one "Where are we now" — the most upbeat disc in the collection. |
+| `record_chirp` | Chirp | red | 3:05 (185s) | 22 | A funky retro C418 groove that sounds like a broadcast from another decade. |
+| `record_mellohi` | Mellohi | magenta | 1:36 (96s) | 23 | A short, melancholy waltz in three-four time — C418 at his most wistful. |
+
+*Home slots shifted one column right by the user on 2026-08-01 (columns 3–4 → 4–5).*
 
 Durations drive end-of-song awareness (`durationSec` in `RECORD_INFO`): every bot
 that hears a `Now playing:` announce tracks the same countdown, notices when the

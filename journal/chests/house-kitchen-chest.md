@@ -71,17 +71,24 @@ hardcode a slot index for a vanilla item.
 ### Music records — the one vanilla exception (user, 2026-07-02; per-disc slots 2026-07-03)
 
 Records (`record_*`) are vanilla but **each disc has its own assigned slot** in the
-home block (columns 3–4 of each row). Assignment taken from the observed in-chest
-arrangement on 2026-07-03 — mirrors `RECORD_HOME_SLOTS` in `bot.js`:
+home block (columns 4–5 of each row — the user shifted every disc one column right
+on 2026-08-01; original 2026-07-03 layout was columns 3–4). Mirrors
+`RECORD_HOME_SLOTS` in `bot.js`:
 
 | Slot | Record | Color |
 |---|---|---|
-| 3 | Cat | green |
-| 4 | Far | lime |
-| 12 | Mall | purple |
-| 13 | Wait | blue |
-| 21 | Chirp | red |
-| 22 | Mellohi | magenta |
+| 4 | Cat | green |
+| 5 | Far | lime |
+| 13 | Mall | purple |
+| 14 | Wait | blue |
+| 22 | Chirp | red |
+| 23 | Mellohi | magenta |
+
+No overlap with the reserved ingredient slots; the one adjacency is in row 0,
+where Far (5) now sits directly beside the **DO NOT TOUCH pot (6)**. Layout not
+yet live-verified in-chest (chest GUI wouldn't open on 2026-08-01, likely held
+open by the user); `runPlayRecord` finds discs by name scan so playback is
+unaffected either way.
 
 Rules:
 

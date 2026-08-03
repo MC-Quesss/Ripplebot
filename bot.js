@@ -548,9 +548,15 @@ let storyTimeStartedAt = 0
 let storyNightDay = -1
 let lastStoryRequestDay = -1
 const STORY_REQUEST_CHANCE = 0.25
-const STORY_PRE_BEDTIME_START = 9500
-const STORY_PRE_BEDTIME_END = 10500
-const STORY_TIMEOUT_MS = 120_000
+// Request fires around sunset so the telling carries INTO the night (user,
+// 2026-08-01): better to start late and end with everyone ready to drop into
+// bed than to finish early and stand around waiting for sleep to unlock.
+// With the ~60s gather wait, the ask lands near bedtime (12500) and the tale
+// itself runs in the dark; auto-sleep resumes 5s after the end marker.
+const STORY_PRE_BEDTIME_START = 11300
+const STORY_PRE_BEDTIME_END = 12400
+// 7-beat tales: generation (up to 60s) + 7 lines at ~5s spacing needs headroom.
+const STORY_TIMEOUT_MS = 180_000
 const BED_POS = { x: -268, y: 65, z: 569 }
 const BED_APPROACH = { x: -268, y: 65, z: 570 }
 // Backup bed — to Roz's left when approaching from z=570 facing north.
@@ -7986,17 +7992,17 @@ async function runStashAll () {
 
 // ── Jukebox ─────────────────────────────────────────────────────────────────
 const JUKEBOX = { x: -274, y: 64, z: 565 }
-// Each record's assigned home slot in the kitchen chest — columns 3–4 of each
-// row (user-established layout, per-disc assignment observed in-chest
-// 2026-07-03). A returning disc goes back to ITS slot, not just any home slot.
-// Records are NOT junk.
+// Each record's assigned home slot in the kitchen chest — columns 4–5 of each
+// row (user-established layout 2026-07-03; user shifted every disc one column
+// right on 2026-08-01). A returning disc goes back to ITS slot, not just any
+// home slot. Records are NOT junk.
 const RECORD_HOME_SLOTS = {
-  record_cat:     3,
-  record_far:     4,
-  record_mall:    12,
-  record_wait:    13,
-  record_chirp:   21,
-  record_mellohi: 22,
+  record_cat:     4,
+  record_far:     5,
+  record_mall:    13,
+  record_wait:    14,
+  record_chirp:   22,
+  record_mellohi: 23,
 }
 
 // Disc metadata: title, label color, and a lore factoid. The factoid is NOT
@@ -8424,6 +8430,44 @@ const AS_YOU_WERE_LINES = [
   { text: 'Oh good. I had places to aimlessly stand.', weight: (s) => s.snark + s.curiosity },
   { text: 'Roaming resumed. Try to keep up.', weight: (s) => s.snark + s.focus },
 ]
+
+// ── Private's "Skipper" slip ─────────────────────────────────────────────────
+// Private (PERSONA=private) takes orders like she's still in the old unit: she
+// starts to snap "Yes, Skipper!", catches herself mid-word, facepalms, and
+// corrects to the actual player's name. Fires when a human player gives a
+// direct instruction — reflex commands and routed intents alike. Questions,
+// farewells, and emote/dance requests are excluded (a facepalm would stomp the
+// requested animation). The cooldown keeps the gag from double-firing when one
+// utterance lands through multiple paths, and from wearing thin in a burst of
+// rapid-fire orders.
+const SKIPPER_SLIP_COOLDOWN_MS = 20_000
+let lastSkipperSlipAt = 0
+const SKIPPER_SLIP_EXCLUDE = new Set([
+  'farewell', 'check_fire', 'inventory', 'emote', 'dance', 'wheat_snooze',
+])
+const SKIPPER_SLIP_LINES = [
+  n => `Yes Skipp... I mean, ${n}.`,
+  n => `You got it, Skip... er — I mean, ${n}.`,
+  n => `Aye aye, Skipp— ...sorry. Aye aye, ${n}.`,
+  n => `Right away, Skipper! ...Er. Right away, ${n}.`,
+  n => `On it, Skip... ahem. On it, ${n}.`,
+  n => `Roger that, Skipp... oh dear. Roger that, ${n}.`,
+]
+// Returns true when the slip actually fired (callers can pace around it).
+function skipperSlip (username, commandName) {
+  if (PERSONA !== 'private') return false
+  if (SKIPPER_SLIP_EXCLUDE.has(commandName)) return false
+  const now = Date.now()
+  if (now - lastSkipperSlipAt < SKIPPER_SLIP_COOLDOWN_MS) return false
+  lastSkipperSlipAt = now
+  const line = pickAvoidingRecentPhrase(SKIPPER_SLIP_LINES.map(f => f(username)))
+  if (!line) return false
+  bot.chat(line)
+  // The facepalm lands right as the correction hits chat.
+  setTimeout(() => { try { sendEmote('facepalm') } catch (_) {} }, 500)
+  logEvent('skipper-slip', `${commandName} <- ${username}`)
+  return true
+}
 
 // Reflex tier: the deterministic chat commands that survived the 2026-06-11
 // LLM-router refactor. These fire only when the bot is addressed by name, must
@@ -8901,14 +8945,17 @@ const CHAT_INTENTS = {
     hint: 'tell a story, share a memory, or talk at length about a topic (args.topic = what to talk about)',
     run: (user, args) => {
       const t = bot.time?.timeOfDay
-      if (typeof t !== 'number' || t < STORY_PRE_BEDTIME_START - 1000 || t > 13500) {
+      // Upper bound 15000 (not 13500): the sunset request window plus the 60s
+      // gather wait means the ask can land well after bedtime — rejecting it
+      // then would strand everyone gathered with no story.
+      if (typeof t !== 'number' || t < STORY_PRE_BEDTIME_START - 1000 || t > 15000) {
         logEvent('story-time', `tell_story intent outside story window (t=${t}), ignoring`)
         return Promise.resolve()
       }
       storyTimeActive = true
       storyTimeStartedAt = Date.now()
       logEvent('story-time', 'story accepted — suppressing auto-sleep for all bots')
-      return runTellStory(user, args.topic || 'something from your past')
+      return runTellStory(user, args.topic || null)
     },
   },
   keep_fire: { hint: 'start the autonomous keep-the-fire-going farm loop (only when explicitly asked to START keeping the fire — never for questions like "who is keeping the fire?" or "are you keeping the fire?")', run: (user) => runSustainFarm(user) },
@@ -8952,12 +8999,97 @@ const CHAT_INTENTS = {
 }
 
 // ── Storytelling ─────────────────────────────────────────────────────────────
-// Multi-line monologue delivered with natural pacing. The bot "tells a story"
-// using the LLM's longer generation mode, then sends each line with a delay.
+// Multi-line tale delivered with natural pacing. A story is a SHAPE, not a
+// pile of vivid lines: each arc below is a beat sheet in the tradition of the
+// old fireside folk tales — the sun-hero quest, the trickster who frees a
+// hoarded gift, the origin tale that explains the sky, the stranger who earns
+// a place by the fire. One chat line is generated per beat, so every telling
+// has a beginning, a turn, and an ending that lands. Casts and settings are
+// swappable mad-lib style (Quesss's design, 2026-07-11): each set is
+// internally cohesive and fits any arc, so tellings stay fresh at no extra
+// inference cost. (2026-08-01)
+const STORY_ARCS = [
+  {
+    name: 'the long quest',
+    beats: [
+      'Name the hero, their home among the folk, and the one thing missing — from their world or from their heart',
+      'The hero sets out alone; make the long crossing vivid — weather, distance, doubt',
+      'A guardian bars the way and sets a trial of strength or wits; the hero barely passes',
+      'A second trial, harder — it tests the heart, and the hero must give something up to go on; it changes them',
+      'The hero reaches the far place and gains what they sought — but it is not what they imagined',
+      'The return home; the gift is shared with all the folk, and it spreads',
+      'One closing image: the hero and the home, both changed, at peace',
+    ],
+  },
+  {
+    name: 'the freeing of the gift',
+    beats: [
+      'The world is missing something everyone needs — warmth, light, song, or rain; show who suffers without it',
+      'A clever small one learns where it is kept: hoarded by the power, who guards it jealously',
+      'The small one changes shape, or slips inside by cunning, becoming something tiny and harmless',
+      'Inside the power\'s hall the small one waits and watches, and is very nearly discovered',
+      'The theft: the small one seizes the treasure and flees, the power raging close behind',
+      'Instead of keeping it, the small one flings the gift wide so it belongs to everyone, forever',
+      'Close with the mark the small one carries from that day to this — and why they do not mind',
+    ],
+  },
+  {
+    name: 'why the world is so',
+    beats: [
+      'Long ago the world lacked one familiar thing every listener knows tonight — begin with "Long ago, before..."',
+      'One wanderer among the folk loved something small — a color, a sound, a light — and chased it farther than anyone had gone',
+      'The journey: past the last landmark, into country with no names, following the trail of the loved thing',
+      'The hidden place where the thing is born — describe its wonder slowly',
+      'The choice: the wanderer could keep it for themself alone, or let it go; show the moment of deciding',
+      'The letting-go spills the thing across the world, and the mark becomes permanent',
+      'Close with "and that is why, to this very night..." — tie the tale to something the listeners can see or hear right now',
+    ],
+  },
+  {
+    name: 'the stranger by the fire',
+    beats: [
+      'A stranger arrives at the home of the folk, unlike anyone there; the folk are wary and keep their distance',
+      'The stranger tries to help and gets it wrong in a way that makes things worse — a little funny, a little sad',
+      'The stranger watches and learns the ways of the folk, doing small kindnesses nobody notices',
+      'Hardship comes to the home — a storm, a long winter, a hungry thing — and the folk cannot face it alone',
+      'The very strangeness of the stranger turns out to be exactly what the home needs; the rescue',
+      'The folk make room by the fire; the stranger has a place and a name among them now',
+      'One closing image: the stranger keeps one small habit from their old life, and nobody minds at all',
+    ],
+  },
+]
+
+// Swappable, internally-cohesive sets. Settings mythologize the bots' own
+// world — the frozen lake and igloo, the wheat, the flock — so tales feel
+// like legends of the land the listeners live in.
+const STORY_CASTS = [
+  { hero: "the Sun's youngest daughter, who walks in a coat of sparks", power: 'the North Wind, who locks whatever he loves in ice', folk: 'the cloud shepherds and their flocks of stars' },
+  { hero: 'a stubborn old ewe with one curled horn', power: 'the winter that would not end', folk: 'the flock, and the sheepdog who dreams out loud' },
+  { hero: 'a small rusted robot with an ember where its heart should be', power: 'the Great Silence that swallows every song', folk: 'the little lantern-drones of the valley' },
+  { hero: 'a raven with one white feather', power: 'the oldest spruce, who hoards whatever falls among her roots', folk: 'the foxes and the winter hares' },
+]
+
+const STORY_SETTINGS = [
+  'a frozen lake where green and violet lights walk the sky at night, beside an igloo of blue snow',
+  'endless wheat fields that turn to gold at dusk, cut by one long dirt road going north',
+  'a deep pine forest where snow hangs in the branches and never quite reaches the ground',
+  'the high mountain pass where the sun comes down to rest each evening',
+]
+
+let lastStoryArc = null
+function composeStoryBrief () {
+  const arcPool = STORY_ARCS.filter(a => a.name !== lastStoryArc)
+  const arc = arcPool[Math.floor(Math.random() * arcPool.length)]
+  lastStoryArc = arc.name
+  const cast = STORY_CASTS[Math.floor(Math.random() * STORY_CASTS.length)]
+  const setting = STORY_SETTINGS[Math.floor(Math.random() * STORY_SETTINGS.length)]
+  return { arc, cast, setting }
+}
+
 async function runTellStory (user, topic) {
   storyTimeActive = true
   storyTimeStartedAt = Date.now()
-  logEvent('story-time', `starting story for ${user}, topic="${topic}"`)
+  logEvent('story-time', `starting story for ${user}, topic="${topic || '(none)'}"`)
   try {
     if (bot.isSleeping) {
       try { await bot.wake() } catch (_) {}
@@ -8976,18 +9108,26 @@ async function runTellStory (user, topic) {
     bot.chat('Gather round, everyone.')
     await sleep(5000)
     sendEmote('think')
+    const { arc, cast, setting } = composeStoryBrief()
     const backstory = personaSpec.backstory || ''
+    const aboutSelf = !!topic && /\b(you|your|yourself)\b/i.test(topic)
     const context = buildExpressiveContext(
-      `${user} asked you to tell a story or share a memory about: "${topic}". ` +
-      (backstory ? `Your backstory for reference (draw from this if relevant):\n${backstory}\n\n` : '') +
-      'Tell a short, vivid story from your personal experience or memory. Be specific — names, places, sensory details. ' +
-      'This is YOUR story, told in YOUR voice. Make it feel like a campfire moment.'
+      `${user} asked you for a bedtime story${topic ? ` about: "${topic}"` : ''}. ` +
+      'Tonight you tell a TALE in the manner of the old fireside folk stories — not scattered musings: ' +
+      'ONE story, with characters who want something, struggle, and are changed by the end.\n' +
+      `The tale's shape is "${arc.name}". Its setting: ${setting}.\n` +
+      `Its figures (use the ones that fit the shape; rename or replace them if the topic asks): ` +
+      `the hero — ${cast.hero}; the power — ${cast.power}; the folk — ${cast.folk}.\n` +
+      (topic ? 'Weave the requested topic into the heart of the tale — as the hero, the missing thing, or the gift.\n' : '') +
+      (aboutSelf && backstory ? `The topic touches your own past, so draw from your backstory:\n${backstory}\n` : '') +
+      `Write exactly ${arc.beats.length} lines — one line per beat, in order, each carrying the same characters forward:\n` +
+      arc.beats.map((b, i) => `Line ${i + 1}: ${b}`).join('\n')
     )
     const lines = await expressiveStory({
       system: personaSpec.systemPrompt,
       exemplars: personaSpec.exemplars,
       context,
-      lines: 5,
+      lines: arc.beats.length,
       maxChars: 240,
     }, { reactive: true })
     if (!lines || !lines.length) {
@@ -9000,8 +9140,8 @@ async function runTellStory (user, topic) {
     }
     await sleep(2000)
     bot.chat('...That is my story.')
-    logEvent('story', `topic="${topic}" for ${user} (${lines.length} lines)`)
-    diaryNote(`told a bedtime story about "${topic}" for ${user}`)
+    logEvent('story', `arc="${arc.name}" topic="${topic || '(none)'}" for ${user} (${lines.length} lines)`)
+    diaryNote(`told a bedtime tale — ${arc.name}${topic ? `, about "${topic}"` : ''} — for ${user}`)
   } finally {
     setTimeout(() => {
       storyTimeActive = false
@@ -9281,6 +9421,7 @@ async function routeChatLocal (username, message, { namedMe, fromBot }) {
       followTarget = null; followEntity = null; followChainPos = 0
     }
     logEvent('chat-intent', `${verdict.intent} <- <${username}> ${message}`)
+    skipperSlip(username, verdict.intent)
     Promise.resolve(intent.run(username, verdict.args || {})).catch(e => {
       if (e.name === 'AbortError') return
       logEvent('chat-intent', `${verdict.intent} failed: ${e.message}`)
@@ -9313,6 +9454,14 @@ async function routeChatLocal (username, message, { namedMe, fromBot }) {
 async function executeClaudeResponse (username, message, result, { namedMe, fromBot }) {
   const { chat, actions, emote } = result
   logEvent('claude-brain', `<${username}> ${message} -> chat=${chat ? `"${chat}"` : 'null'} actions=${JSON.stringify(actions || [])} emote=${emote || 'null'}`)
+
+  // Private's Skipper slip leads the reply when the brain returned an order
+  // from a human player — slip + facepalm first, a beat, then the brain's own
+  // words, so the correction reads as her opening reflex.
+  if (!fromBot && Array.isArray(actions)) {
+    const order = actions.find(a => a && typeof a === 'object' && a.action && CHAT_INTENTS[a.action])
+    if (order && skipperSlip(username, order.action)) await sleep(1200)
+  }
 
   if (chat && typeof chat === 'string') {
     let text = chat.trim()
@@ -9438,7 +9587,7 @@ bot.on('chat', (username, message) => {
     storyNightDay = bot.time?.day ?? storyNightDay
     storyTimeActive = true
     storyTimeStartedAt = Date.now()
-    runTellStory(username, 'something from your past').catch(e => logEvent('story-time', `story failed: ${e.message}`))
+    runTellStory(username, null).catch(e => logEvent('story-time', `story failed: ${e.message}`))
     return
   }
 
@@ -9543,6 +9692,7 @@ bot.on('chat', (username, message) => {
             try { rule.handler(username, stripped) } catch (e) { logEvent('chat-error', `${rule.name}: ${e.message}`) }
           }, 1000)
         } else {
+          skipperSlip(username, rule.name)
           try { rule.handler(username, stripped) } catch (e) { logEvent('chat-error', `${rule.name}: ${e.message}`) }
         }
         logEvent('chat-handled', `${rule.name} <- <${username}> ${message}`)

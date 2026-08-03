@@ -36,6 +36,26 @@ a name.
 Old diary entries are left as written — the journal keeps its history rather than
 being retconned.
 
+## The "Skipper" slip (added 2026-08-03, user request)
+
+When a human player gives Private a direct instruction, she starts to snap
+"Yes, Skipp—", catches herself, **facepalms**, and corrects to the player's
+actual name: *"You got it, Skip... er — I mean, Quesss."* Old habits from a
+previous commanding officer.
+
+- `skipperSlip()` in `bot.js`, gated to `PERSONA=private`; six line variants
+  rotated via the recent-phrase de-dup; the facepalm emote fires 500ms after
+  the line so it lands on the correction.
+- Hooked at all three command paths: reflex tier, local LLM router intents,
+  and the Claude-brain action loop (slip leads, then the brain's own reply).
+- **Excluded**: farewells, questions (`check_fire`, `inventory`,
+  `wheat_snooze`), and `emote`/`dance` (a facepalm would stomp the requested
+  animation). Reflex commands that open with a greeting skip it too — the
+  hello is already the ack.
+- 20s cooldown (`SKIPPER_SLIP_COOLDOWN_MS`) so rapid-fire orders and
+  multi-path dispatch don't repeat the gag back-to-back.
+- Live test pending (needs Private's next restart).
+
 ## Behaviour seen in play
 
 - Runs the same `bot.js` as the rest of the crew; personality comes from her
