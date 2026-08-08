@@ -54,13 +54,16 @@ Mirrors `CHEST_SLOTS` in `bot.js`. A single 27-slot chest is a 3-row × 9-column
 
 | Slot | Item | Notes |
 |---|---|---|
-| 6 | **pot** | salt-making station, user-managed. **DO NOT TOUCH** — not in `CHEST_SLOTS`. |
-| 7 | salt | user keeps topped up (`unknown`) |
+| 7 | **pot** | salt-making station, user-managed. **DO NOT TOUCH** — not in `CHEST_SLOTS`. Moved 6→7 on 2026-08-08. |
 | 8 | bakeware | reusable, returns here after craft (`unknown`) |
 | 16 | water | fresh water, user keeps topped up (`unknown`) |
 | 17 | mixing bowl | reusable, returns here after craft (`unknown`) |
-| 25 | dough | intermediate storage (`unknown`) |
+| 25 | salt | user keeps topped up (`unknown`). Moved from slot 7 on 2026-08-08. |
 | 26 | flour | wheat flour, user keeps topped up (`unknown`) |
+
+Dough no longer has a reserved slot — bots go from flour all the way to bread
+in one pass (`mode='both'`), so dough never needs to be stored. Removed from
+`CHEST_SLOTS` on 2026-08-08.
 
 ### Vanilla items (no fixed slot — scan by name)
 
@@ -78,17 +81,15 @@ on 2026-08-01; original 2026-07-03 layout was columns 3–4). Mirrors
 | Slot | Record | Color |
 |---|---|---|
 | 4 | Cat | green |
-| 5 | Far | lime |
-| 13 | Mall | purple |
+| 5 | Mellohi | magenta |
+| 13 | Blocks | orange |
 | 14 | Wait | blue |
-| 22 | Chirp | red |
-| 23 | Mellohi | magenta |
+| 22 | Mall | purple |
+| 23 | Chirp | red |
 
-No overlap with the reserved ingredient slots; the one adjacency is in row 0,
-where Far (5) now sits directly beside the **DO NOT TOUCH pot (6)**. Layout not
-yet live-verified in-chest (chest GUI wouldn't open on 2026-08-01, likely held
-open by the user); `runPlayRecord` finds discs by name scan so playback is
-unaffected either way.
+Layout reshuffled 2026-08-08 after a mystery visitor took Far (and other items).
+Blocks replaces Far in the collection. Live-verified via screenshot + API read.
+`runPlayRecord` finds discs by name scan so playback is unaffected.
 
 Rules:
 

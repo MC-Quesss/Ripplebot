@@ -16,20 +16,30 @@ memory — changed 2026-07-03). The factoid is background lore fed to the LLM co
 **never recited verbatim** at play time anymore.
 
 `confirmed: false` — titles are from item display names (verified in-chest
-2026-07-02); **durations live-verified 2026-07-04** (see below); colors and
+2026-07-02); **durations live-verified 2026-07-04** for the original five (see
+below); Blocks duration is nominal (345s), not yet live-verified. Colors and
 factoids are prefilled from vanilla Minecraft knowledge, pending disc-by-disc
 review with the user.
 
 | Item | Title | Label color | Length | Home slot | Factoid (background lore) |
 |---|---|---|---|---|---|
 | `record_cat` | Cat | green | 3:05 (185s) | 4 | **Quesss's favorite disc.** Like all our records it came from a dungeon chest — though legend tells of an older world where discs were farmed in a long dungeon corridor: a creeper baited behind doors and gates, skeleton arrows doing the rest. *(reviewed 2026-07-02)* |
-| `record_far` | Far | lime | 2:54 (174s) | 5 | A calm, drifting C418 melody — good for long afternoons out in the field. |
-| `record_mall` | Mall | purple | 3:17 (197s) | 13 | C418 wrote this one to feel like wandering an empty shopping mall — spacious and a little mysterious. |
+| `record_mellohi` | Mellohi | magenta | 1:36 (96s) | 5 | A short, melancholy waltz in three-four time — C418 at his most wistful. |
+| `record_blocks` | Blocks | orange | 5:45 (345s) | 13 | A bright, bouncy C418 tune — the most cheerful track in the collection. Replaced Far after a mystery visitor made off with it (2026-08-08). |
 | `record_wait` | Wait | blue | 3:58 (238s) | 14 | C418 originally titled this one "Where are we now" — the most upbeat disc in the collection. |
-| `record_chirp` | Chirp | red | 3:05 (185s) | 22 | A funky retro C418 groove that sounds like a broadcast from another decade. |
-| `record_mellohi` | Mellohi | magenta | 1:36 (96s) | 23 | A short, melancholy waltz in three-four time — C418 at his most wistful. |
+| `record_mall` | Mall | purple | 3:17 (197s) | 22 | C418 wrote this one to feel like wandering an empty shopping mall — spacious and a little mysterious. |
+| `record_chirp` | Chirp | red | 3:05 (185s) | 23 | A funky retro C418 groove that sounds like a broadcast from another decade. |
 
-*Home slots shifted one column right by the user on 2026-08-01 (columns 3–4 → 4–5).*
+*Layout reshuffled 2026-08-08 after a mystery visitor took Far and several other
+items from the kitchen chest. Blocks replaces Far in the collection.*
+
+## Update 2026-08-08 — Far lost, Blocks joins
+
+A mystery guest raided the kitchen chest, making off with Far, the pot,
+and the bakeware. The pot and bakeware were replaced; Far was not — Blocks
+takes its place in the collection. Far was a calm, drifting melody good for
+long afternoons in the field; it will be missed. The remaining discs were
+reshuffled into new home slots (see table above).
 
 Durations drive end-of-song awareness (`durationSec` in `RECORD_INFO`): every bot
 that hears a `Now playing:` announce tracks the same countdown, notices when the

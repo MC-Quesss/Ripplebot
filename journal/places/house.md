@@ -32,6 +32,7 @@ The safe space. Auto-sleep is enabled inside this bounding box at `timeOfDay >= 
 ## Hazards
 - Furnace at (-265, 65, 571) is directly east of `house_center`. A west-facing yaw error during exit sends the bot into it.
 - Pathfinder occasionally lands the bot on top of a chest (y ≈ 65.5 instead of 65.0). Verify `y ≈ 65.0` before any door procedure.
+- [[charge-pad]] at (-266, 65, 574) in the SE corner — modded block that traps the bot. Avoid wander/pathfind routes through this corner.
 
 ## See also
 - [[yaw-convention]]

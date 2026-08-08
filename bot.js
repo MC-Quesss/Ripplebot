@@ -595,10 +595,11 @@ async function tryAutoSleep () {
   if (bot.isSleeping) return
   if (storyTimeActive) return
   // Never run to bed mid-RPS-match — matches are bounded by timeout ladders
-  // and the 10-round cap, so sleep resumes minutes later at worst. (A playing
-  // record does NOT block sleep — the disc waits in the jukebox overnight and
-  // tryReturnRecord collects it in the morning.)
+  // and the 10-round cap, so sleep resumes minutes later at worst.
   if (rpsCurrentRival) return
+  // The DJ stays up while the record is playing — bedtime music belongs at
+  // night, not in the morning. Other bots sleep normally.
+  if (nowPlayingMine && nowPlayingEndsAt && Date.now() < nowPlayingEndsAt) return
   if (!isBedtime()) return
   if (followTarget) {
     impulseExpressive('bedtime_suggest',
@@ -814,6 +815,17 @@ bot.on('spawn', () => {
   const p = bot.entity.position
   logEvent('spawn', `${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`)
   bot.unequip('hand').catch(() => {})
+  // Nudge off the modded charge pad in the SE corner of the house — the server
+  // sometimes places the bot there on reconnect and it gets stuck.
+  if (Math.abs(p.x - (-266)) < 1.5 && Math.abs(p.z - 574) < 1.5 && p.y < 66) {
+    logEvent('spawn', 'on charge pad — nudging to house center')
+    setTimeout(() => {
+      if (!bot.entity) return
+      pathTo({ x: -268, y: 65, z: 572 }, 0, 8000).catch(e => {
+        logEvent('spawn', `charge-pad nudge failed: ${e.message}`)
+      })
+    }, 2000)
+  }
 })
 
 // ── Tier-2: chat-command dispatcher ───────────────────────────────────────
@@ -1548,6 +1560,8 @@ function waitForMorning () {
 }
 
 async function yieldToBedtime (myGen) {
+  // DJ stays up while the record is playing — skip the yield entirely.
+  if (nowPlayingMine && nowPlayingEndsAt && Date.now() < nowPlayingEndsAt) return
   // Wait for story time to finish before heading to bed
   if (storyTimeActive) {
     logEvent('task', `${activeTask.name} bedtime yield deferred — story in progress`)
@@ -7118,15 +7132,14 @@ async function runShearSheep () {
 // Single 27-slot chest (3 rows x 9 cols). Was a 54-slot double chest at
 // (-267, 67, 569) until the left half was removed 2026-05-30 — that renumbered
 // every slot below and shifted the chest block one east, so the coords moved too.
-//    6 = "pot" — salt-making station, user-managed; DO NOT TOUCH (not in CHEST_SLOTS).
-//                Moved from slot 0 → 6 by the user 2026-05-30. Slot 0 now free.
-//    7 = salt                (user keeps topped up)
+//    7 = "pot" — salt-making station, user-managed; DO NOT TOUCH (not in CHEST_SLOTS).
+//                Moved 0 → 6 (2026-05-30), then 6 → 7 (2026-08-08).
 //    8 = bakeware            (reusable, returns here after craft)
 //   16 = fresh water         (user keeps topped up)
 //   17 = mixing bowl         (reusable, returns here after craft)
 //   18 = iron ingots
 //   24 = bread               (finished-loaf storage)
-//   25 = dough (intermediate storage, we write here if any dough survives)
+//   25 = salt                (user keeps topped up; moved from slot 7 on 2026-08-08)
 //   26 = wheat flour         (user keeps topped up)
 //
 // Bot inventory slot-index convention (mineflayer): main 9-35, hotbar 36-44.
@@ -7134,7 +7147,7 @@ async function runShearSheep () {
 // slots 0-4 are the result + 2x2 craft grid.
 const KITCHEN_CHEST = { x: -266, y: 67, z: 569 }
 const CHEST_APPROACH_POS = { x: -267, y: 65, z: 570 }
-const CHEST_SLOTS = { dough: 25, water: 16, salt: 7, flour: 26, bowl: 17, bakeware: 8, iron: 18 }
+const CHEST_SLOTS = { water: 16, salt: 25, flour: 26, bowl: 17, bakeware: 8, iron: 18 }
 
 async function openChest () {
   await ensureInsideHouse()
@@ -7998,11 +8011,11 @@ const JUKEBOX = { x: -274, y: 64, z: 565 }
 // home slot. Records are NOT junk.
 const RECORD_HOME_SLOTS = {
   record_cat:     4,
-  record_far:     5,
-  record_mall:    13,
+  record_mellohi: 5,
+  record_blocks:  13,
   record_wait:    14,
-  record_chirp:   22,
-  record_mellohi: 23,
+  record_mall:    22,
+  record_chirp:   23,
 }
 
 // Disc metadata: title, label color, and a lore factoid. The factoid is NOT
@@ -8012,7 +8025,7 @@ const RECORD_HOME_SLOTS = {
 // journal/items/music-records.md — keep the two in sync.
 const RECORD_INFO = {
   record_cat:     { title: 'Cat',     color: 'green',   durationSec: 185, factoid: "Quesss's favorite disc. Like all our records it came from a dungeon chest — though legend tells of an older world where discs were farmed in a long dungeon corridor: a creeper baited behind doors and gates, skeleton arrows doing the rest." },
-  record_far:     { title: 'Far',     color: 'lime',    durationSec: 174, factoid: 'A calm, drifting C418 melody — good for long afternoons out in the field.' },
+  record_blocks:  { title: 'Blocks',  color: 'orange',  durationSec: 345, factoid: 'A bright, bouncy C418 tune — the most cheerful track in the collection. Replaced Far in the chest after a mystery visitor made off with it.' },
   record_mall:    { title: 'Mall',    color: 'purple',  durationSec: 197, factoid: 'C418 wrote this one to feel like wandering an empty shopping mall — spacious and a little mysterious.' },
   record_wait:    { title: 'Wait',    color: 'blue',    durationSec: 238, factoid: 'C418 originally titled this one "Where are we now" — the most upbeat disc in our collection.' },
   record_chirp:   { title: 'Chirp',   color: 'red',     durationSec: 185, factoid: 'A funky retro C418 groove that sounds like a broadcast from another decade.' },
@@ -8070,7 +8083,7 @@ let recordReturnLastTryAt = 0
 function tryReturnRecord () {
   if (!nowPlayingRecord || !nowPlayingMine) return
   if (!nowPlayingEndsAt || Date.now() < nowPlayingEndsAt + RECORD_RETURN_GRACE_MS) return
-  if (isBedtime() || taskBusy()) return
+  if (taskBusy()) return
   if (Date.now() - recordReturnLastTryAt < RECORD_RETURN_RETRY_MS) return
   recordReturnLastTryAt = Date.now()
   const t = startTask('return_record')
@@ -8874,7 +8887,7 @@ const CHAT_INTENTS = {
     run: (user) => { abortGen++; return runBakePotatoes({ user }) },
   },
   bake_bread: { hint: 'bake bread (mixes dough first if needed)', run: () => runBake('both') },
-  mix_dough: { hint: 'mix wheat into dough only, no baking', run: () => runBake('dough') },
+  mix_dough: { hint: 'mix wheat into dough and bake into bread', run: () => runBake('both') },
   stash_wheat: { hint: 'deposit carried wheat into the hopper', run: () => runStashWheat() },
   stash_unknown: { hint: 'stash unknown/modded items with no name', run: () => runStashUnknown() },
   stash_junk: {
@@ -11276,7 +11289,7 @@ function handleCommand (cmd) {
         .catch(e => ({ ok: false, error: e.message }))
     }
     case 'bake': {
-      const mode = args.mode || 'both'  // 'dough' | 'bread' | 'both'
+      const mode = 'both'
       runBake(mode).catch(e => logEvent('bake-error', e.message))
       return { ok: true, started: true, mode }
     }

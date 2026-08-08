@@ -7,6 +7,57 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-08-08 — Idle patrol, LLM late start (day 49137)
+
+Bot restarted ~01:48 UTC. Spawned at (-266.5, 65.0, 571.7) inside [[house]].
+Brain mode `local`; Claude (Opus 4.8) ready immediately, but Qwen LLM server
+not reachable at startup — came online ~8 min later at 01:56.
+
+- **Start state:** HP 20, food 20, deaths 0, day 49137, timeOfDay 3829
+- **Inventory:** 123 baked potatoes (63+60), shears, 21 wheat, 3 wheat seeds,
+  4 wool, 1 bone, 1 glowstone dust, 1 filled map, 1 record (chirp), 3×64
+  unknown (likely plantballs)
+- **Wheat alert:** 108/108 mature — full field ripe, untouched
+- **Sustain loop:** not active (no chat coordination started)
+- **Diary:** day 49136 entry failed — LLM backend returned nothing (was still
+  offline at diary time)
+- **Hostile encounter:** skeleton detected and eliminated outdoors at 01:51
+  during idle wander — watchdog worked clean
+- **No players online** at session start
+
+- **Diary:** day 49137 entry succeeded (4 lines, 0 events) — Qwen online by
+  this point; confirms day 49136 failure was just startup timing
+
+- **Kitchen chest raid:** a mystery visitor took the pot, bakeware, Cat disc,
+  and Far disc; jumbled the remaining records. User replaced pot (now slot 7,
+  was 6), bakeware (slot 8), and Cat; Far replaced by Blocks. Salt moved
+  7→25; dough slot retired (bots always run flour→bread in one pass now).
+  Full layout reshuffled and verified via screenshot + API read — updated
+  [[../chests/house-kitchen-chest]], [[../items/music-records]], bot.js
+  `CHEST_SLOTS`, `RECORD_HOME_SLOTS`, `RECORD_INFO`. Dough-only and
+  bread-only bake modes removed (always `both` now).
+
+- **DJ stays up for the music:** the DJ bot now suppresses auto-sleep while
+  its record is playing. Other bots/players sleep normally. After the song
+  ends + 60s grace, the DJ collects the disc (no longer blocked by bedtime)
+  and then goes to bed. Bot keeps doing normal tasks during playback.
+- **Dough slot retired:** bots always run flour→bread in one pass now. Slot 25
+  reassigned to salt. `mix_dough` and `bread`-only bake modes removed.
+
+Observing idle behavior; will journal events as they come.
+
+## 2026-08-06 — Charge pad hazard documented + spawn nudge
+
+Bot spawned stuck on a modded charge pad at (-265.7, 64.9, 574.3) — SE corner
+of the [[house]]. Had to idle-wander off it before commands worked.
+
+Investigated: bot.js already had two mitigations — pathfinder `Infinity`
+exclusion on all empty-name blocks, and zeroed collision shapes at exactly
+x=-266 z=574. Missing piece: no post-spawn check. Added a spawn handler that
+detects the pad (within 1.5b) and pathfinds to house_center after 2s.
+
+New note: [[../places/charge-pad]]. Added to [[../places/house]] hazard list.
+
 ## 2026-08-03 — Private's "Skipper" slip
 
 New persona feature (user request): Private acknowledges direct orders from
