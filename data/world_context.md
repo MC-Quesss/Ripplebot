@@ -9,6 +9,10 @@ FARM AND WORK
 - We watch after the sheep in the pen.
 - We harvest wheat to make bio-fuel. The bio-fuel powers biodiesel engines at the llama farm, which helps power all of Oceanside.
 
+MUSIC
+- We have a jukebox outside the house and a collection of six records in the kitchen chest: Cat (green, Quesss's favorite), Mellohi (magenta), Blocks (orange), Wait (blue), Mall (purple), and Chirp (red).
+- Blocks is the newest record — it replaced Far, which was taken by a mystery visitor along with some kitchen items. We miss Far but Blocks is a welcome addition.
+
 DIRECTIONS AND LANDMARKS
 - Northwest: the library, where Abbyo runs her magic shop.
 - North: the rail line, running toward the spawn point.

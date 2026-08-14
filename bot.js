@@ -8097,12 +8097,12 @@ function tryReturnRecord () {
 }
 
 // ── Bedtime record ───────────────────────────────────────────────────────────
-// Some nights, a bot puts a record on as the crew heads in — a lullaby playing
-// over the farm while everyone falls asleep. Mutually exclusive with story
-// time: story rolls first (window 9500–10500) and any story signal marks
-// storyNightDay, standing the DJ down. One DJ per night, rotating by day, so
-// bots never race each other to the chest. The DJ sleeps like everyone else;
-// the disc waits in the jukebox and the lazy auto-return files it at sunrise.
+// Some nights, a bot puts a record on as the crew heads in. Mutually exclusive
+// with story time: story rolls first (window 9500–10500) and any story signal
+// marks storyNightDay, standing the DJ down. One DJ per night, rotating by day,
+// so bots never race each other to the chest. The DJ stays up while the record
+// plays (auto-sleep suppressed via nowPlayingMine), collects the disc after the
+// song + grace, then goes to bed. Other bots and players sleep normally.
 const BEDTIME_RECORD_START = 10600 // after the story-request window closes
 const BEDTIME_RECORD_END = 11800   // leaves time to reach the jukebox pre-bedtime
 const BEDTIME_RECORD_CHANCE = 0.25
@@ -8246,6 +8246,10 @@ async function runPlayRecord ({ title, color } = {}) {
     bot.chat(`I don't know that disc. Our collection: ${Object.values(RECORD_INFO).map(r => r.title).join(', ')}.`)
     return
   }
+  // Suppress auto-sleep immediately — the DJ is on duty from the moment the
+  // request comes in, not just when the disc hits the jukebox.
+  nowPlayingMine = true
+  nowPlayingEndsAt = Date.now() + 300_000 // provisional; overwritten by startNowPlaying
   const matches = (name) => name.startsWith('record_') && (!wanted || name === wanted)
 
   const jb = bot.blockAt(new Vec3(JUKEBOX.x, JUKEBOX.y, JUKEBOX.z))
@@ -8255,6 +8259,7 @@ async function runPlayRecord ({ title, color } = {}) {
     bot.chat(info
       ? (stillPlaying ? `The jukebox is already playing "${info.title}".` : `"${info.title}" is still in the jukebox — the song's finished, though.`)
       : 'The jukebox already has a record in it.')
+    clearNowPlaying()
     return
   }
 
@@ -8268,7 +8273,7 @@ async function runPlayRecord ({ title, color } = {}) {
       HARVEST_WAYPOINTS.kitchen_chest.y,
       HARVEST_WAYPOINTS.kitchen_chest.z,
     ))
-    if (!chestBlock) throw new Error('kitchen chest not reachable')
+    if (!chestBlock) { clearNowPlaying(); throw new Error('kitchen chest not reachable') }
     const win = await bot.openContainer(chestBlock)
     const containerSlotCount = win.slots.length - 36
     let recordSlot = -1
@@ -8278,25 +8283,27 @@ async function runPlayRecord ({ title, color } = {}) {
     if (recordSlot < 0) {
       win.close()
       bot.chat(wanted ? `"${recordInfo(wanted).title}" isn't in the chest right now.` : 'No record in the chest.')
+      clearNowPlaying()
       return
     }
     let destSlot = -1
     for (let j = containerSlotCount; j < win.slots.length; j++) {
       if (!win.slots[j]) { destSlot = j; break }
     }
-    if (destSlot < 0) { win.close(); bot.chat('Inventory is full.'); return }
+    if (destSlot < 0) { win.close(); bot.chat('Inventory is full.'); clearNowPlaying(); return }
     try {
       await bot.clickWindow(recordSlot, 0, 0)
       await bot.clickWindow(destSlot, 0, 0)
     } catch (e) {
       try { await bot.clickWindow(-999, 0, 0) } catch (_) {}
       win.close()
+      clearNowPlaying()
       throw e
     }
     win.close()
     await sleep(300)
     record = bot.inventory.items().find(i => matches(i.name))
-    if (!record) { bot.chat("Couldn't grab the record from the chest."); return }
+    if (!record) { bot.chat("Couldn't grab the record from the chest."); clearNowPlaying(); return }
     logEvent('jukebox', `withdrew ${record.name} from chest slot ${recordSlot}`)
   }
 
@@ -8310,6 +8317,7 @@ async function runPlayRecord ({ title, color } = {}) {
   if (stillHas) {
     bot.chat("The jukebox didn't take the record.")
     logEvent('jukebox', 'play failed — record still in inventory')
+    clearNowPlaying()
   } else {
     const info = recordInfo(record.name)
     startNowPlaying(record.name, { mine: true })
