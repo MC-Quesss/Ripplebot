@@ -938,7 +938,10 @@ else if (brainMode === 'remote') logEvent('brain', 'starting in remote mode (cha
 // "llm happens to be uninitialized" — so a runtime brain switch into
 // claude-private truly stops the local model being used for ambient speech.
 function expressiveGenerate (opts) {
-  if (ambientViaClaude()) return claude.generateLine(opts)
+  if (ambientViaClaude()) {
+    if (!humanPlayersOnline()) return Promise.resolve(null)
+    return claude.generateLine(opts)
+  }
   if (localOff()) return Promise.resolve(null) // claude-private: guaranteed ambient silence
   return llm.generateLine(opts)
 }
@@ -946,7 +949,10 @@ function expressiveGenerate (opts) {
 // requests reach Claude in ANY no-local mode; the autonomous diary follows the
 // ambient rule (Claude in claude-super, silent in claude-private).
 function expressiveStory (opts, { reactive = false } = {}) {
-  if (ambientViaClaude() || (reactive && localOff())) return claude.generateStory(opts)
+  if (ambientViaClaude() || (reactive && localOff())) {
+    if (!humanPlayersOnline()) return Promise.resolve(null)
+    return claude.generateStory(opts)
+  }
   if (localOff()) return Promise.resolve(null) // claude-private ambient: guaranteed silence
   return llm.generateStory(opts)
 }
@@ -1166,12 +1172,28 @@ function saveMusicMemory () {
   renderMusicSection()
 }
 
+function captureListeningMemory (via) {
+  const parts = []
+  const others = Object.keys(bot.players || {}).filter(n => n !== bot.username)
+  if (others.length) parts.push(`with ${others.join(', ')}`)
+  if (bot.isRaining) parts.push('raining')
+  parts.push(describeTimeOfDay())
+  if (activeTask.name) parts.push(`during ${activeTask.name}`)
+  else if (sustainState.active) parts.push('while keeping the fire')
+  if (via !== 'self') parts.push(`put on by ${via}`)
+  return parts.join('; ')
+}
+
 function markRecordHeard (recordName, { via = 'self' } = {}) {
   if (!RECORD_INFO[recordName]) return
   const m = musicMemoryFor(recordName)
   m.timesHeard++
   m.lastHeardDay = bot.time?.day ?? m.lastHeardDay
   m.lastHeardAt = new Date().toISOString()
+  if (!m.memories) m.memories = []
+  const snap = captureListeningMemory(via)
+  m.memories.push({ day: m.lastHeardDay, snap })
+  if (m.memories.length > 5) m.memories.splice(0, m.memories.length - 5)
   saveMusicMemory()
   logEvent('music', `heard ${recordName} (via ${via}); times=${m.timesHeard} day=${m.lastHeardDay}`)
   // Sometimes write a private impression into the journal — a note to self,
@@ -2442,6 +2464,21 @@ function buildExpressiveContext (situation) {
   const inv = (bot.inventory?.items() || []).sort((a, b) => b.count - a.count).slice(0, 5).map(i => `${i.count}× ${i.name}`)
   parts.push(inv.length ? `Carrying: ${inv.join(', ')}.` : 'Your pockets are empty.')
   if (activeTask.name) parts.push(`You are in the middle of: ${activeTask.name}.`)
+  const musicEntries = Object.entries(musicMemory).filter(([, m]) => m.timesHeard > 0)
+  if (musicEntries.length) {
+    const currentDay = bot.time?.day ?? 0
+    const lines = musicEntries
+      .sort((a, b) => (a[1].lastHeardDay ?? 0) - (b[1].lastHeardDay ?? 0))
+      .map(([name, m]) => {
+        const info = recordInfo(name)
+        const ago = currentDay && m.lastHeardDay ? currentDay - m.lastHeardDay : null
+        let line = `${info.title} (${info.color}): heard ${m.timesHeard}×, last on day ${m.lastHeardDay}${ago != null ? ` (${ago} days ago)` : ''}`
+        const mem = m.memories?.length ? m.memories[m.memories.length - 1] : null
+        if (mem) line += ` — last time: ${mem.snap}`
+        return line
+      })
+    parts.push(`Record collection (oldest-heard first): ${lines.join('; ')}.`)
+  }
   if (nowPlayingRecord) {
     const rec = recordInfo(nowPlayingRecord)
     const mem = musicMemory[nowPlayingRecord]
@@ -9296,6 +9333,8 @@ async function routeChat (username, message, { namedMe, fromBot }) {
   }
 
   if (usesClaudeBrain()) {
+    if (!humanPlayersOnline()) return routeChatLocal(username, message, { namedMe, fromBot })
+
     // claude-private is reactive-only IN CODE, not just by prompt: unaddressed
     // lines never reach the API. "Addressed" = nickname match or the followed
     // player speaking (namedMe already folds in implicitlyAddressed). Overheard
@@ -9377,6 +9416,7 @@ async function runClaudeBrainTurn (username, lines, { namedMe, fromBot }) {
   // may have switched, or an earlier queued turn may have used up the exchange
   // budget while this burst waited.
   if (quietMode || !usesClaudeBrain()) return
+  if (!humanPlayersOnline()) return
   if (fromBot && !botExchangeAllows(username)) return
   // A bot line reaching brainChat IS a bot-exchange turn — arm the same
   // bookkeeping replyToBotTurn keeps, or botExchangeAllows never sees an
@@ -10374,6 +10414,10 @@ try {
 function looksLikeBot (username) {
   const u = String(username || '')
   return /bot\d*$/i.test(u) || KNOWN_BOT_NAMES.has(u.toLowerCase())
+}
+
+function humanPlayersOnline () {
+  return Object.keys(bot.players || {}).some(n => n !== bot.username && !looksLikeBot(n))
 }
 
 // LLM-driven exchanges with other bots. One .env variable controls everything:
