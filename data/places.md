@@ -49,6 +49,7 @@ Every new routine that crosses the door must:
 | Feature | Location | How to avoid |
 |---|---|---|
 | Tree west of door | around (-288..-289, 63..68, 568..572) | Going door → field: detour via `field_east_approach` first. Going field → door from west of the field: straight east to `outside_orientation` is safe (we come in from the south side of the tree). |
+| Tree on pen approach | around (-297, 64..67, 571) | Pathfinder routes through this tree when heading to the pen from far west. Roz suffocated here 2026-08-15. Pen entry should route east of x≈-295 before heading south to the pen runway. |
 
 ## Wheat field
 

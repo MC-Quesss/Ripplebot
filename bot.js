@@ -928,8 +928,8 @@ function ensureLocalInited () {
 if (!localOff()) ensureLocalInited()
 
 if (brainMode === 'claude') logEvent('brain', `starting in claude mode (${claude.status().model}); prefilter=${CLAUDE_PREFILTER}`)
-else if (brainMode === 'claude-super') logEvent('brain', `starting in claude-super mode (${claude.status().model}) — local model off, full ambient + diary via Claude`)
-else if (brainMode === 'claude-private') logEvent('brain', `starting in claude-private mode (${claude.status().model}) — local model off, reactive only`)
+else if (brainMode === 'claude-super') logEvent('brain', `starting in claude-super mode (${claude.status().superModel}) — local model off, full ambient + diary via Claude`)
+else if (brainMode === 'claude-private') logEvent('brain', `starting in claude-private mode (${claude.status().superModel}) — local model off, reactive only`)
 else if (brainMode === 'remote') logEvent('brain', 'starting in remote mode (chat driven externally via bot-ctl)')
 
 // Autonomous/ambient persona text (idle remarks, greet flavour, music-journal

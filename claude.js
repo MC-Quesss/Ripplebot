@@ -1,7 +1,8 @@
 'use strict'
 
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.BOT_API_KEY || ''
-const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-opus-4-8'
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514'
+const CLAUDE_SUPER_MODEL = process.env.CLAUDE_SUPER_MODEL || 'claude-opus-4-20250918'
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages'
 const CLAUDE_TIMEOUT_MS = 30_000
 
@@ -13,12 +14,12 @@ function init ({ logFn } = {}) {
   if (!CLAUDE_API_KEY) {
     log('claude', 'no API key (CLAUDE_API_KEY / ANTHROPIC_API_KEY) — claude brain unavailable')
   } else {
-    log('claude', `ready: model=${CLAUDE_MODEL}`)
+    log('claude', `ready: model=${CLAUDE_MODEL}, super=${CLAUDE_SUPER_MODEL}`)
   }
 }
 
 function status () {
-  return { healthy, model: CLAUDE_MODEL, hasKey: !!CLAUDE_API_KEY }
+  return { healthy, model: CLAUDE_MODEL, superModel: CLAUDE_SUPER_MODEL, hasKey: !!CLAUDE_API_KEY }
 }
 
 function parseJson (text) {
@@ -40,7 +41,7 @@ function parseJson (text) {
 // (401/403 — a bad key won't fix itself), which then gates ALL further calls so
 // timer-driven impulses don't hammer a doomed endpoint; revive() re-arms after
 // the operator fixes the key (called on a `brain` ctl mode switch).
-async function callApi ({ system, messages, maxTokens, temperature, timeoutMs = CLAUDE_TIMEOUT_MS, tag = 'api' }) {
+async function callApi ({ system, messages, maxTokens, temperature, model, timeoutMs = CLAUDE_TIMEOUT_MS, tag = 'api' }) {
   if (!CLAUDE_API_KEY || !healthy) return null
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -53,7 +54,7 @@ async function callApi ({ system, messages, maxTokens, temperature, timeoutMs = 
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: CLAUDE_MODEL,
+        model: model || CLAUDE_MODEL,
         max_tokens: maxTokens,
         ...(temperature != null ? { temperature } : {}),
         system,
@@ -129,11 +130,7 @@ async function callVoice ({ systemPrompt, context, maxTokens }) {
       system: systemPrompt,
       messages: [{ role: 'user', content: context }],
       maxTokens,
-      // No `temperature`: current Opus models reject it outright ("`temperature`
-      // is deprecated for this model", HTTP 400). This one field silently killed
-      // EVERY voice call from 2026-07-12 to 2026-07-27 — 85 errors, 0 successes —
-      // while brainChat kept working because it never passed one. `callApi` only
-      // sends the field when non-null, so omitting it here is the whole fix.
+      model: CLAUDE_SUPER_MODEL,
       timeoutMs: VOICE_TIMEOUT_MS,
       tag: 'voice',
     })
