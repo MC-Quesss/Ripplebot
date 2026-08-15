@@ -14,10 +14,12 @@
     ]
   },
   "record_chirp": {
-    "timesHeard": 5,
-    "lastHeardDay": 46128,
-    "lastHeardAt": "2026-07-05T08:53:05.991Z",
-    "notes": []
+    "timesHeard": 7,
+    "lastHeardDay": 49770,
+    "lastHeardAt": "2026-08-15T01:33:35.043Z",
+    "notes": [
+      "Oh dear, that jaunty tune reminds me of a time I simply wanted to sit quietly in the sun, yet here I am, bustling about again."
+    ]
   },
   "record_far": {
     "timesHeard": 4,
@@ -37,6 +39,14 @@
     "lastHeardAt": "2026-07-05T16:54:28.177Z",
     "notes": [
       "Oh dear, this song makes me feel rather melancholy, though I suppose we must wait for the harvest to begin."
+    ]
+  },
+  "record_blocks": {
+    "timesHeard": 1,
+    "lastHeardDay": 49775,
+    "lastHeardAt": "2026-08-15T02:23:03.309Z",
+    "notes": [
+      "Oh my, how delightful to hear the rain tapping on the stone; it reminds me of the quiet safety of the ocean waves."
     ]
   }
 }
