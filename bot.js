@@ -9363,6 +9363,9 @@ async function routeChat (username, message, { namedMe, fromBot }) {
       if (kind === 'noise' || audience === 'other') return
       const addressed = audience === 'me' || audience === 'everyone' || namedMe
       if (!addressed && relevance < CHAT_RELEVANCE_MIN) return
+      if (!fromBot && verdict.intent && CHAT_INTENTS[verdict.intent] && addressed) {
+        return routeChatLocal(username, message, { namedMe, fromBot, preVerdict: verdict })
+      }
       if (fromBot) return replyToBotTurn(username, message)
     }
 
@@ -9454,8 +9457,8 @@ async function runClaudeBrainTurn (username, lines, { namedMe, fromBot }) {
   await Promise.race([done, sleep(15_000)])
 }
 
-async function routeChatLocal (username, message, { namedMe, fromBot }) {
-  const verdict = await llm.classify({
+async function routeChatLocal (username, message, { namedMe, fromBot, preVerdict }) {
+  const verdict = preVerdict || await llm.classify({
     system: buildRouterSystemPrompt(),
     user: [
       recentChat.length ? `Recent chat (oldest first):\n${recentChat.join('\n')}` : null,
@@ -9469,7 +9472,7 @@ async function routeChatLocal (username, message, { namedMe, fromBot }) {
   logEvent('chat-router', `<${username}> ${message} -> ${JSON.stringify({ audience, kind, intent: verdict.intent ?? null, relevance })}`)
   if (kind === 'noise' || audience === 'other') return
 
-  if (kind === 'command' && (audience === 'me' || audience === 'everyone')) {
+  if (verdict.intent && CHAT_INTENTS[verdict.intent] && (audience === 'me' || audience === 'everyone')) {
     if (fromBot) return
     const intent = CHAT_INTENTS[verdict.intent]
     if (!intent) return

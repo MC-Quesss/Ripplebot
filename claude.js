@@ -1,8 +1,8 @@
 'use strict'
 
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.BOT_API_KEY || ''
-const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514'
-const CLAUDE_SUPER_MODEL = process.env.CLAUDE_SUPER_MODEL || 'claude-opus-4-20250918'
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929'
+const CLAUDE_SUPER_MODEL = process.env.CLAUDE_SUPER_MODEL || 'claude-opus-4-5-20251101'
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages'
 const CLAUDE_TIMEOUT_MS = 30_000
 

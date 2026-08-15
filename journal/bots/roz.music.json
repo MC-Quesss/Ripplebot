@@ -60,12 +60,18 @@
     ]
   },
   "record_blocks": {
-    "timesHeard": 8,
-    "lastHeardDay": 49407,
-    "lastHeardAt": "2026-08-10T03:15:05.723Z",
+    "timesHeard": 9,
+    "lastHeardDay": 49775,
+    "lastHeardAt": "2026-08-15T02:23:03.269Z",
     "notes": [
       "The bouncy notes of \"Blocks\" make me feel like the world is finally waking up, and I remember how the rain used to tap a steady rhythm on the roof of my old ...",
       "The bouncy notes of \"Blocks\" make me feel like the world is finally waking up, and I remember how the rain used to tap a steady rhythm on the roof of my old ..."
+    ],
+    "memories": [
+      {
+        "day": 49775,
+        "snap": "with Quesss, Musebot; daytime; during play_record"
+      }
     ]
   }
 }
