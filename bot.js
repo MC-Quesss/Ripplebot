@@ -632,6 +632,23 @@ async function tryAutoSleep () {
     }
     if (!insideHouse()) return
   }
+  if (PERSONA === 'roz') {
+    const otherBots = Object.entries(bot.players)
+      .filter(([n]) => n !== bot.username && looksLikeBot(n))
+    if (otherBots.length > 0) {
+      const nearBed = (e) => e && Math.abs(e.position.x - (-268)) <= 2
+        && Math.abs(e.position.y - 65) < 1 && Math.abs(e.position.z - 569) <= 1.5
+      const allSettled = () => otherBots.every(([, p]) => !p.entity || nearBed(p.entity))
+      if (!allSettled()) {
+        logEvent('auto-sleep', 'waiting for the others to settle in first')
+        for (let i = 0; i < 6; i++) {
+          await new Promise(r => setTimeout(r, 5000))
+          if (!isBedtime() || storyTimeActive || bot.isSleeping) return
+          if (allSettled()) break
+        }
+      }
+    }
+  }
   autoSleepBusy = true
   try {
     logEvent('auto-sleep', 'bedtime detected, heading to bed')
@@ -9353,6 +9370,10 @@ async function routeChat (username, message, { namedMe, fromBot }) {
         ].filter(Boolean).join('\n\n'),
       })
       if (!verdict) {
+        if (namedMe && !fromBot) {
+          logEvent('claude', 'prefilter unavailable but addressed — sending to claude brain')
+          return enqueueClaudeBrainTurn(username, message, { namedMe, fromBot })
+        }
         logEvent('claude', 'prefilter unavailable — falling back to local')
         return routeChatLocal(username, message, { namedMe, fromBot })
       }
@@ -9596,6 +9617,7 @@ bot.on('chat', (username, message) => {
   }
   rememberChatPhrase(message)
   rememberRecentChat(username, message)
+  trackPlayerChat(username)
   const fromBot = looksLikeBot(username)
 
   // Quiet-hours triggers: human-only, deterministic, no addressing needed.
@@ -10420,8 +10442,43 @@ function looksLikeBot (username) {
 }
 
 function humanPlayersOnline () {
-  return Object.keys(bot.players || {}).some(n => n !== bot.username && !looksLikeBot(n))
+  return Object.keys(bot.players || {}).some(n => n !== bot.username && !looksLikeBot(n) && !isPlayerAfk(n))
 }
+
+const playerActivity = new Map()
+const AFK_TIMEOUT_MS = 5 * 60 * 1000
+
+function trackPlayerChat (username) {
+  if (looksLikeBot(username) || username === bot.username) return
+  const entry = playerActivity.get(username) || { lastMoveAt: Date.now(), lastChatAt: 0, lastPos: null }
+  entry.lastChatAt = Date.now()
+  playerActivity.set(username, entry)
+}
+
+function isPlayerAfk (username) {
+  const p = bot.players[username]
+  if (!p || !p.entity) return false
+  const entry = playerActivity.get(username)
+  if (!entry) return false
+  const now = Date.now()
+  return (now - entry.lastMoveAt > AFK_TIMEOUT_MS) && (now - entry.lastChatAt > AFK_TIMEOUT_MS)
+}
+
+setInterval(() => {
+  for (const [name, p] of Object.entries(bot.players || {})) {
+    if (name === bot.username || looksLikeBot(name) || !p.entity) continue
+    const entry = playerActivity.get(name) || { lastMoveAt: Date.now(), lastChatAt: 0, lastPos: null }
+    const pos = p.entity.position
+    if (!entry.lastPos || entry.lastPos.distanceTo(pos) > 1.5) {
+      entry.lastMoveAt = Date.now()
+      entry.lastPos = pos.clone()
+    }
+    playerActivity.set(name, entry)
+  }
+  for (const name of playerActivity.keys()) {
+    if (!bot.players[name]) playerActivity.delete(name)
+  }
+}, 30_000)
 
 // LLM-driven exchanges with other bots. One .env variable controls everything:
 // BOT_CHAT_DEPTH is this bot's per-exchange turn cap, and 0 means never reply
