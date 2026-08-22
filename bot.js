@@ -1732,7 +1732,7 @@ function countOnHand (name) {
 // Returns { deposited, remaining, rounds, backedUp }. `backedUp` is true when
 // the container stopped accepting items with more than `keep` still on hand
 // (machine off, or genuinely full) — the caller should surface that.
-async function depositQuickMove (itemName, target, { keep = 0, maxRounds = 8, settleMs = 150, bail = null } = {}) {
+async function depositQuickMove (itemName, target, { keep = 0, maxRounds = 8, settleMs = 150, bail = null, maxStalls = 3, stallDelayMs = 500 } = {}) {
   const startCount = countOnHand(itemName)
   if (startCount <= keep) return { deposited: 0, remaining: startCount, rounds: 0, backedUp: false }
 
@@ -1811,8 +1811,8 @@ async function depositQuickMove (itemName, target, { keep = 0, maxRounds = 8, se
     await sleep(200)
     const after = countOnHand(itemName)
     if (after >= before) {
-      if (++stalled >= 3) break // container won't accept more — backed up
-      await sleep(500)          // let a draining hopper make room, then re-open fresh
+      if (++stalled >= maxStalls) break // container won't accept more — backed up
+      await sleep(stallDelayMs)        // let a draining hopper make room, then re-open fresh
     } else {
       stalled = 0
     }
@@ -3589,6 +3589,7 @@ const SUSTAIN_KEEP_SEEDS = 0
 const SUSTAIN_MAX_PLANT_BALLS = Number.POSITIVE_INFINITY
 const SUSTAIN_HOPPER_CHECK_INTERVAL = 6
 const SUSTAIN_KEEP_RAW_POTATO = 16
+const SUSTAIN_RAW_POTATO_HARVEST_CAP = 128
 const SUSTAIN_POTATO_MATURITY_PCT = 85
 const sustainState = {
   active: false,
@@ -5018,7 +5019,7 @@ async function sustainHousekeep () {
       if (excessPotatoes) {
         if (rpsAccepted) { logEvent('sustain', 'housekeep interrupted — RPS challenge waiting'); return true }
         const rpsBail = () => !!rpsAccepted
-        const r = await depositToHopper('potato', { keep: SUSTAIN_KEEP_RAW_POTATO, maxRounds: 3, bail: rpsBail })
+        const r = await depositToHopper('potato', { keep: SUSTAIN_KEEP_RAW_POTATO, maxRounds: 20, maxStalls: 10, stallDelayMs: 30000, bail: rpsBail })
         logEvent('sustain', `housekeep raw potato deposit: deposited=${r.deposited} remaining=${r.remaining}`)
         if (r.deposited > 0) progress = true
       }
@@ -5045,7 +5046,11 @@ async function sustainHousekeep () {
 // moves whatever surplus is in pockets.
 // Returns false when the sustain loop was stopped mid-cycle.
 async function runPotatoCycle (label = 'potato cycle') {
-  await runHarvestPotatoesRightClick({ user: 'sustain', then: 'bake' })
+  if (countOnHand('potato') > SUSTAIN_RAW_POTATO_HARVEST_CAP) {
+    logEvent('sustain', `${label}: skipping harvest — already carrying ${countOnHand('potato')} raw potatoes (cap ${SUSTAIN_RAW_POTATO_HARVEST_CAP})`)
+  } else {
+    await runHarvestPotatoesRightClick({ user: 'sustain', then: 'bake' })
+  }
   if (!sustainState.active) return false
 
   const bakedInChest = await countBakedInChest()
@@ -5059,7 +5064,7 @@ async function runPotatoCycle (label = 'potato cycle') {
   if (!sustainState.active) return false
 
   if (countOnHand('potato') > SUSTAIN_KEEP_RAW_POTATO) {
-    const r = await depositToHopper('potato', { keep: SUSTAIN_KEEP_RAW_POTATO })
+    const r = await depositToHopper('potato', { keep: SUSTAIN_KEEP_RAW_POTATO, maxRounds: 20, maxStalls: 10, stallDelayMs: 30000 })
     logEvent('sustain', `${label}: raw potato deposit: deposited=${r.deposited} remaining=${r.remaining}`)
   }
   return true
