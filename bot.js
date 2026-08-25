@@ -966,11 +966,11 @@ function expressiveGenerate (opts) {
 // requests reach Claude in ANY no-local mode; the autonomous diary follows the
 // ambient rule (Claude in claude-super, silent in claude-private).
 function expressiveStory (opts, { reactive = false } = {}) {
-  if (ambientViaClaude() || (reactive && localOff())) {
+  if (CLAUDE_MODES.has(brainMode)) {
+    if (!reactive && !ambientViaClaude()) return Promise.resolve(null)
     if (!humanPlayersOnline()) return Promise.resolve(null)
     return claude.generateStory(opts)
   }
-  if (localOff()) return Promise.resolve(null) // claude-private ambient: guaranteed silence
   return llm.generateStory(opts)
 }
 
@@ -8965,10 +8965,20 @@ const CHAT_INTENTS = {
     },
   },
   deposit_items: {
-    hint: 'deposit specific items; args.items array from: bread, wheat, seeds, baked_potato',
-    run: (_user, args) => {
-      const MAP = { bread: 'bread', wheat: 'wheat', seeds: 'wheat_seeds', wheat_seeds: 'wheat_seeds', baked_potato: 'baked_potato', baked_potatoes: 'baked_potato' }
+    hint: 'deposit specific items; args.items array from: bread, wheat, seeds, baked_potato, potato (raw potatoes go to hopper)',
+    run: async (_user, args) => {
+      const MAP = { bread: 'bread', wheat: 'wheat', seeds: 'wheat_seeds', wheat_seeds: 'wheat_seeds', baked_potato: 'baked_potato', baked_potatoes: 'baked_potato', potato: 'potato', potatoes: 'potato', raw_potato: 'potato', raw_potatoes: 'potato' }
       const names = [...new Set((Array.isArray(args.items) ? args.items : []).map(i => MAP[String(i).toLowerCase().replace(/\s+/g, '_')]).filter(Boolean))]
+      if (names.includes('potato')) {
+        const onHand = countOnHand('potato')
+        if (onHand > 0) {
+          const r = await depositToHopper('potato', { keep: SUSTAIN_KEEP_RAW_POTATO, maxRounds: 20, maxStalls: 10, stallDelayMs: 30000 })
+          logEvent('deposit-qm', `deposit_items(potato→hopper): deposited=${r.deposited} remaining=${r.remaining}`)
+        }
+        const rest = names.filter(n => n !== 'potato')
+        if (rest.length) return runDepositNamed(rest)
+        return
+      }
       if (!names.length) return runStashAll()
       return runDepositNamed(names)
     },

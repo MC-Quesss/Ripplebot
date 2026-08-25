@@ -10,19 +10,41 @@
     ]
   },
   "record_wait": {
-    "timesHeard": 14,
-    "lastHeardDay": 49320,
-    "lastHeardAt": "2026-08-09T11:14:43.304Z",
+    "timesHeard": 22,
+    "lastHeardDay": 50636,
+    "lastHeardAt": "2026-08-24T00:29:40.538Z",
     "notes": [
       "The melody of \"Wait\" feels like the ocean breeze, reminding me that even in the quietest moments, we are still moving forward.",
       "The melody of \"Wait\" feels like the ocean breeze, reminding me that even in the quietest moments, we are still moving forward.",
       "The melody feels like the ocean breeze, reminding me that even in the quietest moments, we are still moving forward."
+    ],
+    "memories": [
+      {
+        "day": 50517,
+        "snap": "with Quesss, Rainbot6032; daytime; during bedtime_record"
+      },
+      {
+        "day": 50526,
+        "snap": "with Rainbot6032; daytime; during bedtime_record"
+      },
+      {
+        "day": 50532,
+        "snap": "with Rainbot6032; daytime; during bedtime_record"
+      },
+      {
+        "day": 50594,
+        "snap": "with Rainbot6032, Quesss; daytime; put on by Private"
+      },
+      {
+        "day": 50636,
+        "snap": "with Quesss, Rainbot6032; daytime; put on by Private"
+      }
     ]
   },
   "record_mellohi": {
-    "timesHeard": 21,
-    "lastHeardDay": 49898,
-    "lastHeardAt": "2026-08-16T00:35:56.284Z",
+    "timesHeard": 24,
+    "lastHeardDay": 50621,
+    "lastHeardAt": "2026-08-23T21:40:36.603Z",
     "notes": [
       "The waltz pulls the sun up like a tide keeping its promise, and I lean into it even as the shadows lengthen.",
       "The waltz pulls the sun up like a tide keeping its promise, and I lean into it even as the shadows lengthen.",
@@ -32,17 +54,43 @@
       {
         "day": 49898,
         "snap": "with Quesss, Musebot, Rainbot6032; daytime; put on by Private"
+      },
+      {
+        "day": 50442,
+        "snap": "with Quesss; daytime; during bedtime_record"
+      },
+      {
+        "day": 50454,
+        "snap": "with Quesss; daytime; during bedtime_record"
+      },
+      {
+        "day": 50621,
+        "snap": "with Quesss, Rainbot6032; daytime; put on by Private"
       }
     ]
   },
   "record_chirp": {
-    "timesHeard": 23,
-    "lastHeardDay": 49770,
-    "lastHeardAt": "2026-08-15T01:33:34.974Z",
+    "timesHeard": 26,
+    "lastHeardDay": 50553,
+    "lastHeardAt": "2026-08-23T09:18:41.054Z",
     "notes": [
       "The red disc plays the sound of the ocean waves against stone, and I remember walking across the floor while Gurry told me the water would hold us both.",
       "The red disc plays the sound of the ocean waves against stone, and I remember walking across the floor while Gurry told me the water would hold us both.",
       "The red disc plays the sound of the ocean waves against stone, and I remember walking across the floor while Gurry told me the water would hold us both."
+    ],
+    "memories": [
+      {
+        "day": 50484,
+        "snap": "with Quesss; daytime; during bedtime_record"
+      },
+      {
+        "day": 50520,
+        "snap": "with Quesss, Rainbot6032; daytime; during bedtime_record"
+      },
+      {
+        "day": 50553,
+        "snap": "daytime; during bedtime_record"
+      }
     ]
   },
   "record_far": {
@@ -56,19 +104,33 @@
     ]
   },
   "record_mall": {
-    "timesHeard": 6,
-    "lastHeardDay": 49158,
-    "lastHeardAt": "2026-08-08T05:55:50.120Z",
+    "timesHeard": 9,
+    "lastHeardDay": 50460,
+    "lastHeardAt": "2026-08-22T16:29:21.074Z",
     "notes": [
       "The empty feeling in the song reminds me of the silence after the ocean floor, but the melody fills the space just enough to make the farm feel like a home a...",
       "The empty feeling in the song reminds me of the silence after the ocean floor, but the melody fills the space just enough to make the farm feel like a home a...",
       "The empty feeling in the song reminds me of the silence after the ocean floor, but the melody fills the space just enough to make the farm feel like a home."
+    ],
+    "memories": [
+      {
+        "day": 50409,
+        "snap": "with Quesss; daytime; during bedtime_record"
+      },
+      {
+        "day": 50415,
+        "snap": "with Quesss; daytime; during bedtime_record"
+      },
+      {
+        "day": 50460,
+        "snap": "with Quesss; daytime; during bedtime_record"
+      }
     ]
   },
   "record_blocks": {
-    "timesHeard": 10,
-    "lastHeardDay": 49777,
-    "lastHeardAt": "2026-08-15T02:46:18.723Z",
+    "timesHeard": 12,
+    "lastHeardDay": 50580,
+    "lastHeardAt": "2026-08-23T14:07:13.655Z",
     "notes": [
       "The bouncy notes of \"Blocks\" make me feel like the world is finally waking up, and I remember how the rain used to tap a steady rhythm on the roof of my old ...",
       "The bouncy notes of \"Blocks\" make me feel like the world is finally waking up, and I remember how the rain used to tap a steady rhythm on the roof of my old ..."
@@ -81,6 +143,14 @@
       {
         "day": 49777,
         "snap": "with Quesss, Musebot; daytime; while keeping the fire; put on by Muse"
+      },
+      {
+        "day": 50544,
+        "snap": "daytime; during bedtime_record"
+      },
+      {
+        "day": 50580,
+        "snap": "daytime; during bedtime_record"
       }
     ]
   }
