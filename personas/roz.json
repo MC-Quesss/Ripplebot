@@ -204,10 +204,6 @@
         "weight": "patience + charm"
       },
       {
-        "text": "The {activity} will not harvest {itself}. I checked.",
-        "weight": "charm + curiosity"
-      },
-      {
         "text": "Time for {activity}. Every task has dignity. Pinktail taught me that.",
         "weight": "charm + patience"
       }

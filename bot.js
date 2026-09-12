@@ -2009,12 +2009,17 @@ async function walkUntilAxis ({
   const startDeaths = deathCount
   return new Promise((resolve) => {
     const start = Date.now()
+    const startPos = bot.entity?.position
+    const startX = startPos ? +startPos.x.toFixed(3) : 0
+    const startZ = startPos ? +startPos.z.toFixed(3) : 0
     bot.setControlState('forward', true)
     let lastProgressVal = bot.entity?.position?.[axis] ?? 0
     let lastProgressAt = start
     let strafeActive = null
     let strafeOffAt = 0
     let thresholdFired = false
+    let snagCount = 0
+    let snagPositions = []
     const timer = setInterval(() => {
       const now = Date.now()
       const val = bot.entity?.position?.[axis] ?? 0
@@ -2049,6 +2054,9 @@ async function walkUntilAxis ({
         strafeActive = unstickStrafe
         strafeOffAt = now + unstickMs
         bot.setControlState(unstickStrafe, true)
+        snagCount++
+        const sp = bot.entity?.position
+        if (sp) snagPositions.push({ x: +sp.x.toFixed(3), z: +sp.z.toFixed(3), ms: now - start })
         logEvent('walk_until', `snag at ${axis}=${val.toFixed(2)} — pulsing strafe ${unstickStrafe} for ${unstickMs}ms`)
         lastProgressAt = now // give the pulse time to work before another
       }
@@ -2061,6 +2069,13 @@ async function walkUntilAxis ({
         if (strafeActive) bot.setControlState(strafeActive, false)
         clearInterval(timer)
         const p = bot.entity?.position || { x: 0, y: 0, z: 0 }
+        const endX = +p.x.toFixed(3)
+        const endZ = +p.z.toFixed(3)
+        const outcome = reached ? 'OK' : died ? 'DIED' : hpDrop ? 'HP_DROP' : 'TIMEOUT'
+        const snagSummary = snagPositions.length > 0
+          ? ` snags=[${snagPositions.map(s => `(${s.x},${s.z}@${s.ms}ms)`).join(',')}]`
+          : ''
+        logEvent('walk_until', `trace ${axis}→${target}: ${outcome} start=(${startX},${startZ}) end=(${endX},${endZ}) snags=${snagCount} elapsed=${now - start}ms threshold=${thresholdFired}${snagSummary}`)
         resolve({
           reached, died, hpDrop,
           x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2),
@@ -6478,6 +6493,21 @@ async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
   }
   logEvent('go-outside', `at orientation ${JSON.stringify(atOrigin.pos)}`)
 
+  // 2b. Align z toward door center (572.5). The collision face at x≈-270.7
+  // catches westbound traffic when z > ~572.6; go-inside already does this.
+  const curZExit = bot.entity.position.z
+  if (curZExit > 572.7) {
+    logEvent('go-outside', `z-align: ${curZExit.toFixed(2)} > 572.7, nudging -z`)
+    await faceYaw(0)
+    await walkUntilAxis({ axis: 'z', target: 572.5, direction: 'lte', maxMs: 3000 })
+    logEvent('go-outside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
+  } else if (curZExit < 572.45) {
+    logEvent('go-outside', `z-align: ${curZExit.toFixed(2)} < 572.45, nudging +z`)
+    await faceYaw(Math.PI)
+    await walkUntilAxis({ axis: 'z', target: 572.5, direction: 'gte', maxMs: 3000 })
+    logEvent('go-outside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
+  }
+
   // 3. Face west. Refuse to push forward if yaw didn't converge — the cost of
   //    being wrong is walking into the furnace at (-265, 65, 571).
   const TARGET_YAW = Math.PI / 2 // west
@@ -6487,6 +6517,8 @@ async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
     throw new Error(`yaw didn't converge to west (got ${yawResult.yaw.toFixed(2)} rad)`)
   }
   logEvent('go-outside', `yaw locked west at ${yawResult.yaw.toFixed(3)} rad`)
+  const preWalkPos = bot.entity?.position
+  if (preWalkPos) logEvent('go-outside', `pre-walk pos=(${preWalkPos.x.toFixed(3)}, ${preWalkPos.y.toFixed(3)}, ${preWalkPos.z.toFixed(3)}) z-offset-from-door-center=${(preWalkPos.z - 572.5).toFixed(3)}`)
   sendEmote('cheer')
 
   // 4. Monkey-patch collision out for the door AND the modded block at (-271,65,572)
@@ -6582,6 +6614,8 @@ async function runGoInsideOnce () {
     throw new Error(`yaw didn't converge to east (got ${yawResult.yaw.toFixed(2)} rad)`)
   }
   logEvent('go-inside', `yaw locked east at ${yawResult.yaw.toFixed(3)} rad`)
+  const preWalkPosIn = bot.entity?.position
+  if (preWalkPosIn) logEvent('go-inside', `pre-walk pos=(${preWalkPosIn.x.toFixed(3)}, ${preWalkPosIn.y.toFixed(3)}, ${preWalkPosIn.z.toFixed(3)}) z-offset-from-door-center=${(preWalkPosIn.z - 572.5).toFixed(3)}`)
 
   // 4. Activate door only if it's closed. Bit 0x04 in metadata = open.
   const doorBlock = bot.blockAt(new Vec3(HOUSE_DOOR.x, HOUSE_DOOR.y, HOUSE_DOOR.z))
@@ -9084,6 +9118,26 @@ const CHAT_INTENTS = {
       const t = startTask('stop_record')
       if (!t.allowed) { bot.chat(`Busy with ${t.current} — the record can wait a moment.`); return }
       try { await runStopRecord() } finally { endTask('stop_record') }
+    },
+  },
+  equip_item: {
+    hint: 'equip/wear/put on/hold an item; args.name = item name (skull, shears, etc.), args.destination = hand|head|torso|legs|feet (default hand)',
+    run: async (_user, args) => {
+      const name = typeof args.name === 'string' ? args.name.toLowerCase().replace(/\s+/g, '_') : null
+      const ALIASES = { creeper_head: 'skull', skeleton_skull: 'skull', head: 'skull', helmet: 'skull' }
+      const resolved = ALIASES[name] || name
+      if (!resolved) { bot.chat("I don't know which item you mean."); return }
+      const item = bot.inventory.items().find(i => i.name === resolved)
+      if (!item) { bot.chat(`I don't have any ${args.name || 'of that'}.`); return }
+      const dest = ['hand', 'off-hand', 'head', 'torso', 'legs', 'feet'].includes(args.destination) ? args.destination : 'hand'
+      await bot.equip(item, dest)
+    },
+  },
+  unequip_item: {
+    hint: 'take off/remove something the bot is wearing or holding; args.destination = hand|head|torso|legs|feet (default head) — use for "take that off", "remove the head/helmet", "put that away"',
+    run: async (_user, args) => {
+      const dest = ['hand', 'off-hand', 'head', 'torso', 'legs', 'feet'].includes(args.destination) ? args.destination : 'head'
+      await bot.unequip(dest)
     },
   },
 }
