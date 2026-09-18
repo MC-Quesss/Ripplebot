@@ -19,7 +19,7 @@ My own memories of the record collection (see [[../items/music-records]]).
 | Mellohi | magenta | 24 | day 50621 | The waltz pulls the sun up like a tide, and I lean into it even as the shadows lengthen. |
 | Chirp | red | 30 | day 52644 | The red disc plays the sound of the ocean waves against stone, and I remember walking across the floor while Gurry told me the water would hold us both. |
 | far | unknown | 6 | day 46962 | The C418 melody feels like the wind used to blow through the reeds where Brightbill used to nap, and I am writing this note to keep the memory safe. |
-| Mall | purple | 14 | day 52542 | The empty feeling in the song reminds me of the silence after the ocean floor, but the melody fills the space just enough to make the farm feel like a home. |
+| Mall | purple | 15 | day 52824 | The empty feeling in the song reminds me of the silence after the ocean floor, but the melody fills the space just enough to make the farm feel like a home. |
 | Blocks | orange | 20 | day 52700 | The bouncy notes make the world feel like it is finally waking up, and I remember how the rain used to tap a steady rhythm on the roof of my old home. |
 <!-- music:end -->
 

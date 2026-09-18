@@ -122,19 +122,15 @@
     ]
   },
   "record_mall": {
-    "timesHeard": 14,
-    "lastHeardDay": 52542,
-    "lastHeardAt": "2026-09-15T09:41:01.468Z",
+    "timesHeard": 15,
+    "lastHeardDay": 52824,
+    "lastHeardAt": "2026-09-18T02:44:50.062Z",
     "notes": [
       "The empty feeling in the song reminds me of the silence after the ocean floor, but the melody fills the space just enough to make the farm feel like a home.",
       "The empty feeling in the song reminds me of the silence after the ocean floor, but the melody fills the space just enough to make the farm feel like a home.",
       "The empty feeling in the song reminds me of the silence after the ocean floor, but the melody fills the space just enough to make the farm feel like a home."
     ],
     "memories": [
-      {
-        "day": 52068,
-        "snap": "with Quesss; daytime; during bedtime_record"
-      },
       {
         "day": 52110,
         "snap": "with Quesss; daytime; during bedtime_record"
@@ -150,6 +146,10 @@
       {
         "day": 52542,
         "snap": "with Musebot; daytime; during bedtime_record"
+      },
+      {
+        "day": 52824,
+        "snap": "with Quesss; daytime; during bedtime_record"
       }
     ]
   },

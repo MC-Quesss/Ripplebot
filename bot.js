@@ -522,11 +522,16 @@ bot.once('spawn', () => {
     bot.chat(`/nick ${NICKNAME}`)
     logEvent('nick', `set nickname to ${NICKNAME}`)
   }
+  if (PERSONA === 'private') {
+    bot.setControlState('sneak', true)
+    logEvent('private', 'permanent crouch enabled')
+  }
   startAutoSleep()
   startPenPlateGuard()
   startWheatReadyWatcher()
   startIdleWanderTimer()
   startAmbientActionTimer()
+  setInterval(checkVehicleStateChange, 2000)
   startSquirrelWatcher()
   startMemoryWatchdog()
 })
@@ -900,6 +905,11 @@ if (PERSONA !== 'default') {
 
 function botPersonaKey () { return PERSONA }
 
+function clearControlStates () {
+  ;['forward', 'back', 'left', 'right', 'jump', 'sprint'].forEach(s => bot.setControlState(s, false))
+  if (PERSONA !== 'private') bot.setControlState('sneak', false)
+}
+
 const claude = require('./claude')
 claude.init({ logFn: logEvent })
 
@@ -979,7 +989,7 @@ function expressiveStory (opts, { reactive = false } = {}) {
 // user policy 2026-07-11): timer/scan-driven impulses (idle ambient, wildlife)
 // NEVER call the API, and event-driven impulses muse only when a human player
 // is around to hear it. Local modes are unaffected — qwen musings stay chatty.
-const AMBIENT_EVENT_KINDS = new Set(['music', 'craft', 'victory', 'bedtime_suggest', 'rps', 'bot_chat'])
+const AMBIENT_EVENT_KINDS = new Set(['music', 'craft', 'victory', 'bedtime_suggest', 'rps', 'bot_chat', 'boat_ride'])
 function humanNearby (radius = 16) {
   return nearbyPlayers(radius).some(p => !looksLikeBot(p.username))
 }
@@ -2157,7 +2167,7 @@ function idleWanderBusy () {
   // must hold its spot on the field, including against the bedtime override
   // (user, 2026-07-04: Roz ran inside mid-match).
   return !bot.entity || bot.isSleeping || autoSleepBusy || goInsideBusy || penTraversalBusy ||
-    activeTask.name !== null || followTarget || rpsCurrentRival
+    activeTask.name !== null || followTarget || rpsCurrentRival || bot.vehicle
 }
 
 function randomIdleWanderTarget () {
@@ -2322,7 +2332,12 @@ const POND_CENTER = { x: -266, y: 61, z: 554 }
 const POND_RADIUS = 6
 const BOAT_CRUISE_SPEED = 0.15
 
+let isIdleBoating = false
 async function runIdleBoating () {
+  isIdleBoating = true
+  try { return await _runIdleBoating() } finally { isIdleBoating = false }
+}
+async function _runIdleBoating () {
   if (insideHouse()) {
     await runGoOutside('the pond')
     if (insideHouse()) {
@@ -2423,6 +2438,66 @@ async function runIdleBoating () {
   logEvent('idle-boating', 'done — heading back to shore')
   await pathTo(POND_SHORE, 1, 10000)
   sendEmote('cheer')
+}
+
+// ── Passenger ride observations ──────────────────────────────────────────────
+// When Roz hops in someone else's boat (passenger, not driving), she comments
+// on what she sees — landscape, creatures, weather, time of day. Uses /me
+// action text so the observations don't trigger bot-to-bot conversation.
+let passengerObserveTimer = null
+let wasInVehicle = false
+
+const PASSENGER_OBS_MIN_MS = 15_000
+const PASSENGER_OBS_MAX_MS = 35_000
+
+function startPassengerObserving () {
+  if (passengerObserveTimer) return
+  logEvent('passenger', 'started observing')
+  function scheduleNext () {
+    const delay = PASSENGER_OBS_MIN_MS + Math.random() * (PASSENGER_OBS_MAX_MS - PASSENGER_OBS_MIN_MS)
+    passengerObserveTimer = setTimeout(() => {
+      if (!bot.vehicle || isIdleBoating) { stopPassengerObserving(); return }
+      tryPassengerObservation().catch(e => logEvent('passenger', `obs error: ${e.message}`))
+      scheduleNext()
+    }, delay)
+  }
+  scheduleNext()
+}
+
+function stopPassengerObserving () {
+  if (!passengerObserveTimer) return
+  clearTimeout(passengerObserveTimer)
+  passengerObserveTimer = null
+  logEvent('passenger', 'stopped observing')
+}
+
+async function tryPassengerObservation () {
+  if (quietMode) return
+  if (!bot.vehicle) return
+  const pos = bot.entity.position
+  const nearby = Object.values(bot.entities)
+    .filter(e => e !== bot.entity && e.id !== bot.vehicle.id && e.position.distanceTo(pos) <= 24)
+  const creatures = nearby.filter(e => e.type === 'mob' || e.type === 'animal')
+    .map(e => e.name || e.displayName || 'something')
+    .filter(n => n && n !== 'unknown')
+  const players = nearby.filter(e => e.type === 'player').map(e => e.username)
+  const scenery = []
+  if (players.length) scenery.push(`${players.join(' and ')} ${players.length > 1 ? 'are' : 'is'} nearby.`)
+  if (creatures.length) scenery.push(`You can see: ${[...new Set(creatures)].slice(0, 4).join(', ')}.`)
+  const sceneText = scenery.length ? scenery.join(' ') : ''
+  await impulseExpressive('boat_ride',
+    `You are riding in a boat as a PASSENGER — someone else is steering. You are just along for the ride, relaxing. ${sceneText} Make one small, gentle observation about the ride, the water, what you see passing by, or how it feels to be on the water. Written as action text (it renders after your name, like "trails a hand in the cool water").`,
+    { me: true })
+}
+
+function checkVehicleStateChange () {
+  const inVehicle = !!bot.vehicle
+  if (inVehicle && !wasInVehicle && !isIdleBoating) {
+    startPassengerObserving()
+  } else if (!inVehicle && wasInVehicle) {
+    stopPassengerObserving()
+  }
+  wasInVehicle = inVehicle
 }
 
 // Idle wander is a HOME-LOCAL behaviour. Every activity it can pick — inside,
@@ -2538,6 +2613,7 @@ const EXPRESSIVE_COOLDOWN_MS = {
   victory: 60_000,
   bedtime_suggest: 120_000,
   music: 1_800_000,
+  boat_ride: 20_000,
 }
 let lastExpressiveAt = 0
 const lastExpressiveByKind = {}
@@ -2590,6 +2666,7 @@ function describeTimeOfDay () {
 }
 
 function describeWhereabouts () {
+  if (bot.vehicle && bot.vehicle.name === 'boat') return 'riding in a boat on the water'
   if (insideHouse()) return 'inside the house'
   if (inPen()) return 'in the sheep pen'
   if (inWheatField()) return 'standing in the wheat field'
@@ -2648,6 +2725,7 @@ function buildExpressiveContext (situation) {
     parts.push(`You are keeping the fire going (autonomous crop → bio-fuel loop, role: ${wheat}${potato}).`)
   }
   if (followTarget) parts.push(`You are following ${followTarget} around.`)
+  if (bot.vehicle && bot.vehicle.name === 'boat' && !isIdleBoating) parts.push('You are riding along as a passenger in a boat — just enjoying the trip.')
   const sheepDesc = describeNamedSheep()
   if (sheepDesc && (inPen() || !insideHouse())) parts.push(`Named sheep on the farm: ${sheepDesc}.`)
   const others = Object.keys(bot.players || {}).filter(n => n !== bot.username)
@@ -8797,7 +8875,7 @@ const CHAT_HANDLERS = [
     handler: (_user) => {
       abortGen++
       bot.pathfinder.setGoal(null)
-      ;['forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak'].forEach(s => bot.setControlState(s, false))
+      clearControlStates()
       const wasSustaining = sustainState.active
       sustainState.active = false
       if (followTarget) {
@@ -8822,7 +8900,7 @@ const CHAT_HANDLERS = [
     handler: (user) => {
       abortGen++
       bot.pathfinder.setGoal(null)
-      ;['forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak'].forEach(s => bot.setControlState(s, false))
+      clearControlStates()
       if (followTarget) { followTarget = null; followEntity = null; followChainPos = 0 }
       idleWanderEnabled = false
       const wasSustaining = sustainState.active
@@ -10897,7 +10975,7 @@ function handleCommand (cmd) {
         activeTask.sleeping = false
       }
       bot.pathfinder.setGoal(null)
-      ;['forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak'].forEach(s => bot.setControlState(s, false))
+      clearControlStates()
       return { ok: true }
     }
     case 'walk_until': {
@@ -11483,7 +11561,7 @@ function handleCommand (cmd) {
         if (!args.enabled) {
           abortGen++
           bot.pathfinder.setGoal(null)
-          ;['forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak'].forEach(s => bot.setControlState(s, false))
+          clearControlStates()
         }
       }
       return { ok: true, enabled: idleWanderEnabled, busy: idleWanderBusy() }
@@ -11793,23 +11871,27 @@ function handleCommand (cmd) {
     }
     case 'exit_boat': {
       if (!bot.vehicle) return { ok: false, error: 'not in a vehicle' }
+      const vidBefore = bot.vehicle.id
       client.write('steer_vehicle', { sideways: 0, forward: 0, jump: 0x02 })
       client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 })
+      bot.setControlState('sneak', true)
       try { bot.dismount() } catch (_) {}
-      return sleep(500).then(() => {
-        const stillMounted = !!bot.vehicle
-        if (stillMounted) {
-          const vp = bot.vehicle.position
-          const bp = bot.entity.position
-          const drift = bp.distanceTo(vp)
-          if (drift > 3) {
-            logEvent('exit-boat', `vehicle ref stale (drift=${drift.toFixed(1)}) — clearing`)
-            bot.vehicle = null
-            return { ok: true, dismounted: true }
-          }
+      return sleep(600).then(() => {
+        if (PERSONA !== 'private') bot.setControlState('sneak', false)
+        if (!bot.vehicle) {
+          logEvent('exit-boat', 'dismounted')
+          return { ok: true, dismounted: true }
         }
-        logEvent('exit-boat', stillMounted ? 'dismount may have failed' : 'dismounted')
-        return { ok: true, dismounted: !stillMounted }
+        const vp = bot.vehicle.position
+        const bp = bot.entity.position
+        const drift = bp.distanceTo(vp)
+        if (drift > 2 || bot.vehicle.id !== vidBefore) {
+          logEvent('exit-boat', `vehicle ref stale (drift=${drift.toFixed(1)}) — clearing`)
+          bot.vehicle = null
+          return { ok: true, dismounted: true }
+        }
+        logEvent('exit-boat', 'dismount may have failed')
+        return { ok: true, dismounted: false }
       })
     }
     case 'boat_status': {
