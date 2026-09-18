@@ -523,7 +523,7 @@ bot.once('spawn', () => {
     logEvent('nick', `set nickname to ${NICKNAME}`)
   }
   if (PERSONA === 'private') {
-    const sneakOn = () => client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 })
+    const sneakOn = () => { if (!bot.vehicle) client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 }) }
     const sneakOff = () => client.write('entity_action', { entityId: bot.entity.id, actionId: 1, jumpBoost: 0 })
     sneakOn()
     const _nativeClear = bot.clearControlStates.bind(bot)
@@ -531,7 +531,8 @@ bot.once('spawn', () => {
     for (const evt of ['goal_reached', 'path_reset', 'goal_updated']) {
       bot.on(evt, sneakOn)
     }
-    for (const method of ['activateBlock', 'openBlock', 'activateEntity', 'activateEntityAt']) {
+    bot.on('dismount', () => setTimeout(sneakOn, 800))
+    for (const method of ['activateBlock', 'openBlock']) {
       const _native = bot[method].bind(bot)
       bot[method] = async (...args) => {
         sneakOff()
