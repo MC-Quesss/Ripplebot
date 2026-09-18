@@ -523,6 +523,11 @@ bot.once('spawn', () => {
     logEvent('nick', `set nickname to ${NICKNAME}`)
   }
   if (PERSONA === 'private') {
+    const _nativeSet = bot.setControlState.bind(bot)
+    bot.setControlState = (ctrl, val) => {
+      if (ctrl === 'sneak' && !val) return
+      _nativeSet(ctrl, val)
+    }
     bot.setControlState('sneak', true)
     logEvent('private', 'permanent crouch enabled')
   }
