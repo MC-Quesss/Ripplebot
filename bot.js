@@ -2168,29 +2168,33 @@ function randomIdleWanderTarget () {
   const r = Math.random()
   if (penNow) {
     if (r < 0.70) return 'outside'
-    if (r < 0.85) return 'inside'
-    if (r < 0.85 + 0.10 + fb) return 'furnace'
+    if (r < 0.82) return 'inside'
+    if (r < 0.82 + 0.10 + fb) return 'furnace'
+    if (r < 0.92 + fb + 0.08) return 'pond'
     return 'stay'
   }
   if (insideNow) {
     if (r < 0.25) return 'outside'
-    if (r < 0.65) return 'field'
-    if (r < 0.78) return 'pen'
-    if (r < 0.78 + 0.12 + fb) return 'furnace'
+    if (r < 0.60) return 'field'
+    if (r < 0.73) return 'pen'
+    if (r < 0.73 + 0.12 + fb) return 'furnace'
+    if (r < 0.85 + fb + 0.08) return 'pond'
     return 'stay'
   }
   if (fieldNow) {
-    if (r < 0.28) return 'stay'
-    if (r < 0.50) return 'outside'
-    if (r < 0.72) return 'inside'
-    if (r < 0.84) return 'pen'
-    if (r < 0.84 + 0.10 + fb) return 'furnace'
+    if (r < 0.25) return 'stay'
+    if (r < 0.45) return 'outside'
+    if (r < 0.65) return 'inside'
+    if (r < 0.77) return 'pen'
+    if (r < 0.77 + 0.10 + fb) return 'furnace'
+    if (r < 0.87 + fb + 0.08) return 'pond'
     return 'stay'
   }
-  if (r < 0.20) return 'inside'
-  if (r < 0.52) return 'field'
-  if (r < 0.68) return 'pen'
-  if (r < 0.68 + 0.12 + fb) return 'furnace'
+  if (r < 0.18) return 'inside'
+  if (r < 0.48) return 'field'
+  if (r < 0.63) return 'pen'
+  if (r < 0.63 + 0.12 + fb) return 'furnace'
+  if (r < 0.75 + fb + 0.10) return 'pond'
   return 'stay'
 }
 
@@ -2310,8 +2314,119 @@ async function runIdleWanderToFurnace () {
   await sleep(1500 + Math.floor(Math.random() * 2000))
 }
 
+// ── Pond boating ──
+// A fun idle activity: walk to the pond, hop in the boat, paddle around, return.
+const POND_SHORE = { x: -268, y: 62, z: 559 }
+const POND_BOAT_HOME = { x: -269, y: 61.5, z: 556 }
+const POND_CENTER = { x: -266, y: 61, z: 554 }
+const POND_RADIUS = 6
+const BOAT_CRUISE_SPEED = 0.15
+
+async function runIdleBoating () {
+  if (insideHouse()) {
+    await runGoOutside('the pond')
+    if (insideHouse()) {
+      logEvent('idle-boating', 'could not get outside')
+      return
+    }
+  }
+  if (inPen()) {
+    await runLeavePen()
+    if (inPen()) return
+  }
+
+  logEvent('idle-boating', 'heading to the pond')
+  await pathTo(POND_SHORE, 2, 15000)
+
+  const p = bot.entity.position
+  const boats = Object.values(bot.entities)
+    .filter(e => e !== bot.entity && e.name === 'boat' && e.position.distanceTo(p) <= 16)
+    .sort((a, b) => a.position.distanceTo(p) - b.position.distanceTo(p))
+  if (!boats.length) {
+    logEvent('idle-boating', 'no boat found near the pond')
+    return
+  }
+
+  const target = boats[0]
+  try {
+    await bot.activateEntity(target)
+  } catch (e) {
+    logEvent('idle-boating', `could not mount boat: ${e.message}`)
+    return
+  }
+  await sleep(500)
+  if (!bot.vehicle) {
+    logEvent('idle-boating', 'mount did not register')
+    return
+  }
+  logEvent('idle-boating', `aboard boat ${target.id}`)
+
+  // Paddle to the middle of the pond with a slight random drift
+  if (bot.vehicle) {
+    const drift = (Math.random() - 0.5) * 3
+    const wx = POND_CENTER.x + drift
+    const wz = POND_CENTER.z + drift
+    const v = bot.vehicle
+    let bx = v.position.x, by = v.position.y, bz = v.position.z
+    const stepCount = Math.ceil(Math.hypot(wx - bx, wz - bz) / BOAT_CRUISE_SPEED)
+    for (let s = 0; s < stepCount && bot.vehicle; s++) {
+      const toDx = wx - bx, toDz = wz - bz
+      const yaw = Math.atan2(-toDx, toDz)
+      bx += -Math.sin(yaw) * BOAT_CRUISE_SPEED
+      bz += Math.cos(yaw) * BOAT_CRUISE_SPEED
+      client.write('steer_boat', { leftPaddle: true, rightPaddle: true })
+      client.write('vehicle_move', { x: bx, y: by, z: bz, yaw: -(yaw * 180 / Math.PI), pitch: 0 })
+      await sleep(50)
+    }
+    client.write('steer_boat', { leftPaddle: false, rightPaddle: false })
+    logEvent('idle-boating', `reached middle at ${bx.toFixed(0)}, ${bz.toFixed(0)}`)
+  }
+
+  // Float — no paddling, just sitting on the water
+  if (bot.vehicle) {
+    const floatMs = 8000 + Math.floor(Math.random() * 12000)
+    logEvent('idle-boating', `floating for ${(floatMs / 1000).toFixed(0)}s`)
+    await sleep(floatMs)
+  }
+
+  // Paddle home
+  if (bot.vehicle) {
+    const v = bot.vehicle
+    let bx = v.position.x, by = v.position.y, bz = v.position.z
+    const sx = POND_BOAT_HOME.x, sz = POND_BOAT_HOME.z
+    const stepCount = Math.ceil(Math.hypot(sx - bx, sz - bz) / BOAT_CRUISE_SPEED)
+    for (let s = 0; s < stepCount && bot.vehicle; s++) {
+      const toDx = sx - bx, toDz = sz - bz
+      const yaw = Math.atan2(-toDx, toDz)
+      bx += -Math.sin(yaw) * BOAT_CRUISE_SPEED
+      bz += Math.cos(yaw) * BOAT_CRUISE_SPEED
+      client.write('steer_boat', { leftPaddle: true, rightPaddle: true })
+      client.write('vehicle_move', { x: bx, y: by, z: bz, yaw: -(yaw * 180 / Math.PI), pitch: 0 })
+      await sleep(50)
+    }
+    client.write('steer_boat', { leftPaddle: false, rightPaddle: false })
+    logEvent('idle-boating', `returned to shore at ${bx.toFixed(0)}, ${bz.toFixed(0)}`)
+  }
+
+  // Dismount
+  if (bot.vehicle) {
+    client.write('steer_vehicle', { sideways: 0, forward: 0, jump: 0x02 })
+    client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 })
+    try { bot.dismount() } catch (_) {}
+    await sleep(500)
+    if (bot.vehicle) {
+      const drift = bot.entity.position.distanceTo(bot.vehicle.position)
+      if (drift > 3) bot.vehicle = null
+    }
+  }
+
+  logEvent('idle-boating', 'done — heading back to shore')
+  await pathTo(POND_SHORE, 1, 10000)
+  sendEmote('cheer')
+}
+
 // Idle wander is a HOME-LOCAL behaviour. Every activity it can pick — inside,
-// field, pen, furnace — sits within ~30 blocks of the house, and runGoInside()
+// field, pen, furnace, pond — sits within ~30 blocks of the house, and runGoInside()
 // falls back to manual walking when the pathfinder cannot plan, which from far
 // away means an unmanaged cross-map trek that knows nothing about the route.
 // On 2026-07-30 that trek fired 3.5s after a completed farm→igloo walk,
@@ -2378,6 +2493,8 @@ async function tryIdleWander () {
       await runIdleWanderToPen()
     } else if (action === 'furnace') {
       await runIdleWanderToFurnace()
+    } else if (action === 'pond') {
+      await runIdleBoating()
     }
   } catch (e) {
     if (e.name === 'AbortError') return
@@ -9018,6 +9135,10 @@ const CHAT_INTENTS = {
       return runDepositNamed(names)
     },
   },
+  go_boating: {
+    hint: 'take the boat out / go boating / paddle around the pond — a fun leisure activity',
+    run: () => { abortGen++; return runIdleBoating() },
+  },
   go_outside: { hint: 'leave the house / go outdoors', run: () => { abortGen++; return runGoOutside() } },
   go_inside: {
     hint: 'come inside the house / come home',
@@ -11588,6 +11709,11 @@ function handleCommand (cmd) {
       })().catch(e => logEvent('go-inside-error', e.message))
       return { ok: true, started: true, aborted: wasTask }
     }
+    case 'go_boating': {
+      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+      runIdleBoating().catch(e => logEvent('go-boating-error', e.message))
+      return { ok: true, started: true }
+    }
     case 'go_into_pen': {
       if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
       runGoIntoPen().catch(e => logEvent('go-into-pen-error', e.message))
@@ -11606,6 +11732,91 @@ function handleCommand (cmd) {
       if (args.exit_ms !== undefined) EXIT_STRAFE_MS = Number(args.exit_ms)
       if (args.enter_ms !== undefined) ENTER_STRAFE_MS = Number(args.enter_ms)
       return { ok: true, exit: EXIT_STRAFE, enter: ENTER_STRAFE, exit_ms: EXIT_STRAFE_MS, enter_ms: ENTER_STRAFE_MS }
+    }
+    case 'ride_boat': {
+      const p = bot.entity.position
+      const radius = Number(args.radius ?? 8)
+      const boats = Object.values(bot.entities)
+        .filter(e => e !== bot.entity && e.name === 'boat' && e.position.distanceTo(p) <= radius)
+        .sort((a, b) => a.position.distanceTo(p) - b.position.distanceTo(p))
+      if (!boats.length) return { ok: false, error: `no boat within ${radius} blocks` }
+      const target = boats[0]
+      const dist = target.position.distanceTo(p)
+      const doMount = () => bot.activateEntity(target)
+        .then(() => sleep(500))
+        .then(() => {
+          const mounted = !!bot.vehicle
+          logEvent('ride-boat', `${mounted ? 'mounted' : 'mount unclear'} boat ${target.id} at ${posStr(target.position)}`)
+          return { ok: true, mounted, boat_id: target.id, x: +target.position.x.toFixed(1), y: +target.position.y.toFixed(1), z: +target.position.z.toFixed(1) }
+        })
+        .catch(e => ({ ok: false, error: `activate failed: ${e.message}` }))
+      if (args.walk !== false && dist > 2.5) {
+        const { x, y, z } = target.position
+        return bot.pathfinder.goto(new goals.GoalNear(x, y, z, 2))
+          .catch(e => logEvent('ride-boat', `pathfind failed: ${e.message} — trying activate anyway`))
+          .then(() => doMount())
+      }
+      return doMount()
+    }
+    case 'steer_boat': {
+      // 1.12.2 boat steering: send steer_boat (paddle animation) + vehicle_move
+      // (actual position) since mineflayer has no boat physics.
+      // args: { direction?: 'forward'|'left'|'right', duration_ms?: 3000, speed?: 0.15 }
+      if (!bot.vehicle) return { ok: false, error: 'not in a vehicle' }
+      const dir = args.direction || 'forward'
+      const dur = Number(args.duration_ms ?? 3000)
+      const speed = Number(args.speed ?? 0.15)
+      const left = dir === 'forward' || dir === 'left'
+      const right = dir === 'forward' || dir === 'right'
+      const turnRate = 0.04
+      const v = bot.vehicle
+      let bx = v.position.x, by = v.position.y, bz = v.position.z
+      let yaw = bot.entity.yaw
+      const startPos = { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }
+      const interval = setInterval(() => {
+        if (dir === 'left') yaw += turnRate
+        else if (dir === 'right') yaw -= turnRate
+        const dx = -Math.sin(yaw) * speed
+        const dz = Math.cos(yaw) * speed
+        bx += dx; bz += dz
+        client.write('steer_boat', { leftPaddle: left, rightPaddle: right })
+        client.write('vehicle_move', { x: bx, y: by, z: bz, yaw: -(yaw * 180 / Math.PI), pitch: 0 })
+      }, 50)
+      return sleep(dur).then(() => {
+        clearInterval(interval)
+        client.write('steer_boat', { leftPaddle: false, rightPaddle: false })
+        const vEnd = bot.vehicle
+        const endPos = vEnd ? { x: +vEnd.position.x.toFixed(1), y: +vEnd.position.y.toFixed(1), z: +vEnd.position.z.toFixed(1) } : null
+        logEvent('steer-boat', `steered ${dir} for ${dur}ms from ${posStr(startPos)} to ${endPos ? posStr(endPos) : '?'}`)
+        return { ok: true, direction: dir, start: startPos, end: endPos || { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }, still_mounted: !!vEnd }
+      })
+    }
+    case 'exit_boat': {
+      if (!bot.vehicle) return { ok: false, error: 'not in a vehicle' }
+      client.write('steer_vehicle', { sideways: 0, forward: 0, jump: 0x02 })
+      client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 })
+      try { bot.dismount() } catch (_) {}
+      return sleep(500).then(() => {
+        const stillMounted = !!bot.vehicle
+        if (stillMounted) {
+          const vp = bot.vehicle.position
+          const bp = bot.entity.position
+          const drift = bp.distanceTo(vp)
+          if (drift > 3) {
+            logEvent('exit-boat', `vehicle ref stale (drift=${drift.toFixed(1)}) — clearing`)
+            bot.vehicle = null
+            return { ok: true, dismounted: true }
+          }
+        }
+        logEvent('exit-boat', stillMounted ? 'dismount may have failed' : 'dismounted')
+        return { ok: true, dismounted: !stillMounted }
+      })
+    }
+    case 'boat_status': {
+      const v = bot.vehicle
+      if (!v) return { ok: true, in_boat: false }
+      return { ok: true, in_boat: true, vehicle_id: v.id, vehicle_name: v.name,
+        x: +v.position.x.toFixed(1), y: +v.position.y.toFixed(1), z: +v.position.z.toFixed(1) }
     }
     case 'quit':
       bot.quit()
