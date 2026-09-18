@@ -713,6 +713,7 @@ function tryMorningExclamation () {
 
 let storyRequestBusy = false
 function tryStoryRequest () {
+  return // stories only on ABBYO's request now
   if (PERSONA !== 'private') return
   if (storyTimeActive || storyRequestBusy) return
   if (activeTask.name || goInsideBusy || penTraversalBusy) return
@@ -9068,6 +9069,11 @@ const CHAT_INTENTS = {
   tell_story: {
     hint: 'tell a story, share a memory, or talk at length about a topic (args.topic = what to talk about)',
     run: (user, args) => {
+      if (user !== 'ABBYO') {
+        logEvent('story-time', `tell_story rejected — only ABBYO can request stories (got ${user})`)
+        bot.chat("Sorry, not unless Abbyo says it's ok.")
+        return Promise.resolve()
+      }
       const t = bot.time?.timeOfDay
       // Upper bound 15000 (not 13500): the sunset request window plus the 60s
       // gather wait means the ask can land well after bedtime — rejecting it
@@ -9646,8 +9652,13 @@ async function executeClaudeResponse (username, message, result, { namedMe, from
         logEvent('claude-brain', `rejected unknown action: ${cmd.action}`)
         continue
       }
-      if (fromBot && cmd.action !== 'tell_story') {
+      if (fromBot) {
         logEvent('claude-brain', `rejected bot-originated action: ${cmd.action}`)
+        continue
+      }
+      if (cmd.action === 'tell_story' && username !== 'ABBYO') {
+        logEvent('claude-brain', `rejected tell_story — only ABBYO can request stories (got ${username})`)
+        bot.chat("Sorry, not unless Abbyo says it's ok.")
         continue
       }
       if (cmd.action === 'keep_fire' && !namedMe) {
@@ -9736,13 +9747,10 @@ bot.on('chat', (username, message) => {
   if (!fromBot) resetBotExchange()
   logEvent('chat', `<${username}> ${message}`)
 
-  // Story-time coordination: bot story request triggers tell_story directly
+  // Story-time coordination: bot story request — only honored from ABBYO
   if (fromBot && /would you tell us a story/i.test(message) && !storyTimeActive && PERSONA === 'roz') {
-    logEvent('story-time', `${username} requested a story — starting`)
-    storyNightDay = bot.time?.day ?? storyNightDay
-    storyTimeActive = true
-    storyTimeStartedAt = Date.now()
-    runTellStory(username, null).catch(e => logEvent('story-time', `story failed: ${e.message}`))
+    logEvent('story-time', `${username} requested a story — declined (only ABBYO can request)`)
+    bot.chat("Sorry, not unless Abbyo says it's ok.")
     return
   }
 
