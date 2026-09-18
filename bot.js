@@ -523,12 +523,20 @@ bot.once('spawn', () => {
     logEvent('nick', `set nickname to ${NICKNAME}`)
   }
   if (PERSONA === 'private') {
-    const startSneak = () => client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 })
-    startSneak()
+    const sneakOn = () => client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 })
+    const sneakOff = () => client.write('entity_action', { entityId: bot.entity.id, actionId: 1, jumpBoost: 0 })
+    sneakOn()
     const _nativeClear = bot.clearControlStates.bind(bot)
-    bot.clearControlStates = () => { _nativeClear(); startSneak() }
+    bot.clearControlStates = () => { _nativeClear(); sneakOn() }
     for (const evt of ['goal_reached', 'path_reset', 'goal_updated']) {
-      bot.on(evt, startSneak)
+      bot.on(evt, sneakOn)
+    }
+    for (const method of ['activateBlock', 'openBlock', 'activateEntity', 'activateEntityAt']) {
+      const _native = bot[method].bind(bot)
+      bot[method] = async (...args) => {
+        sneakOff()
+        try { return await _native(...args) } finally { sneakOn() }
+      }
     }
     logEvent('private', 'permanent crouch enabled (pose-only, full speed)')
   }
