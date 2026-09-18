@@ -523,13 +523,14 @@ bot.once('spawn', () => {
     logEvent('nick', `set nickname to ${NICKNAME}`)
   }
   if (PERSONA === 'private') {
-    const _nativeSet = bot.setControlState.bind(bot)
-    bot.setControlState = (ctrl, val) => {
-      if (ctrl === 'sneak' && !val) return
-      _nativeSet(ctrl, val)
+    const startSneak = () => client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 })
+    startSneak()
+    const _nativeClear = bot.clearControlStates.bind(bot)
+    bot.clearControlStates = () => { _nativeClear(); startSneak() }
+    for (const evt of ['goal_reached', 'path_reset', 'goal_updated']) {
+      bot.on(evt, startSneak)
     }
-    bot.setControlState('sneak', true)
-    logEvent('private', 'permanent crouch enabled')
+    logEvent('private', 'permanent crouch enabled (pose-only, full speed)')
   }
   startAutoSleep()
   startPenPlateGuard()
