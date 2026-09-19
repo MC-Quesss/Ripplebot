@@ -523,20 +523,32 @@ bot.once('spawn', () => {
     logEvent('nick', `set nickname to ${NICKNAME}`)
   }
   if (PERSONA === 'private') {
-    const sneakOn = () => { if (!bot.vehicle) client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 }) }
-    const sneakOff = () => client.write('entity_action', { entityId: bot.entity.id, actionId: 1, jumpBoost: 0 })
-    sneakOn()
+    const poseOn = () => { if (!bot.vehicle) client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 }) }
+    const poseOff = () => client.write('entity_action', { entityId: bot.entity.id, actionId: 1, jumpBoost: 0 })
+    bot._privatePoseOff = poseOff
+    bot._privatePoseOn = poseOn
+    poseOn()
     const _nativeClear = bot.clearControlStates.bind(bot)
-    bot.clearControlStates = () => { _nativeClear(); sneakOn() }
+    bot.clearControlStates = () => { _nativeClear(); poseOn() }
     for (const evt of ['goal_reached', 'path_reset', 'goal_updated']) {
-      bot.on(evt, sneakOn)
+      bot.on(evt, poseOn)
     }
-    bot.on('dismount', () => setTimeout(sneakOn, 800))
+    bot.on('dismount', () => setTimeout(poseOn, 800))
     for (const method of ['activateBlock', 'openBlock']) {
       const _native = bot[method].bind(bot)
       bot[method] = async (...args) => {
-        sneakOff()
-        try { return await _native(...args) } finally { sneakOn() }
+        poseOff()
+        try { return await _native(...args) } finally { poseOn() }
+      }
+    }
+    for (const method of ['activateEntity', 'activateEntityAt']) {
+      const _native = bot[method].bind(bot)
+      bot[method] = async (...args) => {
+        poseOff()
+        const result = await _native(...args)
+        await sleep(600)
+        if (!bot.vehicle) poseOn()
+        return result
       }
     }
     logEvent('private', 'permanent crouch enabled (pose-only, full speed)')
@@ -6632,7 +6644,7 @@ const HOUSE_DOOR = { x: -272, y: 65, z: 572 }
 // `door_strafe` ctl action so we can tune without restarting.
 // Empirically: strafe-left while facing west over-steers south; the door
 // needs the opposite nudge, and only briefly (the door frame is 2 blocks).
-let EXIT_STRAFE = 'right'  // facing west, right = -z (north)
+let EXIT_STRAFE = 'left'   // facing west, left = +z (south) — oak door hinge south
 let ENTER_STRAFE = null    // no strafe on entry — corridor too narrow for either
                            // direction; left hits z=571 wall, right hits south side.
 let EXIT_STRAFE_MS = 200
@@ -6748,10 +6760,10 @@ async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
   const walk = await walkUntilAxis({
     axis: 'x', target: -275, direction: 'lte', maxMs: 8000, bailOnDamage: true,
     unstickStrafe: EXIT_STRAFE, unstickMs: EXIT_STRAFE_MS,
-    // Tiny south nudge just as the threshold is crossed (user, 2026-07-07):
-    // pre-empts the north-jamb catch at x≈-270.8 behind most first-attempt
-    // exit hangups. Facing west, 'left' = +z = south.
-    thresholdStrafe: { at: -270.3, strafe: 'left', ms: 150 },
+    // Tiny north nudge just as the threshold is crossed: pre-empts the
+    // south-jamb catch at x≈-270.8 (oak door, hinge south).
+    // Facing west, 'right' = -z = north.
+    thresholdStrafe: { at: -270.3, strafe: 'right', ms: 150 },
   })
 
   bot.world.getBlock = origGetBlockExit
