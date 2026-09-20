@@ -2378,6 +2378,9 @@ async function _runIdleBoating () {
   }
 
   logEvent('idle-boating', 'heading to the pond')
+  // Route south of the house first to avoid pathfinding through it.
+  // field_east_approach is south of the house z-bounds.
+  await pathTo({ x: -278, y: 64, z: 567 }, 2, 10000)
   await pathTo(POND_SHORE, 2, 15000)
 
   const p = bot.entity.position
@@ -2450,15 +2453,16 @@ async function _runIdleBoating () {
     logEvent('idle-boating', `returned to shore at ${bx.toFixed(0)}, ${bz.toFixed(0)}`)
   }
 
-  // Dismount
+  // Dismount — force-clear bot.vehicle if the protocol dismount doesn't take,
+  // since on this modded server the event often doesn't fire back.
   if (bot.vehicle) {
     client.write('steer_vehicle', { sideways: 0, forward: 0, jump: 0x02 })
     client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 })
     try { bot.dismount() } catch (_) {}
     await sleep(500)
     if (bot.vehicle) {
-      const drift = bot.entity.position.distanceTo(bot.vehicle.position)
-      if (drift > 3) bot.vehicle = null
+      logEvent('idle-boating', 'dismount did not clear vehicle ref — forcing')
+      bot.vehicle = null
     }
   }
 
@@ -2518,6 +2522,20 @@ async function tryPassengerObservation () {
 }
 
 function checkVehicleStateChange () {
+  // Stale vehicle reference: mineflayer sometimes keeps bot.vehicle set after
+  // a server-side dismount or across respawns. If the entity is gone from the
+  // world or more than 6 blocks away, clear it so context injection doesn't
+  // tell Claude we're in a boat that doesn't exist.
+  if (bot.vehicle && !isIdleBoating) {
+    const v = bot.vehicle
+    const gone = !v.isValid || !bot.entities[v.id]
+    const far = !gone && bot.entity?.position && v.position
+      && bot.entity.position.distanceTo(v.position) > 6
+    if (gone || far) {
+      logEvent('vehicle', `clearing stale vehicle ref (${gone ? 'entity gone' : 'too far'})`)
+      bot.vehicle = null
+    }
+  }
   const inVehicle = !!bot.vehicle
   if (inVehicle && !wasInVehicle && !isIdleBoating) {
     startPassengerObserving()
