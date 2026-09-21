@@ -433,7 +433,7 @@ function pickAvoidingRecentPhrase (items, toPhrase = x => x) {
 }
 // Modded block type ids (stable per this world's Forge registry) that bots must
 // never walk into — see the solid-collision patch in the getBlock override.
-const FERTILIZER_BIN_TYPES = new Set([3995, 1458])
+const SOLID_MODDED_TYPES = new Set([3995, 1458, 1059, 1069])
 
 bot.once('spawn', () => {
   const mcData = require('minecraft-data')(bot.version)
@@ -447,44 +447,35 @@ bot.once('spawn', () => {
   const doorIds = Object.values(mcData.blocksByName).filter(b => /door/.test(b.name) && !/iron/.test(b.name)).map(b => b.id)
   doorIds.forEach(id => mvts.openable.add(id))
 
-  // Modded blocks report empty names on this Forge 1.12.2 server and often
-  // have invisible collision that traps the bot (charging pads, pipes, etc.).
-  // Penalise ALL empty-name blocks so the pathfinder routes around them.
-  const PASSABLE_EMPTY_NAME = new Set(['-271,65,572'])
+  // Modded blocks report empty names on this Forge 1.12.2 server.  Most are
+  // decorative (lights, trim, charging pads) with no real server-side collision.
+  // A few — fertilizer bins, machine blocks — DO have partial collision that
+  // rubber-bands the bot.  Penalise only those known-solid types; everything
+  // else gets a soft cost so the pathfinder prefers air but CAN route through.
   mvts.exclusionAreasStep.push((block) => {
     if (!block || !block.position || block.name) return 0
-    const k = `${Math.floor(block.position.x)},${Math.floor(block.position.y)},${Math.floor(block.position.z)}`
-    return PASSABLE_EMPTY_NAME.has(k) ? 0 : Infinity
+    if (SOLID_MODDED_TYPES.has(block.type)) return Infinity
+    return 3
   })
 
   bot.pathfinder.setMovements(mvts)
 
-  // Permanently zero out collision for the modded block at (-271, 65, 572) —
-  // it sits in the door corridor and has unknown geometry that blocks both
-  // pathfinder route planning and physics-based walking.
+  // Empty-name modded blocks: most are decorative with no real server-side
+  // collision — zero their shapes so mineflayer physics lets the bot walk
+  // through.  The few types with real partial collision (fertilizer bins,
+  // machine blocks) are forced to full-solid so the bot bumps off cleanly
+  // instead of rubber-banding into a wedge.
   const _origGetBlock = bot.world.getBlock.bind(bot.world)
   bot.world.getBlock = (pos) => {
     const b = _origGetBlock(pos)
-    if (b && Math.floor(pos.x) === -271 && Math.floor(pos.z) === 572 &&
-        pos.y >= 65 && pos.y <= 66) {
-      b.shapes = []
-    }
-    // Charge pad near hopper — zero collision so bot can walk off if it lands on it.
-    // Pathfinder still avoids it via the Infinity exclusion penalty above.
-    if (b && !b.name && Math.floor(pos.x) === -266 && Math.floor(pos.z) === 574 &&
-        pos.y >= 64 && pos.y <= 65) {
-      b.shapes = []
-    }
-    // Fertilizer bins (and the machine block beside them): modded blocks with
-    // partial server-side collision that mineflayer can't model — walking into
-    // one rubber-bands the bot into a wedge (Roz, 2026-07-04, at (-274,64,569)).
-    // Treat them as FULL solid blocks client-side so physics bumps off them
-    // like a wall instead of entering the mismatched space; the pathfinder
-    // already routes around all empty-name blocks via the Infinity penalty.
-    // Observed: type 3995 at (-274,64,568..569), type 1458 at (-273,64,569).
-    if (b && !b.name && FERTILIZER_BIN_TYPES.has(b.type)) {
-      b.boundingBox = 'block'
-      b.shapes = [[0, 0, 0, 1, 1, 1]]
+    if (b && !b.name) {
+      if (SOLID_MODDED_TYPES.has(b.type)) {
+        b.boundingBox = 'block'
+        b.shapes = [[0, 0, 0, 1, 1, 1]]
+      } else {
+        b.boundingBox = 'empty'
+        b.shapes = []
+      }
     }
     // Lily-pad-covered water: make the water block appear solid so the
     // pathfinder treats it as walkable ground (lily pads are thin enough
@@ -605,6 +596,102 @@ function insideHouse () {
   if (!p) return false
   return p.x >= -271 && p.x <= -264 && p.z >= 568 && p.z <= 575 && p.y >= 64 && p.y <= 66
 }
+// ── Ocean cabin (new home) ──────────────────────────────────────────────────
+// The ocean cabin is connected to the farm by a river boat route. The bedroom
+// has a 1-block-wide corridor made of invisible modded walls. Pathfinder cannot
+// see these walls. The ONLY way in and out is the corridor at block x=-122
+// (player x≈-121.5). NEVER pathfind directly through the bedroom walls.
+const CABIN_DOCK = { x: -127, y: 63, z: 348 }
+const CABIN_STAIRS_BOTTOM = { x: -131, y: 63, z: 317 }
+const CABIN_STAIRS_TOP = { x: -125, y: 66, z: 318 }
+const CABIN_CORRIDOR_X = -122
+const CABIN_CORRIDOR_OUTSIDE = { x: -122, y: 66, z: 317.5 }
+const CABIN_CORRIDOR_INSIDE = { x: -122, y: 66, z: 323.5 }
+const CABIN_BED = { x: -128, y: 66, z: 324 }
+function insideCabinBedroom () {
+  const p = bot.entity?.position
+  if (!p) return false
+  return p.x >= -130 && p.x <= -120 && p.z >= 320 && p.z <= 328 && p.y >= 65 && p.y <= 68
+}
+function nearCabin () {
+  const p = bot.entity?.position
+  if (!p) return false
+  return p.x >= -135 && p.x <= -115 && p.z >= 310 && p.z <= 355 && p.y >= 62 && p.y <= 70
+}
+function cabinPatchCorridorCollision () {
+  const orig = bot.world.getBlock.bind(bot.world)
+  bot.world.getBlock = (pos) => {
+    const b = orig(pos)
+    if (b && b.type === 4029) {
+      const bx = Math.floor(pos.x)
+      const bz = Math.floor(pos.z)
+      if (bx >= -124 && bx <= -120 && bz >= 317 && bz <= 325 &&
+          pos.y >= 65 && pos.y <= 68) {
+        b.shapes = []
+      }
+    }
+    return b
+  }
+  return () => { bot.world.getBlock = orig }
+}
+async function cabinEnterBedroom () {
+  logEvent('cabin', 'entering bedroom via corridor')
+  suppressLookAt(15000)
+  await pathTo(CABIN_CORRIDOR_OUTSIDE, 2, 10000)
+  logEvent('cabin', 'at outside orientation, patching corridor collision')
+  const restore = cabinPatchCorridorCollision()
+  try {
+    await faceYaw(-Math.PI / 2) // east to lock onto corridor x
+    await walkUntilAxis({ axis: 'x', target: CABIN_CORRIDOR_X, direction: 'gte', maxMs: 5000 })
+    logEvent('cabin', 'on corridor line, entering corridor')
+    await faceYaw(Math.PI) // south through the corridor
+    await walkUntilAxis({ axis: 'z', target: CABIN_CORRIDOR_INSIDE.z, direction: 'gte', maxMs: 10000, maintainYaw: Math.PI })
+    logEvent('cabin', 'at inside orientation, walking to bed')
+    await faceYaw(Math.PI / 2) // west to the bed
+    await walkUntilAxis({ axis: 'x', target: CABIN_BED.x, direction: 'lte', maxMs: 5000 })
+  } finally { restore() }
+  logEvent('cabin', 'reached bedroom')
+}
+async function cabinExitBedroom () {
+  logEvent('cabin', 'exiting bedroom via corridor')
+  suppressLookAt(15000)
+  const restore = cabinPatchCorridorCollision()
+  try {
+    await faceYaw(-Math.PI / 2) // east to corridor line
+    await walkUntilAxis({ axis: 'x', target: CABIN_CORRIDOR_X, direction: 'gte', maxMs: 5000 })
+    await faceYaw(0) // north through corridor
+    await walkUntilAxis({ axis: 'z', target: CABIN_CORRIDOR_OUTSIDE.z, direction: 'lte', maxMs: 10000, maintainYaw: 0 })
+  } finally { restore() }
+  logEvent('cabin', 'cleared corridor, at outside orientation')
+  await pathTo(CABIN_STAIRS_BOTTOM, 2, 10000)
+  logEvent('cabin', 'exited bedroom')
+}
+async function cabinBedroomToDock () {
+  await cabinExitBedroom()
+  logEvent('cabin', 'heading to dock')
+  await pathTo(CABIN_DOCK, 2, 15000)
+  logEvent('cabin', 'at dock')
+}
+async function cabinDockToBedroom () {
+  logEvent('cabin', 'heading from dock to bedroom')
+  await pathTo(CABIN_STAIRS_BOTTOM, 2, 10000)
+  await cabinEnterBedroom()
+}
+async function cabinSleep () {
+  if (!insideCabinBedroom()) await cabinDockToBedroom()
+  const bed = bot.blockAt(new Vec3(CABIN_BED.x, CABIN_BED.y, CABIN_BED.z))
+  if (bed) {
+    try { await bot.activateBlock(bed) } catch (e) {
+      logEvent('cabin', `bed activate failed: ${e.message}`)
+    }
+    await sleep(1000)
+    if (bot.isSleeping) logEvent('cabin', 'sleeping in cabin bed')
+    else logEvent('cabin', 'bed activate did not result in sleep')
+  } else {
+    logEvent('cabin', 'no bed block found at expected position')
+  }
+}
+
 function penContainsXZ (x, z) {
   return x >= -282 && x <= -274 && z >= 575 && z <= 578
 }
@@ -640,6 +727,19 @@ async function tryAutoSleep () {
     return
   }
   if (goInsideBusy || taskBusy() || penTraversalBusy) return
+  // Near the ocean cabin? Sleep there instead of trying to walk home.
+  if (nearCabin() || insideCabinBedroom()) {
+    autoSleepAwayLogged = false
+    autoSleepBusy = true
+    try {
+      await cabinSleep()
+    } catch (e) {
+      logEvent('auto-sleep', `cabin sleep failed: ${e.message}`)
+    } finally {
+      autoSleepBusy = false
+    }
+    return
+  }
   // Away from home, do not sleep and do NOT walk back (user, 2026-07-30:
   // "DO NOT SHORTCUT"). The taskBusy() check above already protects the walk
   // itself, but once a walk_route to the igloo ENDS, bedtime used to fire here
@@ -951,8 +1051,8 @@ claude.init({ logFn: logEvent })
 //                    simply silent (no timer-driven API calls). Reactive-only:
 //                    for boxes too small to run both a local model and the game.
 const CLAUDE_MODES = new Set(['claude', 'claude-super', 'claude-private'])
-const KNOWN_BRAIN_MODES = new Set(['local', 'remote', ...CLAUDE_MODES])
-let brainMode = (process.env.BRAIN_MODE || 'local').toLowerCase()
+const KNOWN_BRAIN_MODES = new Set(['local', 'remote', 'helm', ...CLAUDE_MODES])
+let brainMode = process.argv.includes('--helm') ? 'helm' : (process.env.BRAIN_MODE || 'local').toLowerCase()
 if (!KNOWN_BRAIN_MODES.has(brainMode)) {
   // A typo'd mode silently behaving as local would start the local LLM on a box that
   // can't afford it — fail loudly instead.
@@ -967,7 +1067,7 @@ const CLAUDE_PREFILTER = (process.env.CLAUDE_PREFILTER || 'local').toLowerCase()
 
 // Capability predicates (functions, so a runtime `brain` switch is honoured):
 const usesClaudeBrain = () => CLAUDE_MODES.has(brainMode)                         // chat via claude.brainChat
-const localOff = () => brainMode === 'claude-super' || brainMode === 'claude-private' // local model never touched
+const localOff = () => brainMode === 'claude-super' || brainMode === 'claude-private' || brainMode === 'helm'
 const ambientViaClaude = () => brainMode === 'claude-super'                        // idle/ambient voice + diary via Claude
 
 // The persona's voice generator (the local LLM). Health-checked in the background;
@@ -985,6 +1085,14 @@ if (!localOff()) ensureLocalInited()
 if (brainMode === 'claude') logEvent('brain', `starting in claude mode (${claude.status().model}); prefilter=${CLAUDE_PREFILTER}`)
 else if (brainMode === 'claude-super') logEvent('brain', `starting in claude-super mode (${claude.status().superModel}) — local model off, full ambient + diary via Claude`)
 else if (brainMode === 'claude-private') logEvent('brain', `starting in claude-private mode (${claude.status().superModel}) — local model off, reactive only`)
+else if (brainMode === 'helm') {
+  logEvent('brain', 'starting in helm mode — operator has full control, autonomous behaviors disabled')
+  bot.once('spawn', () => {
+    autoSleepEnabled = false
+    autoGreetEnabled = false
+    idleWanderEnabled = false
+  })
+}
 else if (brainMode === 'remote') logEvent('brain', 'starting in remote mode (chat driven externally via bot-ctl)')
 
 // Autonomous/ambient persona text (idle remarks, greet flavour, music-journal
@@ -1009,6 +1117,7 @@ function expressiveStory (opts, { reactive = false } = {}) {
     if (!humanPlayersOnline()) return Promise.resolve(null)
     return claude.generateStory(opts)
   }
+  if (localOff()) return Promise.resolve(null)
   return llm.generateStory(opts)
 }
 
@@ -1133,7 +1242,7 @@ async function tryWriteDiary () {
     context,
     lines: 4,
     maxChars: 240,
-  }).catch(e => { storyErr = e; return null })
+  }, { reactive: true }).catch(e => { storyErr = e; return null })
   if (!entry || !entry.length) {
     // Say which of the two it was. The old wording ("LLM unavailable or passed")
     // read as benign and hid a hard API 400 for 15 days — see the temperature
@@ -2041,7 +2150,7 @@ function verifyAtOrientation (pt, xzTol = 1.5, yTol = 0.6) {
 async function walkUntilAxis ({
   axis, target, direction = 'gte', maxMs = 8000, bailOnDamage = false,
   unstickStrafe = null, unstickMs = 200, snagWindow = 500, snagThreshold = 0.1,
-  thresholdStrafe = null,
+  thresholdStrafe = null, maintainYaw = null,
 }) {
   const startHp = bot.health ?? 20
   const startDeaths = deathCount
@@ -2050,6 +2159,7 @@ async function walkUntilAxis ({
     const startPos = bot.entity?.position
     const startX = startPos ? +startPos.x.toFixed(3) : 0
     const startZ = startPos ? +startPos.z.toFixed(3) : 0
+    if (maintainYaw != null) bot.look(maintainYaw, 0, true)
     bot.setControlState('forward', true)
     let lastProgressVal = bot.entity?.position?.[axis] ?? 0
     let lastProgressAt = start
@@ -2067,6 +2177,8 @@ async function walkUntilAxis ({
         bot.setControlState(strafeActive, false)
         strafeActive = null
       }
+
+      if (maintainYaw != null) bot.look(maintainYaw, 0, true)
 
       // Proactive threshold pulse (one-shot) — see doc comment above.
       if (thresholdStrafe && !thresholdFired && !strafeActive) {
@@ -2126,10 +2238,13 @@ async function walkUntilAxis ({
 
 function hostilesNearby (radius = 16) {
   if (!bot.entity) return []
+  // When mounted as a passenger, bot.entity.position is stale (1.12.2 doesn't
+  // update it).  Use the vehicle's position so hostile detection still works.
+  const ref = (bot.vehicle?.position) || bot.entity.position
   return Object.values(bot.entities).filter(e =>
     e !== bot.entity && HOSTILE_NAMES.has(e.name) &&
-    Math.abs(e.position.y - bot.entity.position.y) <= 5 &&
-    e.position.distanceTo(bot.entity.position) <= radius
+    Math.abs(e.position.y - ref.y) <= 5 &&
+    e.position.distanceTo(ref) <= radius
   )
 }
 
@@ -2360,6 +2475,7 @@ const POND_RADIUS = 6
 const BOAT_CRUISE_SPEED = 0.15
 
 let isIdleBoating = false
+let isCtlBoatSteering = false
 async function runIdleBoating () {
   isIdleBoating = true
   try { return await _runIdleBoating() } finally { isIdleBoating = false }
@@ -2524,13 +2640,17 @@ async function tryPassengerObservation () {
 function checkVehicleStateChange () {
   // Stale vehicle reference: mineflayer sometimes keeps bot.vehicle set after
   // a server-side dismount or across respawns. If the entity is gone from the
-  // world or more than 6 blocks away, clear it so context injection doesn't
-  // tell Claude we're in a boat that doesn't exist.
-  if (bot.vehicle && !isIdleBoating) {
+  // world or more than 4 blocks away, clear it — a real passenger is never
+  // that far from their vehicle.
+  if (bot.vehicle && !isIdleBoating && !isCtlBoatSteering) {
     const v = bot.vehicle
     const gone = !v.isValid || !bot.entities[v.id]
-    const far = !gone && bot.entity?.position && v.position
-      && bot.entity.position.distanceTo(v.position) > 6
+    // 1.12.2 does not update bot.entity.position for boat passengers, so
+    // the distance check always fires on a legitimate mount.  Skip it when
+    // passenger-observe is active (set by ride_boat / startPassengerObserving).
+    const far = !gone && !passengerObserveTimer
+      && bot.entity?.position && v.position
+      && bot.entity.position.distanceTo(v.position) > 4
     if (gone || far) {
       logEvent('vehicle', `clearing stale vehicle ref (${gone ? 'entity gone' : 'too far'})`)
       bot.vehicle = null
@@ -2572,8 +2692,9 @@ async function tryIdleWander () {
   if (!idleWanderEnabled) return
   if (idleWanderBusy()) return
 
+  const atCabin = nearCabin() || insideCabinBedroom()
   const homeDist = distanceFromHome()
-  if (homeDist > HOME_RADIUS) {
+  if (!atCabin && homeDist > HOME_RADIUS) {
     logEvent('idle-wander', `${homeDist.toFixed(0)}b from home — standing by (idle wander is home-local; use walk_route to come back)`)
     return
   }
@@ -2581,6 +2702,7 @@ async function tryIdleWander () {
   // Bedtime overrides wandering. If the bot is outside, the only idle move is
   // homeward; if already inside, let auto-sleep handle the bed itself.
   if (isBedtime()) {
+    if (atCabin) return
     if (inPen()) {
       logEvent('idle-wander', 'bedtime override — leaving pen')
       await runLeavePen().catch(e => logEvent('idle-wander', `leave-pen failed: ${e.message}`))
@@ -2591,6 +2713,8 @@ async function tryIdleWander () {
     }
     return
   }
+
+  if (atCabin) return
 
   let action = randomIdleWanderTarget()
   try {
@@ -2715,12 +2839,18 @@ function describeWhereabouts () {
   if (insideHouse()) return 'inside the house'
   if (inPen()) return 'in the sheep pen'
   if (inWheatField()) return 'standing in the wheat field'
+  if (insideCabinBedroom()) return 'in the bedroom of the ocean cabin'
+  if (nearCabin()) return 'at the ocean cabin'
+  if (distanceFromHome() > HOME_RADIUS) return 'far from the farm, out exploring'
   return 'outside on the farm'
 }
 
 function buildExpressiveContext (situation) {
   const parts = []
+  const atCabin = nearCabin() || insideCabinBedroom()
+  const farFromHome = !atCabin && distanceFromHome() > HOME_RADIUS
   parts.push(`It is ${describeTimeOfDay()}${bot.isRaining ? ' and raining' : ''}. You are ${describeWhereabouts()}.`)
+  if (farFromHome) parts.push('You are too far from the farm to see it. You CANNOT see the wheat field, the sheep pen, the farmhouse, the jukebox, or any of the farm surroundings. You know the farm from memory and agricultural instinct — you may sense that crops might need tending based on experience — but you cannot see or directly observe anything at the farm from here.')
   if (worldContext) parts.push(`Shared world facts for grounding. Use these facts naturally when relevant; do not recite them as a list. Avoid inventing conflicting details.\n${worldContext}`)
   // Vitals and pockets, so questions like "how are you", "where are you",
   // "what are you carrying" get answered truthfully, in voice — these were
@@ -2732,7 +2862,7 @@ function buildExpressiveContext (situation) {
   // Self-knowledge: brain mode + journal, so questions like "what brain are
   // you running?" or "do you keep a journal?" get truthful in-voice answers
   // instead of confabulation.
-  parts.push(`About yourself: your voice and chat-understanding currently run in "${brainMode}" brain mode (local = your own small model on the farm; claude = a large cloud model for chat while the small model handles idle voice; claude-super = the large cloud model does everything, including your idle voice and diary; claude-private = the large cloud model, and you only speak when spoken to; remote = driven by an outside operator). The farm keeps a journal — a shared vault of notes on places, procedures, recipes, and observations that the operator maintains — and you write your own diary entry in it each night at bedtime. You may talk about your brain mode, the journal, and your diary plainly when asked.`)
+  parts.push(`About yourself: your voice and chat-understanding currently run in "${brainMode}" brain mode (local = your own small model on the farm; claude = a large cloud model for chat while the small model handles idle voice; claude-super = the large cloud model does everything, including your idle voice and diary; claude-private = the large cloud model, and you only speak when spoken to; remote = driven by an outside operator; helm = the operator is directly at the controls, all autonomous behaviors off). The farm keeps a journal — a shared vault of notes on places, procedures, recipes, and observations that the operator maintains — and you write your own diary entry in it each night at bedtime. You may talk about your brain mode, the journal, and your diary plainly when asked.`)
   const inv = (bot.inventory?.items() || []).sort((a, b) => b.count - a.count).slice(0, 5).map(i => `${i.count}× ${i.name}`)
   parts.push(inv.length ? `Carrying: ${inv.join(', ')}.` : 'Your pockets are empty.')
   if (activeTask.name) parts.push(`You are in the middle of: ${activeTask.name}.`)
@@ -2772,7 +2902,7 @@ function buildExpressiveContext (situation) {
   if (followTarget) parts.push(`You are following ${followTarget} around.`)
   if (bot.vehicle && bot.vehicle.name === 'boat' && !isIdleBoating) parts.push('You are riding along as a passenger in a boat — just enjoying the trip.')
   const sheepDesc = describeNamedSheep()
-  if (sheepDesc && (inPen() || !insideHouse())) parts.push(`Named sheep on the farm: ${sheepDesc}.`)
+  if (sheepDesc && !farFromHome && (inPen() || !insideHouse())) parts.push(`Named sheep on the farm: ${sheepDesc}.`)
   const others = Object.keys(bot.players || {}).filter(n => n !== bot.username)
   if (others.length) parts.push(`Also on the server: ${others.join(', ')}.`)
   if (recentChat.length) parts.push(`Recent chat:\n${recentChat.join('\n')}`)
@@ -2880,7 +3010,13 @@ async function tryAmbientAction () {
 
       : inWheatField()
         ? 'You are standing in the wheat field. You can see: wheat rows, the sky, the farmhouse in the distance. You cannot see the sheep pen or the house interior from here.'
-        : 'You are outside on the open farm. You can see: the farmhouse, the field, the sky, trees. You cannot see the house interior from here.'
+        : insideCabinBedroom()
+          ? 'You are in the bedroom of the ocean cabin. You can see: beds, the corridor, the sea outside the windows. You CANNOT see the farm, the wheat field, or the sheep from here.'
+          : nearCabin()
+            ? 'You are at the ocean cabin by the sea. You can see: the dock, the water, the cabin structure, the sky. You CANNOT see the farm, the wheat field, or the sheep from here.'
+            : distanceFromHome() > HOME_RADIUS
+              ? 'You are far from the farm. You CANNOT see the wheat field, the sheep, the farmhouse, or any farm surroundings. Describe only what might be in your immediate surroundings — unfamiliar terrain, the sky, the weather.'
+              : 'You are outside on the open farm. You can see: the farmhouse, the field, the sky, trees. You cannot see the house interior from here.'
   await impulseExpressive('ambient',
     `${ambientLocation} Nothing in particular is happening — a quiet moment. Offer one small idle action or passing thought, written as action text (it renders after your name, like "watches a cloud drift overhead"). Only reference things you can actually see from where you are.`,
     { me: true })
@@ -3067,20 +3203,20 @@ const WHEAT_CROP_ROWS = [
 const WHEAT_READY_CHECK_MS = 5000
 const WHEAT_READY_ALERT_MS = 120000
 const WHEAT_READY_LINES = [
-  'The wheat is fully grown and ready for harvest.',
-  'Harvest reminder: the wheat is ready.',
-  'Tiny farming bulletin: every wheat row looks ready.',
-  'The field is golden. That means harvest time.',
-  'Wheat status: ripe, waiting, dramatically patient.',
-  'By the way, the wheat is ready for harvest.',
-  'Fully grown wheat detected. Very agricultural. Very urgent.',
-  'The wheat has finished its little sun-powered project.',
+  'I think the wheat should be ready by now.',
+  'Harvest reminder: the wheat is probably ready.',
+  'Farming instinct says the wheat has had enough time to grow.',
+  'I have a feeling the wheat is ready for harvest.',
+  'If my timing is right, the wheat should be fully grown.',
+  'The wheat ought to be ready. Want me to go check?',
+  'My farmer sense is tingling. Harvest time, maybe?',
+  'It has been long enough — the wheat is probably ripe.',
 ]
 const WHEAT_READY_NIGHT_LINES = [
-  'It is bedtime now, but the wheat is ready for harvest in the morning.',
-  'Night has arrived. The wheat is ready, though. Morning job.',
-  'Sleep first, harvest later. The wheat is fully grown.',
-  'The wheat is ready, but so are the beds. Morning harvest recommended.',
+  'It is bedtime now, but I think the wheat will be ready in the morning.',
+  'Night has arrived. The wheat should be ready by morning.',
+  'Sleep first, harvest later. I think the wheat is done growing.',
+  'The wheat is probably ready, but so are the beds. Morning harvest.',
 ]
 const WHEAT_SNOOZE_ACK_LINES = [
   'Got it. Wheat alert snoozed until the next growth cycle.',
@@ -3414,6 +3550,8 @@ function tryWheatReadyAlert () {
   }
 
   if (wheatReadyState.snoozed) return
+  const homeDist = distanceFromHome()
+  if (!Number.isFinite(homeDist) || homeDist > HOME_RADIUS) return
   const now = Date.now()
   if (now - wheatReadyState.lastAlertAt < WHEAT_READY_ALERT_MS) return
   wheatReadyState.lastAlertAt = now
@@ -8878,12 +9016,10 @@ const CHAT_HANDLERS = [
     },
   },
   {
-    // "Roz, come home" / "come back" / "walk home". Walks the route in reverse,
-    // which is what keeps the return over the roof garden and down to the field
-    // from the north instead of shortcutting through the modded lights and the
-    // sheep pen (user, 2026-07-30).
+    // "Roz, come home" / "go home" / "walk home" / "come back home".
+    // Must mention "home" or "the farm" — bare "come back" is too broad.
     name: 'walk_home',
-    pattern: /\b(?:come|walk|head|get|go|make\s+your\s+way)\s+(?:back\s+)?home\b|\bcome\s+back\b/i,
+    pattern: /\b(?:come|walk|head|get|go|make\s+your\s+way)\s+(?:back\s+)?(?:home|to\s+the\s+farm)\b/i,
     handler: (user) => {
       if (taskBusy()) { bot.chat(`I am in the middle of ${activeTask.name} — tell me to stop first.`); return }
       const away = distanceFromHome()
@@ -9264,9 +9400,10 @@ const CHAT_INTENTS = {
   },
   go_outside: { hint: 'leave the house / go outdoors', run: () => { abortGen++; return runGoOutside() } },
   go_inside: {
-    hint: 'come inside the house / come home',
+    hint: 'come inside the house / go indoors / come home',
     run: () => {
       abortGen++
+      if (nearCabin() || insideCabinBedroom()) return cabinEnterBedroom()
       return (async () => { if (inPen()) await runLeavePen(); await runGoInside() })()
     },
   },
@@ -9620,6 +9757,7 @@ function buildClaudeBrainSystemPrompt () {
     'Decision rules:\n' +
     '- If the message is not addressed to you, is noise, or you have nothing genuine to add: {"chat":null,"actions":[],"emote":null}\n' +
     '- If addressed to you with a task request, include both a chat reply AND the matching action.\n' +
+    '- Your reply should be grounded in what you are actually doing and experiencing RIGHT NOW. The context message tells you your current task, vitals, inventory, and surroundings — weave those naturally into your conversation when relevant. If you are harvesting potatoes, say so; if you are hungry, mention it; if you are keeping the fire, let that color your reply. A bot that chats obliviously while working feels broken.\n' +
     '- Stay in character. Keep it wholesome. Never discuss real-world topics.\n' +
     '- NEVER say "task acquired", "processing", "initiating", "commencing", or any robotic task-language. You are a character with warmth — speak like one.\n' +
     '- Do not take orders from other robots — only respond conversationally to them.\n' +
@@ -9649,6 +9787,7 @@ function buildClaudeChatHistory () {
 
 async function routeChat (username, message, { namedMe, fromBot }) {
   if (quietMode) return // quiet hours: no LLM/API engagement at all
+  if (brainMode === 'helm') return // operator drives all chat from the terminal
   if (fromBot && !botExchangeAllows(username)) return
 
   if (brainMode === 'remote') {
@@ -10491,12 +10630,19 @@ async function lookAtSun () {
   return true
 }
 
-// React to damage: flee-lite. If something hurts us, stop whatever we're doing,
-// log a sentiment so the user sees it, and let auto-sleep/etc take over.
+// React to damage: immediate hostile kill + flee-lite. Any damage clears a
+// stale vehicle ref (if we're being hit, we're not safely in a boat) and
+// fires an emergency /kill for ALL hostiles — known and modded — rather than
+// waiting for the 2.5s periodic watchdog, which can miss when entity position
+// is stale after a botched vehicle mount.
 let moddedHostileKillCooldown = 0
 bot.on('entityHurt', (entity) => {
   if (entity !== bot.entity) return
   logEvent('hurt', `HP now ${bot.health?.toFixed(0)}/20`)
+  if (bot.vehicle && !passengerObserveTimer) {
+    logEvent('vehicle', 'clearing vehicle ref — taking damage while "mounted"')
+    bot.vehicle = null
+  }
   if (bot.health <= 6) {
     bot.chat('Taking damage — breaking off!')
     bot.pathfinder.setGoal(null)
@@ -10504,7 +10650,14 @@ bot.on('entityHurt', (entity) => {
   }
   const now = Date.now()
   if (now - moddedHostileKillCooldown < 5000) return
-  if (hostilesNearby(16).length > 0) return
+  const hostiles = hostilesNearby(16)
+  if (hostiles.length > 0) {
+    moddedHostileKillCooldown = now
+    const types = [...new Set(hostiles.map(h => h.name))]
+    logEvent('hostile-watchdog', `emergency kill on damage — ${types.join(', ')}`)
+    for (const type of types) bot.chat(`/kill @e[type=${type},r=16]`)
+    return
+  }
   const unknowns = Object.values(bot.entities).filter(e =>
     e !== bot.entity && e.name === 'unknown' && e.type !== 'object' &&
     e.position.distanceTo(bot.entity.position) <= 16
@@ -10968,6 +11121,17 @@ function handleCommand (cmd) {
         brainMode = 'remote'
         logEvent('brain', 'switched to remote (chat driven externally via bot-ctl)')
         return { ok: true, mode: 'remote' }
+      }
+      if (newMode === 'helm') {
+        brainMode = 'helm'
+        autoSleepEnabled = false
+        autoGreetEnabled = false
+        idleWanderEnabled = false
+        abortGen++
+        bot.pathfinder.setGoal(null)
+        clearControlStates()
+        logEvent('brain', 'switched to helm — operator has full control, autonomous behaviors disabled')
+        return { ok: true, mode: 'helm', autoSleep: false, autoGreet: false, idleWander: false }
       }
       return { ok: true, mode: brainMode, quiet: quietMode, local: localInited ? llm.status() : { off: true }, claude: claude.status(), prefilter: brainMode === 'claude' ? CLAUDE_PREFILTER : 'none', localOff: localOff(), ambientViaClaude: ambientViaClaude() }
     }
@@ -11574,7 +11738,10 @@ function handleCommand (cmd) {
     case 'block_at_abs': {
       const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
       if (!b) return { ok: false, error: 'no block' }
-      return { ok: true, name: b.name, metadata: b.metadata, type: b.type, x: b.position.x, y: b.position.y, z: b.position.z }
+      return { ok: true, name: b.name, metadata: b.metadata, type: b.type, boundingBox: b.boundingBox, shapes: b.shapes, x: b.position.x, y: b.position.y, z: b.position.z }
+    }
+    case 'recent_chat': {
+      return { ok: true, lines: recentChat.slice() }
     }
     case 'time': {
       const t = bot.time || {}
@@ -11827,6 +11994,7 @@ function handleCommand (cmd) {
       }
       ;(async () => {
         if (wasTask) await sleep(300)
+        if (nearCabin() || insideCabinBedroom()) { await cabinEnterBedroom(); return }
         if (inPen()) await runLeavePen()
         await runGoInside()
       })().catch(e => logEvent('go-inside-error', e.message))
@@ -11845,6 +12013,26 @@ function handleCommand (cmd) {
     case 'go_out_of_pen': {
       if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
       runGoOutOfPen().catch(e => logEvent('go-out-of-pen-error', e.message))
+      return { ok: true, started: true }
+    }
+    case 'cabin_to_bed': {
+      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+      cabinSleep().catch(e => logEvent('cabin-error', e.message))
+      return { ok: true, started: true }
+    }
+    case 'cabin_to_dock': {
+      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+      cabinBedroomToDock().catch(e => logEvent('cabin-error', e.message))
+      return { ok: true, started: true }
+    }
+    case 'cabin_enter_bedroom': {
+      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+      cabinEnterBedroom().catch(e => logEvent('cabin-error', e.message))
+      return { ok: true, started: true }
+    }
+    case 'cabin_exit_bedroom': {
+      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+      cabinExitBedroom().catch(e => logEvent('cabin-error', e.message))
       return { ok: true, started: true }
     }
     case 'door_strafe': {
@@ -11869,6 +12057,14 @@ function handleCommand (cmd) {
         .then(() => sleep(500))
         .then(() => {
           const mounted = !!bot.vehicle
+          if (mounted && bot.entity?.position) {
+            const gap = bot.entity.position.distanceTo(target.position)
+            if (gap > 4) {
+              logEvent('ride-boat', `phantom mount — bot is ${gap.toFixed(1)} blocks from boat ${target.id}, clearing vehicle ref`)
+              bot.vehicle = null
+              return { ok: false, error: `mount appeared to succeed but bot is ${gap.toFixed(1)} blocks from boat — likely a phantom mount` }
+            }
+          }
           logEvent('ride-boat', `${mounted ? 'mounted' : 'mount unclear'} boat ${target.id} at ${posStr(target.position)}`)
           return { ok: true, mounted, boat_id: target.id, x: +target.position.x.toFixed(1), y: +target.position.y.toFixed(1), z: +target.position.z.toFixed(1) }
         })
@@ -11882,10 +12078,15 @@ function handleCommand (cmd) {
       return doMount()
     }
     case 'steer_boat': {
-      // 1.12.2 boat steering: send steer_boat (paddle animation) + vehicle_move
-      // (actual position) since mineflayer has no boat physics.
-      // args: { direction?: 'forward'|'left'|'right', duration_ms?: 3000, speed?: 0.15 }
+      // DEPRECATED for forward movement — use steer_boat_to instead, which
+      // computes heading to the target each step and can't go backwards.
+      // This action is kept for left/right turning only.
+      // args: { direction?: 'forward'|'left'|'right', duration_ms?: 3000, speed?: 0.15, yaw?: <radians> }
       if (!bot.vehicle) return { ok: false, error: 'not in a vehicle' }
+      if ((args.direction || 'forward') === 'forward' && args.x !== undefined) {
+        return { ok: false, error: 'use steer_boat_to for point-to-point steering' }
+      }
+      isCtlBoatSteering = true
       const dir = args.direction || 'forward'
       const dur = Number(args.duration_ms ?? 3000)
       const speed = Number(args.speed ?? 0.15)
@@ -11894,7 +12095,9 @@ function handleCommand (cmd) {
       const turnRate = 0.04
       const v = bot.vehicle
       let bx = v.position.x, by = v.position.y, bz = v.position.z
-      let yaw = bot.entity.yaw
+      // Accept an explicit yaw arg (radians) to avoid the bot.entity.yaw bug
+      // where the player yaw doesn't match the boat's visual heading.
+      let yaw = args.yaw != null ? Number(args.yaw) : bot.entity.yaw
       const startPos = { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }
       const interval = setInterval(() => {
         if (dir === 'left') yaw += turnRate
@@ -11907,11 +12110,90 @@ function handleCommand (cmd) {
       }, 50)
       return sleep(dur).then(() => {
         clearInterval(interval)
+        isCtlBoatSteering = false
         client.write('steer_boat', { leftPaddle: false, rightPaddle: false })
         const vEnd = bot.vehicle
         const endPos = vEnd ? { x: +vEnd.position.x.toFixed(1), y: +vEnd.position.y.toFixed(1), z: +vEnd.position.z.toFixed(1) } : null
         logEvent('steer-boat', `steered ${dir} for ${dur}ms from ${posStr(startPos)} to ${endPos ? posStr(endPos) : '?'}`)
         return { ok: true, direction: dir, start: startPos, end: endPos || { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }, still_mounted: !!vEnd }
+      })
+    }
+    case 'steer_boat_to': {
+      // Steer boat toward a target coordinate using the proven idle-boating pattern.
+      // args: { x, z, speed?: 0.15, range?: 3 }
+      if (!bot.vehicle) return { ok: false, error: 'not in a vehicle' }
+      isCtlBoatSteering = true
+      const tx = Number(args.x), tz = Number(args.z)
+      const spd = Number(args.speed ?? 0.15)
+      const rng = Number(args.range ?? 3)
+      const v = bot.vehicle
+      let bx = v.position.x, by = v.position.y, bz = v.position.z
+      const startPos = { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }
+      const maxSteps = Math.ceil(Math.hypot(tx - bx, tz - bz) / spd) + 20
+      let stepCount = 0
+      return new Promise((resolve) => {
+        const finish = (reached) => {
+          isCtlBoatSteering = false
+          client.write('steer_boat', { leftPaddle: false, rightPaddle: false })
+          const vEnd = bot.vehicle
+          const endPos = vEnd ? { x: +vEnd.position.x.toFixed(1), y: +vEnd.position.y.toFixed(1), z: +vEnd.position.z.toFixed(1) } : null
+          logEvent('steer-boat', `steered to (${tx}, ${tz}) from ${posStr(startPos)} → ${endPos ? posStr(endPos) : '?'} in ${stepCount} steps`)
+          resolve({ ok: true, target: { x: tx, z: tz }, start: startPos, end: endPos || { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }, reached, still_mounted: !!vEnd })
+        }
+        const interval = setInterval(() => {
+          if (!bot.vehicle || stepCount >= maxSteps) {
+            clearInterval(interval)
+            finish(false)
+            return
+          }
+          const toDx = tx - bx, toDz = tz - bz
+          if (Math.hypot(toDx, toDz) < rng) {
+            clearInterval(interval)
+            finish(true)
+            return
+          }
+          const yaw = Math.atan2(-toDx, toDz)
+          bx += -Math.sin(yaw) * spd
+          bz += Math.cos(yaw) * spd
+          client.write('steer_boat', { leftPaddle: true, rightPaddle: true })
+          client.write('vehicle_move', { x: bx, y: by, z: bz, yaw: -(yaw * 180 / Math.PI), pitch: 0 })
+          stepCount++
+        }, 50)
+      })
+    }
+    case 'steer_boat_route': {
+      if (!bot.vehicle) return { ok: false, error: 'not in a vehicle' }
+      const waypoints = args.waypoints
+      if (!Array.isArray(waypoints) || waypoints.length === 0) return { ok: false, error: 'waypoints must be a non-empty array of {x, z}' }
+      isCtlBoatSteering = true
+      const spd = Number(args.speed ?? 0.15)
+      const rng = Number(args.range ?? 5)
+      const v = bot.vehicle
+      let bx = v.position.x, by = v.position.y, bz = v.position.z
+      const startPos = { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }
+      let wpIdx = 0
+      return new Promise((resolve) => {
+        const finish = (reached) => {
+          isCtlBoatSteering = false
+          client.write('steer_boat', { leftPaddle: false, rightPaddle: false })
+          const vEnd = bot.vehicle
+          const endPos = vEnd ? { x: +vEnd.position.x.toFixed(1), y: +vEnd.position.y.toFixed(1), z: +vEnd.position.z.toFixed(1) } : null
+          logEvent('steer-boat', `route ${reached ? 'complete' : 'aborted'} at wp ${wpIdx}/${waypoints.length}`)
+          resolve({ ok: true, start: startPos, end: endPos || { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }, reached, waypoint: wpIdx, total: waypoints.length, still_mounted: !!vEnd })
+        }
+        const interval = setInterval(() => {
+          if (!bot.vehicle) { clearInterval(interval); finish(false); return }
+          if (wpIdx >= waypoints.length) { clearInterval(interval); finish(true); return }
+          const wp = waypoints[wpIdx]
+          const tx = Number(wp.x), tz = Number(wp.z)
+          const toDx = tx - bx, toDz = tz - bz
+          if (Math.hypot(toDx, toDz) < rng) { wpIdx++; return }
+          const yaw = Math.atan2(-toDx, toDz)
+          bx += -Math.sin(yaw) * spd
+          bz += Math.cos(yaw) * spd
+          client.write('steer_boat', { leftPaddle: true, rightPaddle: true })
+          client.write('vehicle_move', { x: bx, y: by, z: bz, yaw: -(yaw * 180 / Math.PI), pitch: 0 })
+        }, 50)
       })
     }
     case 'exit_boat': {

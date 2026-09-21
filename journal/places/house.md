@@ -34,6 +34,10 @@ The safe space. Auto-sleep is enabled inside this bounding box at `timeOfDay >= 
 - Pathfinder occasionally lands the bot on top of a chest (y ≈ 65.5 instead of 65.0). Verify `y ≈ 65.0` before any door procedure.
 - [[charge-pad]] at (-266, 65, 574) in the SE corner — modded block that traps the bot. Avoid wander/pathfind routes through this corner.
 
+## Harbor dock
+- **Ocean cabin dock**: (-127, 63, 348) — end of the dock in the harbor. Major reference point for boat arrivals/departures. See [[boat-route-new-home]].
+
 ## See also
 - [[yaw-convention]]
 - [[orientation-blocks]]
+- [[spawn-station]] — train station at world spawn, connects to this area
