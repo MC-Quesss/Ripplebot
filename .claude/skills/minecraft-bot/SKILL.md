@@ -30,6 +30,53 @@ Use `run_in_background: true`. Wait ~14s for spawn. Confirm with `./bot-ctl '{"a
 
 If already running (`lsof -i :25580` or the pos check succeeds), don't launch another.
 
+### Helm mode
+
+When the user says **"helm mode"**, **"start in helm mode"**, or similar, start the bot with `--helm`:
+
+```
+node bot.js --helm > /dev/null 2>&1 &
+```
+
+This disables the Claude API brain, chat routing, auto-sleep, auto-greet, and idle wander — the operator (you) has full control. **You are the only one interpreting chat and issuing commands.** The bot will not respond to in-game chat on its own.
+
+If the bot is already running, switch without restarting: `./bot-ctl '{"action":"brain","args":{"mode":"helm"}}'`
+
+**In helm mode you MUST:**
+1. Set up a live `Monitor` on `bot.log` (filter for `[chat]`, `[death]`, `[hurt]`, `[sleep]`, `[task]`, `[player-joined]`, `[player-left]`, etc.) so you see events in real-time — not periodic `tail` polling.
+2. **DIRECTIVE — arm the bedtime alarm at launch, in the same turn as the log monitor. Not optional, never deferred.** You only get a turn when an event arrives, so "I'll check the time periodically" never happens — players have had to send Roz to bed themselves (2026-09-24, twice in one session). Start this second `Monitor` with `timeout_ms: 1800000`:
+   ```
+   cd <repo>; last=""; while true; do t=$(./bot-ctl '{"action":"time"}' 2>/dev/null); tod=$(echo "$t" | sed -n 's/.*"timeOfDay":\([0-9]*\).*/\1/p'); day=$(echo "$t" | sed -n 's/.*"day":\([0-9]*\).*/\1/p'); if [ -n "$tod" ] && [ "$tod" -ge 12550 ] && [ "$tod" -lt 23000 ] && [ "$day" != "$last" ]; then echo "BEDTIME approaching: day $day tick $tod"; last="$day"; fi; sleep 20; done
+   ```
+   The 12550 threshold is deliberate: beds reject before ~12541, so an earlier alarm makes all three beds bounce. When it fires, act immediately: finish or stop the current thing, get Roz inside, send `sleep`. When either monitor expires (30-min cap), **re-arm it in that same turn** — a lapsed alarm is the same failure as no alarm.
+3. Manage bedtime. Use `{"action":"sleep"}` — it cycles through all 3 farm beds (or cabin bed if at the cabin), handles occupied beds automatically, and routes through `pathTo()` for corridor/pen safety. Get the bot inside first (`come_inside` or `cabin_enter`), then send `sleep`.
+4. Interpret player chat from the monitor stream and translate to bot-ctl commands — the bot's brain is off.
+
+### Oceanside orientation — critical do's and don'ts
+
+Read this every session. These are hard-won lessons from deaths and failures.
+
+**Night/sleep mechanics:**
+- When 50%+ of players/bots on the server sleep, the night **skips instantly** and everyone wakes up. After sending `sleep`, check `time` on the next turn — if it's daytime, Roz is already awake. Never keep reporting "Roz is sleeping" without checking.
+- Bedtime starts at tick 12500. **Proactively** check `time` and send Roz to bed — don't wait for the user to remind you. Check every few minutes of real time.
+- There are **3 beds** at the farm house: primary (-268,65,569), left (-269,65,569), right (-267,65,569). Private usually takes the primary. The `sleep` command cycles through all three automatically.
+- Beds reject activation during daytime — that's normal, not an error.
+
+**Navigation safety — deaths happen here:**
+- **NEVER skip the ocean cabin corridor procedure.** The cabin bedroom has invisible modded walls (type 4029). The ONLY safe path is the 1-block-wide corridor at x=-122. Walk far enough north (z=314) before turning. `pathTo()` handles this automatically via the exit-first rule.
+- **NEVER use `control forward` for door traversal** — use `walk_until` or `pathfind`. Duration-based forward-push has killed Roz by suffocation multiple times.
+- **Check `time` before sending Roz outside.** Don't send her out at night — hostile mobs.
+- Pathfinder gets stuck on modded blocks with empty names. If pathfind status shows identical `pos` for 3+ polls, it's stuck — `pathfind_stop` and ask the user.
+
+**Position awareness:**
+- After boat steering (`steer_boat_to`/`steer_boat_route`), position is synced automatically, but verify with `pos` before trusting `insideHouse()`/`nearCabin()` checks.
+- `HOME_RADIUS` is 60 blocks from farm house center. Food-safety and restock refuse to operate beyond this — that's intentional, not a bug.
+
+**Chat and behavior:**
+- In helm mode, Roz has no voice. **You** speak for her via `say`. Keep it in character — curious, warm, a little dry.
+- Never wrap spoken dialog in `/me` — that's for actions only. Bare machine dot-codes (`.n`, `.c`) as `/me` are fine.
+- Never persist player chat to journal or files. Retell as myth/legend if needed, no quotes.
+
 ## Prismarine Viewer
 
 When `express` is installed, the bot serves a web viewer at **http://localhost:3007** with camera toggle, look controls, and a say box. Check `[viewer]` in bot.log on startup — if it says "viewer disabled" a dependency is missing (`npm install`).
@@ -82,6 +129,8 @@ All commands are `./bot-ctl '<json>'`. Arguments go under an `args` object.
 | Deposit items into chest | `{"action":"deposit","args":{"x":-267,"y":67,"z":569,"names":["wheat"]}}` |
 | Toggle / query auto-sleep | `{"action":"auto_sleep","args":{"enabled":true}}` |
 | Toggle / query auto-greet | `{"action":"auto_greet","args":{"enabled":true}}` |
+| **Go to bed** (multi-bed fallback, helm mode) | `{"action":"sleep"}` |
+| Exit cabin bedroom via corridor | `{"action":"cabin_exit"}` |
 | Disconnect | `{"action":"quit"}` |
 
 ### Yaw reference

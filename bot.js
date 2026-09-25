@@ -636,22 +636,26 @@ function cabinPatchCorridorCollision () {
 }
 async function cabinEnterBedroom () {
   logEvent('cabin', 'entering bedroom via corridor')
-  suppressLookAt(15000)
-  await pathTo(CABIN_CORRIDOR_OUTSIDE, 2, 10000)
-  logEvent('cabin', 'at outside orientation, patching corridor collision')
-  const restore = cabinPatchCorridorCollision()
+  cabinTraversalBusy = true
   try {
-    await faceYaw(-Math.PI / 2) // east to lock onto corridor x
-    await walkUntilAxis({ axis: 'x', target: CABIN_CORRIDOR_X, direction: 'gte', maxMs: 5000 })
-    logEvent('cabin', 'on corridor line, entering corridor')
-    await faceYaw(Math.PI) // south through the corridor
-    await walkUntilAxis({ axis: 'z', target: CABIN_CORRIDOR_INSIDE.z, direction: 'gte', maxMs: 10000, maintainYaw: Math.PI })
-    logEvent('cabin', 'at inside orientation, walking to bed')
-    await faceYaw(Math.PI / 2) // west to the bed
-    await walkUntilAxis({ axis: 'x', target: CABIN_BED.x, direction: 'lte', maxMs: 5000 })
-  } finally { restore() }
-  logEvent('cabin', 'reached bedroom')
+    suppressLookAt(15000)
+    await pathTo(CABIN_CORRIDOR_OUTSIDE, 2, 10000)
+    logEvent('cabin', 'at outside orientation, patching corridor collision')
+    const restore = cabinPatchCorridorCollision()
+    try {
+      await faceYaw(-Math.PI / 2) // east to lock onto corridor x
+      await walkUntilAxis({ axis: 'x', target: CABIN_CORRIDOR_X, direction: 'gte', maxMs: 5000 })
+      logEvent('cabin', 'on corridor line, entering corridor')
+      await faceYaw(Math.PI) // south through the corridor
+      await walkUntilAxis({ axis: 'z', target: CABIN_CORRIDOR_INSIDE.z, direction: 'gte', maxMs: 10000, maintainYaw: Math.PI })
+      logEvent('cabin', 'at inside orientation, walking to bed')
+      await faceYaw(Math.PI / 2) // west to the bed
+      await walkUntilAxis({ axis: 'x', target: CABIN_BED.x, direction: 'lte', maxMs: 5000 })
+    } finally { restore() }
+    logEvent('cabin', 'reached bedroom')
+  } finally { cabinTraversalBusy = false }
 }
+let cabinTraversalBusy = false
 async function cabinExitBedroom () {
   logEvent('cabin', 'exiting bedroom via corridor')
   suppressLookAt(15000)
@@ -662,6 +666,9 @@ async function cabinExitBedroom () {
     await faceYaw(0) // north through corridor
     await walkUntilAxis({ axis: 'z', target: CABIN_CORRIDOR_OUTSIDE.z, direction: 'lte', maxMs: 10000, maintainYaw: 0 })
   } finally { restore() }
+  // Keep walking north past the wall line before the pathfinder turns —
+  // turning too early clips the invisible modded walls (user, 2026-09-23).
+  await walkUntilAxis({ axis: 'z', target: 314, direction: 'lte', maxMs: 5000, maintainYaw: 0 })
   logEvent('cabin', 'cleared corridor, at outside orientation')
   await pathTo(CABIN_STAIRS_BOTTOM, 2, 10000)
   logEvent('cabin', 'exited bedroom')
@@ -784,47 +791,44 @@ async function tryAutoSleep () {
   autoSleepBusy = true
   try {
     logEvent('auto-sleep', 'bedtime detected, heading to bed')
-    const BEDS = [
-      { label: 'primary', pos: BED_POS, approach: BED_APPROACH },
-      { label: 'left', pos: BED_POS_LEFT, approach: BED_APPROACH_LEFT },
-      { label: 'right', pos: BED_POS_RIGHT, approach: BED_APPROACH_RIGHT },
-    ]
-    for (const b of BEDS) {
-      if (bot.isSleeping) break
-      if (storyTimeActive) {
-        logEvent('auto-sleep', 'story in progress — deferring bedtime')
-        bot.pathfinder.setGoal(null)
-        break
-      }
-      bot.pathfinder.setGoal(new goals.GoalNear(b.approach.x, b.approach.y, b.approach.z, 1))
-      for (let i = 0; i < 20; i++) {
-        await new Promise(r => setTimeout(r, 500))
-        if (storyTimeActive) { bot.pathfinder.setGoal(null); break }
-        if (!bot.pathfinder.isMoving()) break
-      }
-      if (storyTimeActive) break
-      const bed = bot.blockAt(new Vec3(b.pos.x, b.pos.y, b.pos.z))
-      if (!bed) continue
-      try {
-        await bot.activateBlock(bed)
-      } catch (e) {
-        logEvent('auto-sleep', `${b.label} bed activate failed: ${e.message}`)
-        continue
-      }
-      // Give the server ~1s to report `isSleeping` so we know whether the
-      // activate actually put the bot in bed or silently failed (e.g. occupied).
-      await new Promise(r => setTimeout(r, 1000))
-      if (bot.isSleeping) {
-        logEvent('auto-sleep', `in ${b.label} bed`)
-        wasSleeping = true
-        break
-      }
-      logEvent('auto-sleep', `${b.label} bed not entered — trying next`)
-    }
+    await goToBed('auto-sleep')
   } catch (e) {
     logEvent('auto-sleep', `error: ${e.message}`)
   } finally {
     autoSleepBusy = false
+  }
+}
+
+const FARM_BEDS = [
+  { label: 'primary', pos: BED_POS, approach: BED_APPROACH },
+  { label: 'left', pos: BED_POS_LEFT, approach: BED_APPROACH_LEFT },
+  { label: 'right', pos: BED_POS_RIGHT, approach: BED_APPROACH_RIGHT },
+]
+async function goToBed (tag = 'sleep') {
+  for (const b of FARM_BEDS) {
+    if (bot.isSleeping) break
+    if (storyTimeActive) {
+      logEvent(tag, 'story in progress — deferring bedtime')
+      bot.pathfinder.setGoal(null)
+      break
+    }
+    await pathTo(b.approach, 1, 10000)
+    if (storyTimeActive) break
+    const bed = bot.blockAt(new Vec3(b.pos.x, b.pos.y, b.pos.z))
+    if (!bed) continue
+    try {
+      await bot.activateBlock(bed)
+    } catch (e) {
+      logEvent(tag, `${b.label} bed activate failed: ${e.message}`)
+      continue
+    }
+    await new Promise(r => setTimeout(r, 1000))
+    if (bot.isSleeping) {
+      logEvent(tag, `in ${b.label} bed`)
+      wasSleeping = true
+      break
+    }
+    logEvent(tag, `${b.label} bed not entered — trying next`)
   }
 }
 function tryMorningExclamation () {
@@ -2077,6 +2081,14 @@ async function faceNearestPlayer () {
 }
 
 async function pathTo (pt, range = 1, waitMs = 15000) {
+  // Cabin exit-first rule: the bedroom has invisible modded walls — the ONLY
+  // way out is the corridor. If the bot is inside and the target is outside,
+  // exit via the corridor before the pathfinder tries to route through walls.
+  if (!cabinTraversalBusy && insideCabinBedroom() &&
+      !(pt.x >= -130 && pt.x <= -120 && pt.z >= 320 && pt.z <= 328)) {
+    cabinTraversalBusy = true
+    try { await cabinExitBedroom() } finally { cabinTraversalBusy = false }
+  }
   // Pen exit-first rule (user, 2026-07-06): the pathfinder cannot route
   // through the pen gate, so a bot in the pen heading anywhere OUTSIDE the
   // pen must run the safe exit procedure before anything else — field duties,
@@ -2481,6 +2493,9 @@ async function runIdleBoating () {
   try { return await _runIdleBoating() } finally { isIdleBoating = false }
 }
 async function _runIdleBoating () {
+  if (insideCabinBedroom()) {
+    await cabinExitBedroom()
+  }
   if (insideHouse()) {
     await runGoOutside('the pond')
     if (insideHouse()) {
@@ -6440,6 +6455,11 @@ async function tryFoodSafety () {
       foodSafetyWindowCooldownUntil = Date.now() + 60_000
       return
     }
+    if (distanceFromHome() > HOME_RADIUS) {
+      logEvent('food-safety', `${distanceFromHome().toFixed(0)}b from home — too far for kitchen run, backing off 5 min`)
+      foodSafetyWindowCooldownUntil = Date.now() + 300_000
+      return
+    }
 
     logEvent('food-safety', `no food in inventory, heading to kitchen chest`)
     await ensureInsideHouse()
@@ -6611,6 +6631,10 @@ async function tryRestockSupplies () {
   const needsRestock = baked < RESTOCK_MIN
   const needsOverflow = baked > 128
   if (!needsRestock && !needsOverflow) return
+  if (distanceFromHome() > HOME_RADIUS) {
+    restockCooldownUntil = Date.now() + 300_000
+    return
+  }
 
   restockBusy = true
   try {
@@ -11223,23 +11247,15 @@ function handleCommand (cmd) {
       return { ok: true, x: rawState.x, y: rawState.y, z: rawState.z }
     }
     case 'pathfind': {
-      // args: { x, y, z, range? } — walk to a point. If range provided, GoalNear; else GoalBlock.
-      let { x, y, z, range } = args
-      x = Number(x); y = Number(y); z = Number(z)
-      const pfRange = range !== undefined ? Number(range) : 0
-      if (pfRange <= 1 && isPositionOccupied(new Vec3(x, y, z))) {
-        const offsets = [{x:1,z:0},{x:-1,z:0},{x:0,z:1},{x:0,z:-1}]
-        for (const off of offsets) {
-          if (!isPositionOccupied(new Vec3(x + off.x, y, z + off.z))) {
-            x += off.x; z += off.z; break
-          }
-        }
-      }
-      const goal = pfRange > 0
-        ? new goals.GoalNear(x, y, z, pfRange)
-        : new goals.GoalBlock(x, y, z)
-      bot.pathfinder.setGoal(goal)
-      return { ok: true, goal: `(${x},${y},${z}) range=${pfRange}` }
+      // Routes through pathTo() so all safety guards apply automatically:
+      // cabin corridor exit, pen exit, occupied-block avoidance.
+      const { x, y, z, range } = args
+      const px = Number(x), py = Number(y), pz = Number(z)
+      const pfRange = range !== undefined ? Number(range) : 1
+      pathTo({ x: px, y: py, z: pz }, pfRange, Number(args.timeout ?? 30000))
+        .then(ok => logEvent('pathfind', `pathTo (${px},${py},${pz}) range=${pfRange} → ${ok ? 'reached' : 'stopped'}`))
+        .catch(e => logEvent('pathfind', `pathTo (${px},${py},${pz}) failed: ${e.message}`))
+      return { ok: true, goal: `(${px},${py},${pz}) range=${pfRange}` }
     }
     case 'pathfind_status': {
       const g = bot.pathfinder.goal
@@ -11751,6 +11767,17 @@ function handleCommand (cmd) {
       if (typeof args.enabled === 'boolean') autoSleepEnabled = args.enabled
       return { ok: true, enabled: autoSleepEnabled, busy: autoSleepBusy, bedtime: isBedtime(), inside: insideHouse(), sleeping: !!bot.isSleeping }
     }
+    case 'sleep': {
+      if (bot.isSleeping) return { ok: true, already: true }
+      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+      if (!insideHouse() && !insideCabinBedroom()) return { ok: false, error: 'not inside' }
+      if (insideCabinBedroom()) {
+        cabinSleep().catch(e => logEvent('sleep', `cabin sleep failed: ${e.message}`))
+        return { ok: true, started: true, location: 'cabin' }
+      }
+      goToBed('sleep').catch(e => logEvent('sleep', `sleep failed: ${e.message}`))
+      return { ok: true, started: true, location: 'farm' }
+    }
     case 'auto_food': {
       if (typeof args.enabled === 'boolean') foodSafetyEnabled = args.enabled
       if (Number.isFinite(args.min)) foodSafetyMin = args.min
@@ -12000,6 +12027,12 @@ function handleCommand (cmd) {
       })().catch(e => logEvent('go-inside-error', e.message))
       return { ok: true, started: true, aborted: wasTask }
     }
+    case 'cabin_exit': {
+      if (!insideCabinBedroom()) return { ok: true, inside: false }
+      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+      cabinExitBedroom().catch(e => logEvent('cabin-exit-error', e.message))
+      return { ok: true, started: true }
+    }
     case 'go_boating': {
       if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
       runIdleBoating().catch(e => logEvent('go-boating-error', e.message))
@@ -12135,10 +12168,12 @@ function handleCommand (cmd) {
         const finish = (reached) => {
           isCtlBoatSteering = false
           client.write('steer_boat', { leftPaddle: false, rightPaddle: false })
-          const vEnd = bot.vehicle
-          const endPos = vEnd ? { x: +vEnd.position.x.toFixed(1), y: +vEnd.position.y.toFixed(1), z: +vEnd.position.z.toFixed(1) } : null
-          logEvent('steer-boat', `steered to (${tx}, ${tz}) from ${posStr(startPos)} → ${endPos ? posStr(endPos) : '?'} in ${stepCount} steps`)
-          resolve({ ok: true, target: { x: tx, z: tz }, start: startPos, end: endPos || { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }, reached, still_mounted: !!vEnd })
+          if (bot.entity) bot.entity.position.set(bx, by, bz)
+          if (bot.vehicle) bot.vehicle.position.set(bx, by, bz)
+          rawState.x = bx; rawState.y = by; rawState.z = bz
+          const endPos = { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }
+          logEvent('steer-boat', `steered to (${tx}, ${tz}) from ${posStr(startPos)} → ${posStr(endPos)} in ${stepCount} steps`)
+          resolve({ ok: true, target: { x: tx, z: tz }, start: startPos, end: endPos, reached, still_mounted: !!bot.vehicle })
         }
         const interval = setInterval(() => {
           if (!bot.vehicle || stepCount >= maxSteps) {
@@ -12176,10 +12211,14 @@ function handleCommand (cmd) {
         const finish = (reached) => {
           isCtlBoatSteering = false
           client.write('steer_boat', { leftPaddle: false, rightPaddle: false })
-          const vEnd = bot.vehicle
-          const endPos = vEnd ? { x: +vEnd.position.x.toFixed(1), y: +vEnd.position.y.toFixed(1), z: +vEnd.position.z.toFixed(1) } : null
+          // Sync mineflayer position with dead-reckoned boat position so
+          // distance checks and guards use the actual location after steering.
+          if (bot.entity) bot.entity.position.set(bx, by, bz)
+          if (bot.vehicle) bot.vehicle.position.set(bx, by, bz)
+          rawState.x = bx; rawState.y = by; rawState.z = bz
+          const endPos = { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }
           logEvent('steer-boat', `route ${reached ? 'complete' : 'aborted'} at wp ${wpIdx}/${waypoints.length}`)
-          resolve({ ok: true, start: startPos, end: endPos || { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }, reached, waypoint: wpIdx, total: waypoints.length, still_mounted: !!vEnd })
+          resolve({ ok: true, start: startPos, end: endPos, reached, waypoint: wpIdx, total: waypoints.length, still_mounted: !!bot.vehicle })
         }
         const interval = setInterval(() => {
           if (!bot.vehicle) { clearInterval(interval); finish(false); return }
