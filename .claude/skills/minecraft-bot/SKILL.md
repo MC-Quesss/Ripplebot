@@ -100,7 +100,7 @@ All commands are `./bot-ctl '<json>'`. Arguments go under an `args` object.
 |---|---|
 | Position, HP, food, deaths, dimension | `{"action":"pos"}` |
 | Death counter only | `{"action":"deaths"}` |
-| Game time | `{"action":"time"}` → `timeOfDay`, `day`, `isDay` |
+| Game time + weather | `{"action":"time"}` → `timeOfDay`, `day`, `isDay`, `raining`, `thunder` |
 | Nearby entities (filter for hostiles) | `{"action":"nearby_entities","args":{"radius":16}}` |
 | Nearby player names | `{"action":"nearby_players"}` |
 | Inventory items | `{"action":"inventory"}` |

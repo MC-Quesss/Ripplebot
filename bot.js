@@ -11928,7 +11928,7 @@ function handleCommand (cmd) {
     }
     case 'time': {
       const t = bot.time || {}
-      return { ok: true, timeOfDay: t.timeOfDay, day: t.day, age: t.age, isDay: t.isDay }
+      return { ok: true, timeOfDay: t.timeOfDay, day: t.day, age: t.age, isDay: t.isDay, raining: !!bot.isRaining, thunder: (bot.thunderState || 0) > 0 }
     }
     case 'auto_sleep': {
       if (typeof args.enabled === 'boolean') autoSleepEnabled = args.enabled
