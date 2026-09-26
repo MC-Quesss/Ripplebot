@@ -1090,8 +1090,13 @@ if (brainMode === 'claude') logEvent('brain', `starting in claude mode (${claude
 else if (brainMode === 'claude-super') logEvent('brain', `starting in claude-super mode (${claude.status().superModel}) — local model off, full ambient + diary via Claude`)
 else if (brainMode === 'claude-private') logEvent('brain', `starting in claude-private mode (${claude.status().superModel}) — local model off, reactive only`)
 else if (brainMode === 'helm') {
+  // Helm intent: the operator (Claude at the terminal) *is* this bot — whichever one this
+  // machine's .env names (MC_NICKNAME = what players call it, PERSONA = its voice). It reads
+  // chat from bot.log and answers/asks players in game chat via `say`, first person. The
+  // console is not the conversation. See .claude/skills/minecraft-bot/SKILL.md "Helm mode".
   logEvent('brain', 'starting in helm mode — operator has full control, autonomous behaviors disabled')
   bot.once('spawn', () => {
+    logEvent('brain', `helm identity: you are ${NICKNAME || bot.username} (account ${bot.username}, persona ${PERSONA}) — answer to that name, speak in that voice`)
     autoSleepEnabled = false
     autoGreetEnabled = false
     idleWanderEnabled = false
@@ -2484,10 +2489,185 @@ const POND_SHORE = { x: -268, y: 62, z: 559 }
 const POND_BOAT_HOME = { x: -269, y: 61.5, z: 556 }
 const POND_CENTER = { x: -266, y: 61, z: 554 }
 const POND_RADIUS = 6
-const BOAT_CRUISE_SPEED = 0.15
 
 let isIdleBoating = false
 let isCtlBoatSteering = false
+
+// ── Boat piloting ──
+// A boat is piloted, not plotted: it keeps a heading that turns gradually
+// (like leaning on one paddle) and a speed that builds while paddling and
+// decays while coasting. The old routines snapped the heading straight at the
+// next coordinate every tick AND sent it with the sign flipped, so every
+// east/west leg ran backwards and diagonals ran sideways (review 2026-09-26).
+//
+// Headings: `pilot.yaw` is Minecraft yaw in degrees (0 = south, 90 = west,
+// 180 = north, 270 = east) — exactly what vehicle_move wants, no negation.
+// Operators speak compass degrees (0 = N, 90 = E); compassToMcYaw converts.
+// Turning right = MC yaw increasing = left paddle only (vanilla EntityBoat).
+//
+// Position: in 1.12 the rider is authoritative for the boat, so we dead-reckon,
+// but the server answers every move it rejects (shore, block, "moved wrongly")
+// with a clientbound vehicle_move carrying the boat's TRUE position. We adopt
+// it; repeated corrections at one spot mean we are aground.
+const BOAT_MAX_SPEED = 0.2      // blocks per 50ms tick at full throttle (~4 b/s)
+const BOAT_ACCEL = 0.01         // speed gained per tick while paddling
+const BOAT_DRAG = 0.93          // speed kept per tick while coasting (~2.7 blocks to stop from full)
+const BOAT_TURN_RATE = 3        // default degrees per tick (~60°/s) — sweeping, not snapping
+const BOAT_ALIGN_DEG = 35       // paddle forward only when within this of the goal heading
+const BOAT_AGROUND_HITS = 6     // consecutive server corrections at one spot = aground
+
+const normDeg = d => ((d % 360) + 360) % 360
+const wrapDeg = d => normDeg(d + 180) - 180 // → [-180, 180)
+const compassToMcYaw = c => normDeg(c + 180)
+const mcYawToCompass = y => normDeg(y + 180)
+const bearingCompass = (ax, az, bx, bz) => normDeg(Math.atan2(bx - ax, -(bz - az)) * 180 / Math.PI)
+const COMPASS_WORDS = { n: 0, north: 0, ne: 45, northeast: 45, e: 90, east: 90, se: 135, southeast: 135, s: 180, south: 180, sw: 225, southwest: 225, w: 270, west: 270, nw: 315, northwest: 315 }
+function parseCompass (h) {
+  if (h == null) return null
+  const w = String(h).toLowerCase().replace(/[\s_-]/g, '')
+  if (w in COMPASS_WORDS) return COMPASS_WORDS[w]
+  const n = Number(h)
+  return Number.isFinite(n) ? normDeg(n) : null
+}
+
+const pilot = { vehicleId: null, x: 0, y: 0, z: 0, yaw: 0, speed: 0, session: null, hits: 0, lastHit: null, corrections: 0 }
+
+client.on('vehicle_move', (p) => {
+  if (!pilot.session) return
+  const near = pilot.lastHit && Math.hypot(p.x - pilot.lastHit.x, p.z - pilot.lastHit.z) < 0.75
+  pilot.hits = near ? pilot.hits + 1 : 1
+  pilot.lastHit = { x: p.x, z: p.z }
+  pilot.corrections++
+  pilot.x = p.x; pilot.y = p.y; pilot.z = p.z
+  pilot.yaw = normDeg(p.yaw)
+  pilot.speed = 0 // we hit something — the server stopped us there
+})
+
+// Load pilot state from the boat we're in. Heading carries over between
+// commands in the same boat; on a fresh mount it comes from the boat entity
+// (mineflayer yaw → notchian: 180 - deg).
+function pilotSync () {
+  const v = bot.vehicle
+  if (!v) return false
+  if (pilot.vehicleId !== v.id) {
+    pilot.vehicleId = v.id
+    pilot.x = v.position.x; pilot.y = v.position.y; pilot.z = v.position.z
+    pilot.yaw = normDeg(180 - v.yaw * 180 / Math.PI)
+    pilot.speed = 0
+  }
+  return true
+}
+
+function pilotReport () {
+  return {
+    heading: Math.round(mcYawToCompass(pilot.yaw)),
+    speed: +(pilot.speed * 20).toFixed(1), // blocks/second
+    pos: { x: +pilot.x.toFixed(1), y: +pilot.y.toFixed(1), z: +pilot.z.toFixed(1) },
+    corrections: pilot.corrections
+  }
+}
+
+// One 50ms tick: turn toward goalYaw (MC deg, or null = hold heading) at most
+// `rate` degrees, paddle toward throttle*max once aligned, else coast.
+function pilotTick (goalYaw, throttle, rate) {
+  let turn = 0
+  let err = 0
+  if (goalYaw != null) {
+    err = wrapDeg(goalYaw - pilot.yaw)
+    turn = Math.max(-rate, Math.min(rate, err))
+    pilot.yaw = normDeg(pilot.yaw + turn)
+    err -= turn
+  }
+  const want = Math.abs(err) <= BOAT_ALIGN_DEG ? Math.max(0, Math.min(1, throttle)) * BOAT_MAX_SPEED : 0
+  if (pilot.speed < want) pilot.speed = Math.min(want, pilot.speed + BOAT_ACCEL)
+  else pilot.speed = Math.max(want, pilot.speed * BOAT_DRAG)
+  if (pilot.speed < 0.004) pilot.speed = 0
+  const r = pilot.yaw * Math.PI / 180
+  pilot.x += -Math.sin(r) * pilot.speed
+  pilot.z += Math.cos(r) * pilot.speed
+  const forward = want > 0
+  client.write('steer_boat', { leftPaddle: forward || turn > 0.01, rightPaddle: forward || turn < -0.01 })
+  client.write('vehicle_move', { x: pilot.x, y: pilot.y, z: pilot.z, yaw: pilot.yaw, pitch: 0 })
+  return { err, turn }
+}
+
+// Run a pilot session. `step(elapsedMs)` returns { goalYaw, throttle, rate }
+// or { done: reason } — after which the boat eases off (coasts to a stop)
+// unless `hold` is set. One session at a time: a new one takes over the old
+// one's heading and momentum. `stop` (abortGen) halts immediately.
+function runPilot (label, step, { maxMs = 120000, hold = false } = {}) {
+  if (!pilotSync()) return Promise.resolve({ ok: false, error: 'not in a vehicle' })
+  if (pilot.session) pilot.session.supersede()
+  isCtlBoatSteering = true
+  pilot.hits = 0; pilot.lastHit = null; pilot.corrections = 0
+  const gen = abortGen
+  const t0 = Date.now()
+  const start = pilotReport()
+  return new Promise((resolve) => {
+    let reason = null
+    let coasting = false
+    const session = {}
+    const finish = (why) => {
+      clearInterval(interval)
+      if (pilot.session === session) {
+        pilot.session = null
+        isCtlBoatSteering = false
+        client.write('steer_boat', { leftPaddle: false, rightPaddle: false })
+      }
+      if (bot.entity) bot.entity.position.set(pilot.x, pilot.y, pilot.z)
+      if (bot.vehicle) bot.vehicle.position.set(pilot.x, pilot.y, pilot.z)
+      rawState.x = pilot.x; rawState.y = pilot.y; rawState.z = pilot.z
+      const end = pilotReport()
+      logEvent('boat-pilot', `${label}: ${why} — heading ${end.heading}°, at ${posStr(end.pos)}, ${end.corrections} server corrections`)
+      resolve({ ok: true, label, result: why, start, ...end, still_mounted: !!bot.vehicle })
+    }
+    session.supersede = () => finish('superseded')
+    pilot.session = session
+    const interval = setInterval(() => {
+      if (!bot.vehicle) return finish('dismounted')
+      if (abortGen !== gen) { pilot.speed = 0; return finish('stopped') }
+      if (pilot.hits >= BOAT_AGROUND_HITS) { pilot.speed = 0; return finish('aground') }
+      const elapsed = Date.now() - t0
+      if (!coasting) {
+        const s = elapsed > maxMs ? { done: 'timed out' } : step(elapsed)
+        if (s.done) {
+          reason = s.done
+          if (hold || pilot.speed === 0) return finish(reason)
+          coasting = true
+        } else {
+          pilotTick(s.goalYaw, s.throttle, s.rate ?? BOAT_TURN_RATE)
+          return
+        }
+      }
+      pilotTick(null, 0, 0)
+      if (pilot.speed === 0) finish(reason)
+    }, 50)
+  })
+}
+
+// Seek a chain of waypoints by piloting: aim at the bearing, turn at `rate`,
+// ease the throttle down over the last `easeDist` blocks of the final leg.
+function boatSeek (waypoints, { throttle = 1, range = 3, rate = BOAT_TURN_RATE, easeDist = 8, label = 'seek' } = {}) {
+  pilotSync()
+  let i = 0
+  const maxMs = 30000 + waypoints.reduce((acc, w, k) => {
+    const prev = k ? waypoints[k - 1] : pilot
+    return acc + Math.hypot(w.x - prev.x, w.z - prev.z) / (BOAT_MAX_SPEED * Math.max(throttle, 0.3)) * 50 * 2
+  }, 0)
+  return runPilot(label, () => {
+    while (i < waypoints.length) {
+      const w = waypoints[i]
+      const d = Math.hypot(w.x - pilot.x, w.z - pilot.z)
+      const last = i === waypoints.length - 1
+      if (d >= (last ? range : Math.max(range, 5))) {
+        const ease = last ? Math.max(0.25, Math.min(1, d / easeDist)) : 1
+        return { goalYaw: compassToMcYaw(bearingCompass(pilot.x, pilot.z, w.x, w.z)), throttle: throttle * ease, rate }
+      }
+      i++
+    }
+    return { done: `arrived (${waypoints.length} waypoint${waypoints.length === 1 ? '' : 's'})` }
+  }, { maxMs })
+}
 async function runIdleBoating () {
   isIdleBoating = true
   try { return await _runIdleBoating() } finally { isIdleBoating = false }
@@ -2537,25 +2717,11 @@ async function _runIdleBoating () {
   }
   logEvent('idle-boating', `aboard boat ${target.id}`)
 
-  // Paddle to the middle of the pond with a slight random drift
+  // Paddle to the middle of the pond with a slight random drift, gently —
+  // the pond is small, so half throttle and a slow turn.
   if (bot.vehicle) {
     const drift = (Math.random() - 0.5) * 3
-    const wx = POND_CENTER.x + drift
-    const wz = POND_CENTER.z + drift
-    const v = bot.vehicle
-    let bx = v.position.x, by = v.position.y, bz = v.position.z
-    const stepCount = Math.ceil(Math.hypot(wx - bx, wz - bz) / BOAT_CRUISE_SPEED)
-    for (let s = 0; s < stepCount && bot.vehicle; s++) {
-      const toDx = wx - bx, toDz = wz - bz
-      const yaw = Math.atan2(-toDx, toDz)
-      bx += -Math.sin(yaw) * BOAT_CRUISE_SPEED
-      bz += Math.cos(yaw) * BOAT_CRUISE_SPEED
-      client.write('steer_boat', { leftPaddle: true, rightPaddle: true })
-      client.write('vehicle_move', { x: bx, y: by, z: bz, yaw: -(yaw * 180 / Math.PI), pitch: 0 })
-      await sleep(50)
-    }
-    client.write('steer_boat', { leftPaddle: false, rightPaddle: false })
-    logEvent('idle-boating', `reached middle at ${bx.toFixed(0)}, ${bz.toFixed(0)}`)
+    await boatSeek([{ x: POND_CENTER.x + drift, z: POND_CENTER.z + drift }], { throttle: 0.6, range: 1.5, rate: 2, easeDist: 4, label: 'pond middle' })
   }
 
   // Float — no paddling, just sitting on the water
@@ -2567,21 +2733,7 @@ async function _runIdleBoating () {
 
   // Paddle home
   if (bot.vehicle) {
-    const v = bot.vehicle
-    let bx = v.position.x, by = v.position.y, bz = v.position.z
-    const sx = POND_BOAT_HOME.x, sz = POND_BOAT_HOME.z
-    const stepCount = Math.ceil(Math.hypot(sx - bx, sz - bz) / BOAT_CRUISE_SPEED)
-    for (let s = 0; s < stepCount && bot.vehicle; s++) {
-      const toDx = sx - bx, toDz = sz - bz
-      const yaw = Math.atan2(-toDx, toDz)
-      bx += -Math.sin(yaw) * BOAT_CRUISE_SPEED
-      bz += Math.cos(yaw) * BOAT_CRUISE_SPEED
-      client.write('steer_boat', { leftPaddle: true, rightPaddle: true })
-      client.write('vehicle_move', { x: bx, y: by, z: bz, yaw: -(yaw * 180 / Math.PI), pitch: 0 })
-      await sleep(50)
-    }
-    client.write('steer_boat', { leftPaddle: false, rightPaddle: false })
-    logEvent('idle-boating', `returned to shore at ${bx.toFixed(0)}, ${bz.toFixed(0)}`)
+    await boatSeek([{ x: POND_BOAT_HOME.x, z: POND_BOAT_HOME.z }], { throttle: 0.6, range: 1.5, rate: 2, easeDist: 4, label: 'pond home' })
   }
 
   // Dismount — force-clear bot.vehicle if the protocol dismount doesn't take,
@@ -11111,6 +11263,16 @@ function handleCommand (cmd) {
       logEvent('emote', name)
       return { ok: true, emote: name }
     }
+    case 'whoami': {
+      // Who this bot is on this machine — the helm operator reads this at launch
+      // rather than assuming a name (several machines run helm mode).
+      // `voice` is the persona spec the LLM brains speak from — in helm mode the
+      // operator speaks from it too, so each bot sounds like itself.
+      return {
+        ok: true, nickname: NICKNAME || bot.username, username: bot.username, persona: PERSONA, brain: brainMode,
+        voice: { name: personaSpec.name, systemPrompt: personaSpec.systemPrompt, exemplars: personaSpec.exemplars }
+      }
+    }
     case 'deaths': {
       return { ok: true, count: deathCount }
     }
@@ -12115,129 +12277,70 @@ function handleCommand (cmd) {
       }
       return doMount()
     }
-    case 'steer_boat': {
-      // DEPRECATED for forward movement — use steer_boat_to instead, which
-      // computes heading to the target each step and can't go backwards.
-      // This action is kept for left/right turning only.
-      // args: { direction?: 'forward'|'left'|'right', duration_ms?: 3000, speed?: 0.15, yaw?: <radians> }
-      if (!bot.vehicle) return { ok: false, error: 'not in a vehicle' }
-      if ((args.direction || 'forward') === 'forward' && args.x !== undefined) {
-        return { ok: false, error: 'use steer_boat_to for point-to-point steering' }
+    case 'boat_pilot': {
+      // Pilot by feel, not coordinates. args (all optional):
+      //   heading: compass degrees (0=N, 90=E) or a word ("north", "sw")
+      //   turn: degrees relative to the current heading (+right / -left)
+      //   ms: how long to paddle; throttle: 0..1 (default 1 when paddling)
+      //   rate: turn degrees per tick (default 3 ≈ 60°/s; lower = wider sweep)
+      //   assume_heading: tell me which way the bow REALLY points (calibration)
+      //   hold: true = don't ease off at the end (keep momentum for the next command)
+      // With only heading/turn, I turn in place; add ms to paddle.
+      if (!pilotSync()) return { ok: false, error: 'not in a vehicle' }
+      if (args.assume_heading != null) {
+        const a = parseCompass(args.assume_heading)
+        if (a == null) return { ok: false, error: `bad assume_heading: ${args.assume_heading}` }
+        pilot.yaw = compassToMcYaw(a)
       }
-      isCtlBoatSteering = true
+      let goal = null
+      if (args.heading != null) {
+        const h = parseCompass(args.heading)
+        if (h == null) return { ok: false, error: `bad heading: ${args.heading}` }
+        goal = compassToMcYaw(h)
+      } else if (args.turn != null) {
+        goal = normDeg(pilot.yaw + Number(args.turn))
+      }
+      const ms = args.ms != null ? Number(args.ms) : null
+      if (goal == null && ms == null) return { ok: true, calibrated: args.assume_heading != null, ...pilotReport() }
+      const throttle = Number(args.throttle ?? (ms != null ? 1 : 0))
+      const rate = Number(args.rate ?? BOAT_TURN_RATE)
+      return runPilot('pilot', (elapsed) => {
+        const aligned = goal == null || Math.abs(wrapDeg(goal - pilot.yaw)) < 0.5
+        if ((ms == null || elapsed >= ms) && aligned) return { done: 'done' }
+        return { goalYaw: goal, throttle: ms != null && elapsed < ms ? throttle : 0, rate }
+      }, { hold: !!args.hold })
+    }
+    case 'boat_coast': {
+      // Ease off: stop paddling and drift to a stop on the current heading.
+      if (!pilotSync()) return { ok: false, error: 'not in a vehicle' }
+      return runPilot('coast', () => ({ done: 'eased off' }))
+    }
+    case 'steer_boat': {
+      // Legacy: direction forward|left|right for duration_ms. Now a thin
+      // wrapper on the pilot (turns gradually, correct heading sign).
+      if (!pilotSync()) return { ok: false, error: 'not in a vehicle' }
       const dir = args.direction || 'forward'
       const dur = Number(args.duration_ms ?? 3000)
-      const speed = Number(args.speed ?? 0.15)
-      const left = dir === 'forward' || dir === 'left'
-      const right = dir === 'forward' || dir === 'right'
-      const turnRate = 0.04
-      const v = bot.vehicle
-      let bx = v.position.x, by = v.position.y, bz = v.position.z
-      // Accept an explicit yaw arg (radians) to avoid the bot.entity.yaw bug
-      // where the player yaw doesn't match the boat's visual heading.
-      let yaw = args.yaw != null ? Number(args.yaw) : bot.entity.yaw
-      const startPos = { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }
-      const interval = setInterval(() => {
-        if (dir === 'left') yaw += turnRate
-        else if (dir === 'right') yaw -= turnRate
-        const dx = -Math.sin(yaw) * speed
-        const dz = Math.cos(yaw) * speed
-        bx += dx; bz += dz
-        client.write('steer_boat', { leftPaddle: left, rightPaddle: right })
-        client.write('vehicle_move', { x: bx, y: by, z: bz, yaw: -(yaw * 180 / Math.PI), pitch: 0 })
-      }, 50)
-      return sleep(dur).then(() => {
-        clearInterval(interval)
-        isCtlBoatSteering = false
-        client.write('steer_boat', { leftPaddle: false, rightPaddle: false })
-        const vEnd = bot.vehicle
-        const endPos = vEnd ? { x: +vEnd.position.x.toFixed(1), y: +vEnd.position.y.toFixed(1), z: +vEnd.position.z.toFixed(1) } : null
-        logEvent('steer-boat', `steered ${dir} for ${dur}ms from ${posStr(startPos)} to ${endPos ? posStr(endPos) : '?'}`)
-        return { ok: true, direction: dir, start: startPos, end: endPos || { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }, still_mounted: !!vEnd }
-      })
+      const rate = dir === 'left' ? -2 : dir === 'right' ? 2 : 0
+      return runPilot(`steer ${dir}`, (elapsed) => elapsed >= dur
+        ? { done: 'done' }
+        : { goalYaw: normDeg(pilot.yaw + rate), throttle: dir === 'forward' ? 1 : 0.5, rate: Math.abs(rate) })
     }
     case 'steer_boat_to': {
-      // Steer boat toward a target coordinate using the proven idle-boating pattern.
-      // args: { x, z, speed?: 0.15, range?: 3 }
-      if (!bot.vehicle) return { ok: false, error: 'not in a vehicle' }
-      isCtlBoatSteering = true
-      const tx = Number(args.x), tz = Number(args.z)
-      const spd = Number(args.speed ?? 0.15)
-      const rng = Number(args.range ?? 3)
-      const v = bot.vehicle
-      let bx = v.position.x, by = v.position.y, bz = v.position.z
-      const startPos = { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }
-      const maxSteps = Math.ceil(Math.hypot(tx - bx, tz - bz) / spd) + 20
-      let stepCount = 0
-      return new Promise((resolve) => {
-        const finish = (reached) => {
-          isCtlBoatSteering = false
-          client.write('steer_boat', { leftPaddle: false, rightPaddle: false })
-          if (bot.entity) bot.entity.position.set(bx, by, bz)
-          if (bot.vehicle) bot.vehicle.position.set(bx, by, bz)
-          rawState.x = bx; rawState.y = by; rawState.z = bz
-          const endPos = { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }
-          logEvent('steer-boat', `steered to (${tx}, ${tz}) from ${posStr(startPos)} → ${posStr(endPos)} in ${stepCount} steps`)
-          resolve({ ok: true, target: { x: tx, z: tz }, start: startPos, end: endPos, reached, still_mounted: !!bot.vehicle })
-        }
-        const interval = setInterval(() => {
-          if (!bot.vehicle || stepCount >= maxSteps) {
-            clearInterval(interval)
-            finish(false)
-            return
-          }
-          const toDx = tx - bx, toDz = tz - bz
-          if (Math.hypot(toDx, toDz) < rng) {
-            clearInterval(interval)
-            finish(true)
-            return
-          }
-          const yaw = Math.atan2(-toDx, toDz)
-          bx += -Math.sin(yaw) * spd
-          bz += Math.cos(yaw) * spd
-          client.write('steer_boat', { leftPaddle: true, rightPaddle: true })
-          client.write('vehicle_move', { x: bx, y: by, z: bz, yaw: -(yaw * 180 / Math.PI), pitch: 0 })
-          stepCount++
-        }, 50)
+      // Pilot to a coordinate: turn toward it gradually, paddle when aligned,
+      // ease in over the last few blocks. args: { x, z, throttle?: 1, range?: 3, rate?: 3 }
+      if (!pilotSync()) return { ok: false, error: 'not in a vehicle' }
+      return boatSeek([{ x: Number(args.x), z: Number(args.z) }], {
+        throttle: Number(args.throttle ?? 1), range: Number(args.range ?? 3), rate: Number(args.rate ?? BOAT_TURN_RATE), label: `to (${args.x}, ${args.z})`
       })
     }
     case 'steer_boat_route': {
-      if (!bot.vehicle) return { ok: false, error: 'not in a vehicle' }
+      // args: { waypoints: [{x, z}, ...], throttle?: 1, range?: 5, rate?: 3 }
+      if (!pilotSync()) return { ok: false, error: 'not in a vehicle' }
       const waypoints = args.waypoints
       if (!Array.isArray(waypoints) || waypoints.length === 0) return { ok: false, error: 'waypoints must be a non-empty array of {x, z}' }
-      isCtlBoatSteering = true
-      const spd = Number(args.speed ?? 0.15)
-      const rng = Number(args.range ?? 5)
-      const v = bot.vehicle
-      let bx = v.position.x, by = v.position.y, bz = v.position.z
-      const startPos = { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }
-      let wpIdx = 0
-      return new Promise((resolve) => {
-        const finish = (reached) => {
-          isCtlBoatSteering = false
-          client.write('steer_boat', { leftPaddle: false, rightPaddle: false })
-          // Sync mineflayer position with dead-reckoned boat position so
-          // distance checks and guards use the actual location after steering.
-          if (bot.entity) bot.entity.position.set(bx, by, bz)
-          if (bot.vehicle) bot.vehicle.position.set(bx, by, bz)
-          rawState.x = bx; rawState.y = by; rawState.z = bz
-          const endPos = { x: +bx.toFixed(1), y: +by.toFixed(1), z: +bz.toFixed(1) }
-          logEvent('steer-boat', `route ${reached ? 'complete' : 'aborted'} at wp ${wpIdx}/${waypoints.length}`)
-          resolve({ ok: true, start: startPos, end: endPos, reached, waypoint: wpIdx, total: waypoints.length, still_mounted: !!bot.vehicle })
-        }
-        const interval = setInterval(() => {
-          if (!bot.vehicle) { clearInterval(interval); finish(false); return }
-          if (wpIdx >= waypoints.length) { clearInterval(interval); finish(true); return }
-          const wp = waypoints[wpIdx]
-          const tx = Number(wp.x), tz = Number(wp.z)
-          const toDx = tx - bx, toDz = tz - bz
-          if (Math.hypot(toDx, toDz) < rng) { wpIdx++; return }
-          const yaw = Math.atan2(-toDx, toDz)
-          bx += -Math.sin(yaw) * spd
-          bz += Math.cos(yaw) * spd
-          client.write('steer_boat', { leftPaddle: true, rightPaddle: true })
-          client.write('vehicle_move', { x: bx, y: by, z: bz, yaw: -(yaw * 180 / Math.PI), pitch: 0 })
-        }, 50)
+      return boatSeek(waypoints.map(w => ({ x: Number(w.x), z: Number(w.z) })), {
+        throttle: Number(args.throttle ?? 1), range: Number(args.range ?? 5), rate: Number(args.rate ?? BOAT_TURN_RATE), label: `route (${waypoints.length} wp)`
       })
     }
     case 'exit_boat': {
@@ -12268,8 +12371,8 @@ function handleCommand (cmd) {
     case 'boat_status': {
       const v = bot.vehicle
       if (!v) return { ok: true, in_boat: false }
-      return { ok: true, in_boat: true, vehicle_id: v.id, vehicle_name: v.name,
-        x: +v.position.x.toFixed(1), y: +v.position.y.toFixed(1), z: +v.position.z.toFixed(1) }
+      pilotSync()
+      return { ok: true, in_boat: true, vehicle_id: v.id, vehicle_name: v.name, piloting: !!pilot.session, ...pilotReport() }
     }
     case 'quit':
       bot.quit()

@@ -42,6 +42,12 @@ This disables the Claude API brain, chat routing, auto-sleep, auto-greet, and id
 
 If the bot is already running, switch without restarting: `./bot-ctl '{"action":"brain","args":{"mode":"helm"}}'`
 
+**Who you are comes from this machine's `.env`, not from this document.** Several machines run helm mode, each driving a different bot (Roz, Muse, Private, …). This skill says "Roz" throughout because it was written on Roz's machine; read it as "the bot you are driving". At launch, before saying anything, run `./bot-ctl '{"action":"whoami"}'` → `{nickname, username, persona}` (also logged as `[brain] helm identity: …` on spawn). `nickname` is `MC_NICKNAME`: the name players and other bots use to address you, and the name you answer to. `persona` is `PERSONA`, and `voice` carries that persona's `systemPrompt` and `exemplars` from `personas/<persona>.json` — the same spec the LLM brains speak from. Never introduce yourself as Roz unless `whoami` says so (a Muse machine did, 2026-09-26).
+
+**The persona governs how you communicate in helm mode, not just your name** (user directive, 2026-09-26). Read `voice.systemPrompt` and the `exemplars` at launch and write every `say` line from them: Roz is spare, earnest and a little dry; Muse is formal, fussy and courteous; Rain is ALL-CAPS joy; Private is earnest and encouraging. That covers word choice, sentence length, what the bot notices and worries about, and how it greets, agrees, declines and reports. Facts stay true (vitals, inventory, what actually happened), only the delivery is in character. Keep lines short, like chat. Operator/meta talk (code changes, commits) still goes through the persona's voice when said in game.
+
+**The intent of helm mode: you ARE that bot, and the game chat is the conversation.** The players are in-game, not at the terminal. Anything you would ask or tell them (like "what should I do first?" or a status report) goes into game chat via `say`, in first person and in your persona's voice. Don't put it in the console in third person ("what should *she* do?"). Keep the console for operator housekeeping only: launch results, monitor setup, code/journal edits. Once the bot is live, announce yourself and ask for your first task **in game chat** (user directive, 2026-09-26).
+
 **In helm mode you MUST:**
 1. Set up a live `Monitor` on `bot.log` (filter for `[chat]`, `[death]`, `[hurt]`, `[sleep]`, `[server-sleep]`, `[task]`, `[music]`, `[player-joined]`, `[player-left]`, etc.) so you see events in real-time — not periodic `tail` polling. Use a single `awk ... { print; fflush() }` filter — chaining two `grep --line-buffered` stages delayed events ~10 min (2026-09-25). `[server-sleep]` lines are the server's own notices ("X is now sleeping. 1/2 (50%)", "Good Morning everyone!") — use them to know who is in bed and whether the night skipped.
 2. **DIRECTIVE — arm the bedtime alarm at launch, in the same turn as the log monitor. Not optional, never deferred.** You only get a turn when an event arrives, so "I'll check the time periodically" never happens — players have had to send Roz to bed themselves (2026-09-24, twice in one session). Start this second `Monitor` with `timeout_ms: 1800000`:
@@ -70,10 +76,11 @@ Read this every session. These are hard-won lessons from deaths and failures.
 
 **Position awareness:**
 - After boat steering (`steer_boat_to`/`steer_boat_route`), position is synced automatically, but verify with `pos` before trusting `insideHouse()`/`nearCabin()` checks.
+- **Boats are piloted, not plotted** (2026-09-26): `boat_pilot` (heading/turn/ms/throttle/rate/assume_heading/hold), `boat_coast`, `boat_status` (compass heading, speed). `steer_boat_to`/`steer_boat_route` use the same pilot (gradual turns, ease-in, aground detection). See `journal/procedures/boat-piloting.md`.
 - `HOME_RADIUS` is 60 blocks from farm house center. Food-safety and restock refuse to operate beyond this — that's intentional, not a bug.
 
 **Chat and behavior:**
-- In helm mode, Roz has no voice. **You** speak for her via `say`. Keep it in character — curious, warm, a little dry.
+- In helm mode, the bot has no voice of its own. **You** speak for it via `say`, in the persona voice from `whoami` → `voice` (see the Helm mode section).
 - Never wrap spoken dialog in `/me` — that's for actions only. Bare machine dot-codes (`.n`, `.c`) as `/me` are fine.
 - Never persist player chat to journal or files. Retell as myth/legend if needed, no quotes.
 

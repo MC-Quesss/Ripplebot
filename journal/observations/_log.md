@@ -7,6 +7,17 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-09-26 — Helm mode, rainy day, boat pilot rebuild (day 53573)
+
+- Start: farm house (-268, 65, 570), HP 20, food 20, deaths 0, tick 261. Launched in helm mode.
+- Helm intent clarified: the operator *is* Roz — questions and reports go to game chat in first
+  person, not to the console. Codified in the skill and a bot.js comment.
+- Rainy day; stood inside the door listening. Bed at tick 12721 (primary bed, 1/3 asleep).
+- Reviewed the boat routines at a player's request: they plotted rather than piloted, and sent
+  the heading with the sign flipped (east/west legs ran backwards). Rebuilt as a pilot with
+  gradual turns, momentum, easing off, and server-correction position readback — see
+  [[boat-piloting]]. Untested live; first lesson to be on the open ocean, not the pond.
+
 ## 2026-08-08 — Idle patrol, LLM late start (day 49137)
 
 Bot restarted ~01:48 UTC. Spawned at (-266.5, 65.0, 571.7) inside [[house]].
