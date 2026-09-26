@@ -17,6 +17,14 @@ Reverse-chronological. Each session a header. Raw observations land here first; 
   the heading with the sign flipped (east/west legs ran backwards). Rebuilt as a pilot with
   gradual turns, momentum, easing off, and server-correction position readback — see
   [[boat-piloting]]. Untested live; first lesson to be on the open ocean, not the pond.
+- Helm identity: a Muse machine running helm mode introduced itself as Roz. Added `whoami`
+  (nickname, persona, and the persona's voice spec) and a `[brain] helm identity` spawn line; the
+  persona now shapes how the helm operator speaks. Added `raining`/`thunder` to `time`.
+- Three nights skipped quickly once Muse slept alongside Roz (2 of 4 = 50%).
+- Open: ocean piloting lesson (needs a boat); Muse sometimes repeats a line (the same wake-up
+  line two mornings running, a doubled farewell).
+- End: powered down at the farm (-269, 65, 570), HP 20, deaths 0, morning of day 53578, to
+  relaunch from a new location.
 
 ## 2026-08-08 — Idle patrol, LLM late start (day 49137)
 
