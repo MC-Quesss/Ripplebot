@@ -3565,6 +3565,7 @@ function tryWheatReadyAlert () {
   }
 
   if (wheatReadyState.snoozed) return
+  if (brainMode === 'helm') return // operator speaks for Roz in helm mode; ready state still tracked + logged
   const homeDist = distanceFromHome()
   if (!Number.isFinite(homeDist) || homeDist > HOME_RADIUS) return
   const now = Date.now()
@@ -8610,6 +8611,7 @@ function tryBedtimeRecord () {
   const day = bot.time?.day
   if (typeof t !== 'number' || typeof day !== 'number') return
   if (t < BEDTIME_RECORD_START || t > BEDTIME_RECORD_END) return
+  if (brainMode === 'helm') return // operator decides when Roz leaves the house
   if (BEDTIME_DJ_ROTATION[day % BEDTIME_DJ_ROTATION.length] !== PERSONA) return
   if (day === storyNightDay || storyTimeActive || storyRequestBusy) return
   if (day === lastBedtimeRecordDay) return
@@ -10310,6 +10312,9 @@ bot.on('whisper', (username, message) => {
 const ACTION_COORD_RE = /^\* (\w+) (.+)$/
 bot.on('messagestr', (msg) => {
   if (msg.includes('shoots')) logEvent('rps-diag', `messagestr: "${msg}"`)
+  // Server sleep notices ("X is now sleeping", "1/2 players sleeping") — the
+  // helm operator needs these to know who's in bed. Player chat is excluded.
+  if (!msg.startsWith('<') && /sleep|slept|in bed|wake|woke/i.test(msg)) logEvent('server-sleep', msg)
   const m = ACTION_COORD_RE.exec(msg)
   if (!m) return
   if (!parseFireCoord(m[2])) return // ordinary emote, not a coordination line

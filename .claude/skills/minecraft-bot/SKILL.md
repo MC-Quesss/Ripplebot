@@ -43,7 +43,7 @@ This disables the Claude API brain, chat routing, auto-sleep, auto-greet, and id
 If the bot is already running, switch without restarting: `./bot-ctl '{"action":"brain","args":{"mode":"helm"}}'`
 
 **In helm mode you MUST:**
-1. Set up a live `Monitor` on `bot.log` (filter for `[chat]`, `[death]`, `[hurt]`, `[sleep]`, `[task]`, `[player-joined]`, `[player-left]`, etc.) so you see events in real-time — not periodic `tail` polling.
+1. Set up a live `Monitor` on `bot.log` (filter for `[chat]`, `[death]`, `[hurt]`, `[sleep]`, `[server-sleep]`, `[task]`, `[music]`, `[player-joined]`, `[player-left]`, etc.) so you see events in real-time — not periodic `tail` polling. Use a single `awk ... { print; fflush() }` filter — chaining two `grep --line-buffered` stages delayed events ~10 min (2026-09-25). `[server-sleep]` lines are the server's own notices ("X is now sleeping. 1/2 (50%)", "Good Morning everyone!") — use them to know who is in bed and whether the night skipped.
 2. **DIRECTIVE — arm the bedtime alarm at launch, in the same turn as the log monitor. Not optional, never deferred.** You only get a turn when an event arrives, so "I'll check the time periodically" never happens — players have had to send Roz to bed themselves (2026-09-24, twice in one session). Start this second `Monitor` with `timeout_ms: 1800000`:
    ```
    cd <repo>; last=""; while true; do t=$(./bot-ctl '{"action":"time"}' 2>/dev/null); tod=$(echo "$t" | sed -n 's/.*"timeOfDay":\([0-9]*\).*/\1/p'); day=$(echo "$t" | sed -n 's/.*"day":\([0-9]*\).*/\1/p'); if [ -n "$tod" ] && [ "$tod" -ge 12550 ] && [ "$tod" -lt 23000 ] && [ "$day" != "$last" ]; then echo "BEDTIME approaching: day $day tick $tod"; last="$day"; fi; sleep 20; done
