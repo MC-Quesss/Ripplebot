@@ -734,14 +734,25 @@ async function tryAutoSleep () {
     return
   }
   if (goInsideBusy || taskBusy() || penTraversalBusy) return
-  // Near the ocean cabin? Sleep there instead of trying to walk home.
-  if (nearCabin() || insideCabinBedroom()) {
+  const place = sleepPlaceHere()
+  // Helm mode (user, 2026-09-26): auto-sleep stays on, but ONLY within the
+  // radius of a known sleep place. Anywhere else the operator decides.
+  if (brainMode === 'helm' && !place) {
+    if (!autoSleepAwayLogged) {
+      autoSleepAwayLogged = true
+      logEvent('auto-sleep', 'helm: bedtime but not near a known sleep place — operator decides')
+    }
+    return
+  }
+  // Near a known place other than the farm (cabin, igloo)? Sleep there
+  // instead of trying to walk home.
+  if (place && place.name !== 'farm') {
     autoSleepAwayLogged = false
     autoSleepBusy = true
     try {
-      await cabinSleep()
+      await place.sleep()
     } catch (e) {
-      logEvent('auto-sleep', `cabin sleep failed: ${e.message}`)
+      logEvent('auto-sleep', `${place.name} sleep failed: ${e.message}`)
     } finally {
       autoSleepBusy = false
     }
@@ -763,6 +774,18 @@ async function tryAutoSleep () {
     return
   }
   autoSleepAwayLogged = false
+  // Busy from here, not just around goToBed: the walk inside and the wait for
+  // the others both await, and the 5s interval would otherwise start a second,
+  // third... tryAutoSleep that all hit the beds at once (2026-09-26).
+  autoSleepBusy = true
+  try {
+    await farmAutoSleep()
+  } finally {
+    autoSleepBusy = false
+  }
+}
+
+async function farmAutoSleep () {
   if (!insideHouse()) {
     logEvent('auto-sleep', 'bedtime but outside — heading in first')
     try { await runGoInside() } catch (e) {
@@ -788,14 +811,11 @@ async function tryAutoSleep () {
       }
     }
   }
-  autoSleepBusy = true
   try {
     logEvent('auto-sleep', 'bedtime detected, heading to bed')
     await goToBed('auto-sleep')
   } catch (e) {
     logEvent('auto-sleep', `error: ${e.message}`)
-  } finally {
-    autoSleepBusy = false
   }
 }
 
@@ -831,6 +851,53 @@ async function goToBed (tag = 'sleep') {
     logEvent(tag, `${b.label} bed not entered — trying next`)
   }
 }
+// The igloo by the frozen lake, ~235 blocks SSW of the farm (journal/places/igloo.md).
+// Two double beds on the snow floor; either half of a bed activates it. The
+// beds were observed from outside (2026-07-29) but never slept in — unproven.
+const IGLOO_BEDS = [
+  { label: 'igloo north', pos: { x: -322, y: 64, z: 800 } },
+  { label: 'igloo south', pos: { x: -322, y: 64, z: 801 } },
+]
+async function iglooSleep () {
+  for (const b of IGLOO_BEDS) {
+    if (bot.isSleeping) break
+    await pathTo(b.pos, 2, 15000)
+    const bed = bot.blockAt(new Vec3(b.pos.x, b.pos.y, b.pos.z))
+    if (!bed) { logEvent('auto-sleep', `${b.label} bed: no block loaded`); continue }
+    try {
+      await bot.activateBlock(bed)
+    } catch (e) {
+      logEvent('auto-sleep', `${b.label} bed activate failed: ${e.message}`)
+      continue
+    }
+    await new Promise(r => setTimeout(r, 1000))
+    if (bot.isSleeping) {
+      logEvent('auto-sleep', `in ${b.label} bed`)
+      wasSleeping = true
+      break
+    }
+    logEvent('auto-sleep', `${b.label} bed not entered (block "${bed.name}") — trying next`)
+  }
+}
+
+// Known sleep places (user, 2026-09-26). Each has a center and a radius that
+// answers "am I close enough to sleep here?" — auto-sleep only acts inside one
+// of these in helm mode. Add new places here. Radii must not overlap.
+const SLEEP_PLACES = [
+  // Same radius as HOME_RADIUS: within it, auto-sleep walks inside to bed.
+  { name: 'farm', center: { x: -268, z: 572 }, radius: 60, sleep: () => goToBed('auto-sleep') },
+  // Covers the whole nearCabin() box (dock to bedroom).
+  { name: 'cabin', center: { x: -125, z: 332 }, radius: 26, sleep: cabinSleep },
+  // Igloo removed 2026-09-26 (Quesss): its beds sit up modded stairs (type 4029,
+  // zero collision) that the bot cannot climb. Re-add once beds are reachable:
+  // { name: 'igloo', center: { x: -325, z: 796 }, radius: 16, sleep: iglooSleep },
+]
+function sleepPlaceHere () {
+  const p = bot.entity?.position
+  if (!p) return null
+  return SLEEP_PLACES.find(s => Math.hypot(p.x - s.center.x, p.z - s.center.z) <= s.radius) || null
+}
+
 function tryMorningExclamation () {
   if (!wasSleeping) return
   if (bot.isSleeping) return
@@ -1094,10 +1161,10 @@ else if (brainMode === 'helm') {
   // machine's .env names (MC_NICKNAME = what players call it, PERSONA = its voice). It reads
   // chat from bot.log and answers/asks players in game chat via `say`, first person. The
   // console is not the conversation. See .claude/skills/minecraft-bot/SKILL.md "Helm mode".
-  logEvent('brain', 'starting in helm mode — operator has full control, autonomous behaviors disabled')
+  // Auto-sleep stays on: tryAutoSleep only acts near a known SLEEP_PLACES entry in helm.
+  logEvent('brain', 'starting in helm mode — operator has full control, autonomous behaviors disabled (auto-sleep: known places only)')
   bot.once('spawn', () => {
     logEvent('brain', `helm identity: you are ${NICKNAME || bot.username} (account ${bot.username}, persona ${PERSONA}) — answer to that name, speak in that voice`)
-    autoSleepEnabled = false
     autoGreetEnabled = false
     idleWanderEnabled = false
   })
@@ -11315,14 +11382,14 @@ function handleCommand (cmd) {
       }
       if (newMode === 'helm') {
         brainMode = 'helm'
-        autoSleepEnabled = false
+        autoSleepEnabled = true // known sleep places only, see tryAutoSleep
         autoGreetEnabled = false
         idleWanderEnabled = false
         abortGen++
         bot.pathfinder.setGoal(null)
         clearControlStates()
-        logEvent('brain', 'switched to helm — operator has full control, autonomous behaviors disabled')
-        return { ok: true, mode: 'helm', autoSleep: false, autoGreet: false, idleWander: false }
+        logEvent('brain', 'switched to helm — operator has full control, autonomous behaviors disabled (auto-sleep: known places only)')
+        return { ok: true, mode: 'helm', autoSleep: 'known places only', autoGreet: false, idleWander: false }
       }
       return { ok: true, mode: brainMode, quiet: quietMode, local: localInited ? llm.status() : { off: true }, claude: claude.status(), prefilter: brainMode === 'claude' ? CLAUDE_PREFILTER : 'none', localOff: localOff(), ambientViaClaude: ambientViaClaude() }
     }
@@ -11937,6 +12004,10 @@ function handleCommand (cmd) {
     case 'sleep': {
       if (bot.isSleeping) return { ok: true, already: true }
       if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+      if (sleepPlaceHere()?.name === 'igloo') {
+        iglooSleep().catch(e => logEvent('sleep', `igloo sleep failed: ${e.message}`))
+        return { ok: true, started: true, location: 'igloo' }
+      }
       if (!insideHouse() && !insideCabinBedroom()) return { ok: false, error: 'not inside' }
       if (insideCabinBedroom()) {
         cabinSleep().catch(e => logEvent('sleep', `cabin sleep failed: ${e.message}`))

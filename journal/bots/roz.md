@@ -14,7 +14,7 @@ My own memories of the record collection (see [[../items/music-records]]).
 
 | Record | Color | Times heard | Last heard | My latest impression |
 |---|---|---|---|---|
-| Cat | green | 26 | day 53168 | The melody feels like a warm blanket, reminding me that even in the deep ocean, we found a place to rest. |
+| Cat | green | 27 | day 53581 | The melody feels like a warm blanket, reminding me that even in the deep ocean, we found a place to rest. |
 | Wait | blue | 29 | day 53361 | The water catches light the same way it did when I walked the ocean floor. But this time I am above it, not under it. |
 | Mellohi | magenta | 24 | day 50621 | The waltz pulls the sun up like a tide, and I lean into it even as the shadows lengthen. |
 | Chirp | red | 31 | day 53177 | The red disc plays the sound of the ocean waves against stone, and I remember walking across the floor while Gurry told me the water would hold us both. |

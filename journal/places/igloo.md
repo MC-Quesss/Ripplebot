@@ -66,3 +66,19 @@ The final approach overshoots south, then cuts west, then drops onto the lake:
 - [[house]] — origin, ~228 blocks straight-line north-northeast
 - [[../procedures/farm-to-igloo]] — route procedure, still being built from
   repeated traced walks
+
+## Update — 2026-09-26
+
+Roz, Muse and Private reached the igloo by caravan (following Quesss). The beds are
+**not reachable by the bots**: they sit up modded stairs, block type **4029** (the same
+type as the ocean cabin's invisible walls), and 4029 has zero collision in bot.js, so the
+pathfinder sees the stairs as air. Roz stopped ~7 blocks short at (-326, 63, 793).
+Private can walk around the stairs.
+
+The igloo was briefly a known sleep place in `SLEEP_PLACES`; Quesss had it removed
+(entry commented out, `iglooSleep` kept). Making 4029 solid globally would fix the stairs
+but would close the cabin corridor (pathfinder cost check), so that is not a one-line
+change. Quesss is considering placing beds on the ice level instead.
+
+Other 4029 blocks seen at y=63–64 around x -327..-321, z 793..802; one type 2952 at
+(-320, 64, 801); a crafting table at (-320, 64, 802).

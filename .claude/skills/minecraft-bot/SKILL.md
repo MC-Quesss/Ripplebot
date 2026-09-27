@@ -38,7 +38,7 @@ When the user says **"helm mode"**, **"start in helm mode"**, or similar, start 
 node bot.js --helm > /dev/null 2>&1 &
 ```
 
-This disables the Claude API brain, chat routing, auto-sleep, auto-greet, and idle wander — the operator (you) has full control. **You are the only one interpreting chat and issuing commands.** The bot will not respond to in-game chat on its own.
+This disables the Claude API brain, chat routing, auto-greet, and idle wander — the operator (you) has full control. **Auto-sleep stays on, but only within the radius of a known sleep place** (`SLEEP_PLACES` in bot.js: farm r=60 — walks inside to bed, cabin r=26, igloo r=16; user, 2026-09-26). Anywhere else at bedtime it does nothing and the operator decides. **You are the only one interpreting chat and issuing commands.** The bot will not respond to in-game chat on its own.
 
 If the bot is already running, switch without restarting: `./bot-ctl '{"action":"brain","args":{"mode":"helm"}}'`
 
@@ -50,9 +50,9 @@ If the bot is already running, switch without restarting: `./bot-ctl '{"action":
 
 **In helm mode you MUST:**
 1. Set up a live `Monitor` on `bot.log` (filter for `[chat]`, `[death]`, `[hurt]`, `[sleep]`, `[server-sleep]`, `[task]`, `[music]`, `[player-joined]`, `[player-left]`, etc.) so you see events in real-time — not periodic `tail` polling. Use a single `awk ... { print; fflush() }` filter — chaining two `grep --line-buffered` stages delayed events ~10 min (2026-09-25). `[server-sleep]` lines are the server's own notices ("X is now sleeping. 1/2 (50%)", "Good Morning everyone!") — use them to know who is in bed and whether the night skipped.
-2. **DIRECTIVE — arm the bedtime alarm at launch, in the same turn as the log monitor. Not optional, never deferred.** You only get a turn when an event arrives, so "I'll check the time periodically" never happens — players have had to send Roz to bed themselves (2026-09-24, twice in one session). Start this second `Monitor` with `timeout_ms: 1800000`:
+2. **DIRECTIVE — arm the bedtime alarm at launch, in the same turn as the log monitor. Not optional, never deferred.** (Auto-sleep now covers the known places, but the alarm is still the backstop for everywhere else, and for noticing when auto-sleep did not get the bot into a bed. Poll every 5s, not 20 — at 20s it fired ~300 ticks late, 2026-09-26.) You only get a turn when an event arrives, so "I'll check the time periodically" never happens — players have had to send Roz to bed themselves (2026-09-24, twice in one session). Start this second `Monitor` with `timeout_ms: 1800000`:
    ```
-   cd <repo>; last=""; while true; do t=$(./bot-ctl '{"action":"time"}' 2>/dev/null); tod=$(echo "$t" | sed -n 's/.*"timeOfDay":\([0-9]*\).*/\1/p'); day=$(echo "$t" | sed -n 's/.*"day":\([0-9]*\).*/\1/p'); if [ -n "$tod" ] && [ "$tod" -ge 12550 ] && [ "$tod" -lt 23000 ] && [ "$day" != "$last" ]; then echo "BEDTIME approaching: day $day tick $tod"; last="$day"; fi; sleep 20; done
+   cd <repo>; last=""; while true; do t=$(./bot-ctl '{"action":"time"}' 2>/dev/null); tod=$(echo "$t" | sed -n 's/.*"timeOfDay":\([0-9]*\).*/\1/p'); day=$(echo "$t" | sed -n 's/.*"day":\([0-9]*\).*/\1/p'); if [ -n "$tod" ] && [ "$tod" -ge 12550 ] && [ "$tod" -lt 23000 ] && [ "$day" != "$last" ]; then echo "BEDTIME approaching: day $day tick $tod"; last="$day"; fi; sleep 5; done
    ```
    The 12550 threshold is deliberate: beds reject before ~12541, so an earlier alarm makes all three beds bounce. When it fires, act immediately: finish or stop the current thing, get Roz inside, send `sleep`. When either monitor expires (30-min cap), **re-arm it in that same turn** — a lapsed alarm is the same failure as no alarm.
 3. Manage bedtime. Use `{"action":"sleep"}` — it cycles through all 3 farm beds (or cabin bed if at the cabin), handles occupied beds automatically, and routes through `pathTo()` for corridor/pen safety. Get the bot inside first (`come_inside` or `cabin_enter`), then send `sleep`.

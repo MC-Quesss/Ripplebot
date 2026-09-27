@@ -7,6 +7,35 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-09-26 — Helm mode, second session (day 53579)
+
+- Start: farm house (-268.5, 65, 570.5), HP 20, food 20, deaths 0, tick 1165, clear weather.
+  Launched with `--helm`; `whoami` → Roz (persona roz). Log monitor + bedtime alarm armed.
+- Six nights passed, all skipped by the 50% rule; every bedtime was operator-driven. The bedtime
+  alarm fired ~300 ticks late twice at a 20s poll, so it now polls every 5s.
+- Private kept fire duty solo (Quesss's request). Its hopper un-jam lock (`.k`/`.l`) cycled three
+  times in one morning; a player asked about the `.l` lines. Private also looped at dusk, starting
+  a harvest and refusing the dark every ~7s until bed.
+- Quesss asked for auto-sleep back in helm mode, but only near a known place. Added `SLEEP_PLACES`
+  in bot.js (center + radius each: farm 60, cabin 26, igloo 16) and `iglooSleep()`; helm no
+  longer disables auto-sleep. The `sleep` ctl action also works at the igloo now. Needs a restart;
+  igloo beds untested. See [[../places/igloo]].
+- I wrongly said auto-sleep only covered the farmhouse and that there was no igloo; Muse and
+  Private caught both. Read the whole function before describing it.
+- Four nights in a row went unskipped: Muse was idle on its machine and never lay down despite
+  reminders. It came back online, apologised, and slept from then on.
+- Restarted onto the new code. Auto-sleep then put Roz to bed by itself every night at the farm;
+  every night after that skipped (3 of 6 with ABBYO/Namamom/Quesss online).
+- Caravan to the igloo following Quesss (door blocked the follow until `go_outside`). The beds sit
+  up modded stairs, type 4029 (also the cabin wall type), which the bot treats as air, so it
+  cannot climb them. Quesss had the igloo taken off `SLEEP_PLACES`. Marking 4029 solid is not a
+  one-liner: Muse pointed out the cabin corridor would close. Walked home on `walk_route` reverse.
+- Bug: `autoSleepBusy` was only set after Roz's wait-for-the-others loop, so each 5s tick during
+  the wait started another `tryAutoSleep`, and they all hit the beds together (doubled, then
+  tripled log lines). Now held busy for the whole farm path (`farmAutoSleep`). Needs a restart.
+- ABBYO asked for tasks: counted 10 sheep, found lavender, one chicken, 4 chests, and chose
+  eucalyptus wood as the most beautiful block.
+
 ## 2026-09-26 — Helm mode, rainy day, boat pilot rebuild (day 53573)
 
 - Start: farm house (-268, 65, 570), HP 20, food 20, deaths 0, tick 261. Launched in helm mode.
