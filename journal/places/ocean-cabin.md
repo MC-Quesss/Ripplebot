@@ -43,3 +43,11 @@ Pathfind from farm to farm port (-255, 62, 521), then boat the route. See [[boat
 - [[boat-route-new-home]] — water route to/from the farm
 - [[spawn-station]] — train from world spawn to this area
 - [[house]] — the farm (old house)
+
+## Update — 2026-09-27: two beds, and the cabin sleep routine
+
+The bedroom has **two beds** side by side, heads at (-128, 66, 324) and (-128, 66, 323), feet at x=-127.
+A player took the z=324 bed, and the sleep routine (which only knew that one) kept bouncing off it; the
+free z=323 bed worked by hand. `cabinSleep` now tries both, skipping any bed flagged occupied.
+Corridor entry from the dock was clean this time: pathfind to the stair bottom (-131, 63, 317), then
+`cabin_enter_bedroom`.

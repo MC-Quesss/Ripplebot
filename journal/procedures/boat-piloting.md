@@ -1,7 +1,7 @@
 ---
 type: procedure
 name: boat-piloting
-confirmed: false
+confirmed: true
 ---
 
 # Boat piloting
@@ -40,6 +40,7 @@ Compass degrees: 0 = N, 90 = E, 180 = S, 270 = W (or words: `north`, `sw`, …).
 | Keep momentum into the next command | add `"hold":true` |
 | Ease off | `{"action":"boat_coast"}` |
 | Correct my belief of the bow's direction | `{"action":"boat_pilot","args":{"assume_heading":"north"}}` |
+| Get out and step onto dry land | `{"action":"exit_boat"}` (optional `to`, `land:false`) |
 | Where am I / which way am I pointed | `{"action":"boat_status"}` → `heading`, `speed` (b/s), `pos`, `piloting` |
 | Pilot to a point (eases in) | `{"action":"steer_boat_to","args":{"x":-200,"z":400}}` |
 | Pilot a waypoint chain | `{"action":"steer_boat_route","args":{"waypoints":[{"x":..,"z":..}]}}` |
@@ -51,3 +52,30 @@ Compass degrees: 0 = N, 90 = E, 180 = S, 270 = W (or words: `north`, `sw`, …).
 **Untested live.** First lesson planned on the **open ocean**, not the pond (the pond is too
 confined, shores too close): try a heading, get feedback on what the boat really did, adjust with
 `assume_heading` / `rate`, and practise long sweeping turns.
+
+## Update — 2026-09-27: first live trip passed
+
+Farm port → ocean cabin dock along [[boat-route-new-home]], one `steer_boat_to` per checkpoint
+(throttle 0.6–0.8, 0.4 for the final dock approach). Every leg arrived, 0 server corrections, never aground, ~2.5 min total.
+
+**Disembarking is the weak point.** At the dock `exit_boat` reported "dismount may have failed" and `bot.vehicle`
+stayed set, yet players saw Roz standing on top of the boat. Walking east off it slid her into the water
+beside the dock; `pathfind` to (-127, 63, 347) climbed her out. `exit_boat` only clears a stale ref when the
+bot drifts > 2 blocks from the boat — needs a better check.
+
+**Fixed same day.** `exit_boat` is now a full disembark: send the dismount, and if the server
+never echoes it (it usually doesn't here) clear `bot.vehicle` anyway; then pathfind onto the nearest
+dry standing block within 4 (never an empty-name modded block), swimming out if the step lands in
+water. `{"action":"exit_boat"}` → `{dismounted, confirmed, landed, landing, pos}`. Options:
+`"to":{x,y,z}` picks the landing block; `"land":false` just gets out. Verified at the cabin dock:
+one call, landed on (-127, 63, 347); Dad called it much smoother.
+
+## Update — 2026-09-27: one-command voyages
+
+`{"action":"sail_home"}` — ocean cabin → farm: leaves the bedroom via the corridor if needed, boards the
+nearest boat at the dock, sails the 12 legs of [[boat-route-new-home]], `exit_boat` at the farm port, then
+walks to the **wheat field center (-283, 64, 562)** (Dad: don't wait at the port).
+`{"action":"sail_to_cabin"}` — the reverse, ending on the cabin dock.
+Both are an `activeTask` ("voyage"), stop on `stop`, abort on a death, and refuse to start at night or after
+tick 9500 (the trip is ~3000 ticks; river mobs) unless `"force":true`. Per-leg throttles are the ones
+sailed by hand on 2026-09-27. **Not yet run end-to-end as one command.**

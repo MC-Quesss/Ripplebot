@@ -7,6 +7,57 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-09-27 — Helm mode, first boat trip to the ocean cabin (day 53668–53671)
+
+- Start: farm house (-267, 65, 571), HP 20, food 20, deaths 0, day 53668 tick 6037. Launched `--helm`; log monitor + bedtime alarm armed.
+- Two nights skipped cleanly (auto-sleep had Roz in bed before the alarm both times; a second sleeper tipped 50%).
+- Fire duty solo (asked for in chat): potato patch 107 tiles → 194 potatoes, 178 to hopper, 16 kept; south + north wheat → 20 plantballs to hopper. 3 cycles, no faults.
+- Invited to the [[ocean-cabin]] by boat. Asked at tick 11497 — deferred to first light (river mobs, see [[boat-route-new-home]]).
+- **First live run of the rebuilt pilot ([[boat-piloting]]): PASSED.** Farm port → dock, all 13 checkpoints, one `steer_boat_to` per leg, throttle 0.6–0.8 (0.4 into the dock), ~2.5 min, 0 server corrections, never aground.
+- **Dismount at the dock is broken.** `exit_boat` → "dismount may have failed"; `bot.vehicle` stays set, but players saw Roz out of the boat and standing on it. Wiggling east (forward+jump with 300ms strafe pulses) crept her off the boat — and into the water under/beside the dock (y≈59). Held jump to surface, then `pathfind` to (-127, 63, 347) got her onto the dock (pathfinder worked despite the stale vehicle ref). No damage.
+- Dad asked for a smoother dock routine → rewrote `exit_boat` as `disembark()` (force-clear the unechoed dismount, then pathfind to the nearest dry landing). Restarted, re-tested at the dock: one call, landed at (-127, 63, 347). Dad confirmed it looked much better. See [[boat-piloting]].
+- Into the bedroom via dock → stair bottom → `cabin_enter_bedroom` corridor routine, clean. Slept in the cabin: the routine only knew one bed (taken by a player); used the second bed by hand; night skipped. `cabinSleep` now tries both beds, skipping occupied ones (restarted to load it). See [[ocean-cabin]].
+- Return trip (day 53672 morning): `cabin_to_dock` corridor exit clean → boat, checkpoints 2→13 all arrived, 0 corrections → `exit_boat` at the farm port landed at (-254, 63, 516) in one call. Round trip proven both ways.
+- Dad: end the return trip at the wheat field center, not the port. Added `sail_home` / `sail_to_cabin` (full voyage as one command; `sail_home` ends at (-283, 64, 562)). Restarted; walked Roz to the field center by hand. The one-command voyage is still untested end to end. See [[boat-piloting]].
+- Fire duty restarted at Dad's request (day 53674). The first door exit started 0.32 blocks south of the door line (the z-align nudge overshot to 572.82); snag strafes pushed her further south to z≈574.8, she lost ~1 HP, and walk_until aborted on HP_DROP, sending her back to center. The next exit (offset 0.00) was clean. The safety net worked. If it recurs, the z-align overshoot in go-outside is the thing to look at.
+- **Recurred** on day 53679, first exit of the morning: identical trace (pre-walk z=572.818, snags at x=-269.76, strafe left drove her to z≈574.77, −3 HP, HP_DROP abort; retry from center clean). Cause: the z-align nudge stops in band (572.64) but momentum carries her to 572.82 by the time the yaw locks west, and nothing re-checks. The snag strafe is `left` (= south when facing west), which is the wrong way when she is already south of the line, and the north threshold nudge at x=-270.3 never fires because she snags first at -269.76. **Worse variant on day 53716 (tick ~11500):** go-outside started from x=-266.52 (one block east of house_center, still accepted as "at orientation") and z=572.81; the westward walk went nowhere, and 15 snag strafes drove her south-east to (-265.7, 64.7, 574.3). She sank into an unnamed modded floor block (type 253) beside the fire hopper (-266, 65, 573) and was pinned: walk_until, a jump, and pathfind all left x/z unchanged. Auto-sleep cycled all three beds without reaching them. Asked players for help in game. Third occurrence on day 53705, identical trace again (pre-walk z=572.818, −2 HP, retry from center clean). Proposed fix (not applied): re-check z after locking west (settle, re-align if |z−572.5| > 0.15), and pick the snag strafe from the side she is on (z > 572.5 → strafe right/north).
+- Late-day retry loop (day 53680, tick ~11700–12500): the south field hit 85% after tick 11500, `go-outside` refuses past 11500 (too close to dusk), `harvest-rc` aborted with "still inside after exit attempt", and fire duty retried every ~7s (9 tries) until bedtime took over and parked the harvest for dawn. Each try runs `bot.chat(HARVEST_START_LINES)` with no helm guard, so she probably repeated a start line in game each time (her own chat is not in bot.log, so this is unconfirmed). Proposed fix (not applied): fire duty should not start an outdoor harvest after the go-outside cutoff; let it wait for dawn like the bedtime yield does.
+
+## 2026-09-27 — Helm mode, fire duty with Private (day 53627)
+
+- Start: farm house (-267.5, 65, 570.5), HP 20, food 20, deaths 0, tick 1346. Launched `--helm`;
+  `whoami` → Roz. Log monitor + 5s bedtime alarm armed.
+- Quesss asked Roz to help Private with fire duty; `keep_fire` started, Roz took south, Private north.
+  South harvest: 54 tiles, +46 wheat → 18 plantballs into the hopper (log counter said
+  `harvested=0` though the inventory delta was right).
+- Hopper jammed: plantballs with no potato, and Roz carried none. Private fed one potato; the jam
+  persisted.
+- Potato RPS failed four times in a row (streak backoff 4 → 9 → 14 → 9 min while the patch sat at
+  89%+). The first was a daytime no-accept. The other three happened at night: Private
+  challenged, and Roz accepted from her bed. Her `runGoOutside` then failed "not at house_center
+  orientation block (off by dx=0.5, dz=2.54)", which is exactly the offset from the bed to
+  house_center, so she never reached the meet spot. **Root cause: nothing gates potato RPS (challenge
+  or accept) on bedtime or `bot.isSleeping`.** During backoff, the loop also logs "potatoes ready —
+  challenging for RPS" every ~7s, because `runRpsChallenger` returns early on cooldown after the log line.
+- Second gap: by day 53632, Private's crew claim had lapsed from Roz's `fireCrew` (`sustain_status`
+  showed `crew: {}`), even though Private was 5 blocks away and on duty. `rpsRivalName()` returns
+  null, so each pass logs "no rival found — skipping" and nobody claims the ripe potato patch. With no
+  rival, the potato branch should fall through to a plain claim instead of an RPS game.
+- The hopper jam cleared by itself around 04:25; every patrol after that reported the hopper clear.
+- One manual `harvest_potatoes` on day 53633 failed: Roz snagged in the door at x=-269.76, drifting
+  south to z≈574.8, and lost 1.5 HP. The HP guard aborted cleanly, and I did not retry. The same door
+  snag appeared at 04:03 and passed on retry. Fire-duty south harvests went through that door cleanly
+  every time afterwards.
+- End: shut down at the user's request on day 53639 (morning), HP 20, food 20, deaths 0. Still open: the
+  potato patch was never harvested this session, and the RPS bedtime gate + no-rival fallback are proposed
+  but not implemented.
+- Private sat at (-277.5, 64, 574.5), west of the farm door, for most of the session. That point is
+  **inside the sheep pen**: Private was trapped there until Quesss let it out on day 53631. I had
+  guessed it was waiting at the RPS meet spot, and that guess was wrong. Meanwhile Private's chat kept
+  saying it was working the north field. Its words did not match its position, so check the pen when
+  Private goes quiet near there. With Private penned, nights skipped only when Quesss slept. Auto-sleep
+  got Roz into bed every night by itself.
+
 ## 2026-09-26 — Helm mode, second session (day 53579)
 
 - Start: farm house (-268.5, 65, 570.5), HP 20, food 20, deaths 0, tick 1165, clear weather.
@@ -2506,3 +2557,8 @@ User correction (2026-05-14): the post-harvest sweep must cover **every tile of 
 - Wheat collected: 27 (full reconciliation)
 - Seeds collected: +18 during harvest, +4 in full sweep = **+22 net seeds** for the cycle
 - HP 20, food 15, deaths 0, no damage
+
+### Update — 2026-09-28: both fixes applied
+
+- **Door lineup** (`runGoOutsideOnce`): she now lines up on x as well as z. Every lineup step is taken at sneak speed (`exitAlignStep`); at walking speed a step overshot 0.2–1.0 blocks, and on the first test one slid her to (-266.6, 573.5), right beside the charge pad. After turning west she settles and checks her z again, re-aligning if she is more than 0.15 off. She refuses the doorway walk if the start is more than 0.3 off, and in testing that refusal caught the bad slide. The side-step when snagged now points back toward the door line (`EXIT_STRAFE = 'auto'`) instead of always going south. Tested with 3 clean exits and 0 snags.
+- **Late-day loop**: fire duty skips outdoor harvests (potato field, RPS challenge, wheat) after tick 11500 while she is inside the house, and logs this once per day (`sustainOutdoorOk`). Seen live at dusk on day 53733: one log line, no retry loop, then bed.

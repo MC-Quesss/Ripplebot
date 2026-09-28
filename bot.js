@@ -608,6 +608,8 @@ const CABIN_CORRIDOR_X = -122
 const CABIN_CORRIDOR_OUTSIDE = { x: -122, y: 66, z: 317.5 }
 const CABIN_CORRIDOR_INSIDE = { x: -122, y: 66, z: 323.5 }
 const CABIN_BED = { x: -128, y: 66, z: 324 }
+// Two beds side by side (heads at x=-128); players often take one (2026-09-27).
+const CABIN_BEDS = [CABIN_BED, { x: -128, y: 66, z: 323 }]
 function insideCabinBedroom () {
   const p = bot.entity?.position
   if (!p) return false
@@ -686,17 +688,19 @@ async function cabinDockToBedroom () {
 }
 async function cabinSleep () {
   if (!insideCabinBedroom()) await cabinDockToBedroom()
-  const bed = bot.blockAt(new Vec3(CABIN_BED.x, CABIN_BED.y, CABIN_BED.z))
-  if (bed) {
+  let found = false
+  for (const b of CABIN_BEDS) {
+    const bed = bot.blockAt(new Vec3(b.x, b.y, b.z))
+    if (!bed || bed.name !== 'bed') continue
+    found = true
+    if (bed.metadata & 0x4) { logEvent('cabin', `bed at ${posStr(b)} is occupied — trying the next`); continue }
     try { await bot.activateBlock(bed) } catch (e) {
-      logEvent('cabin', `bed activate failed: ${e.message}`)
+      logEvent('cabin', `bed activate failed at ${posStr(b)}: ${e.message}`)
     }
     await sleep(1000)
-    if (bot.isSleeping) logEvent('cabin', 'sleeping in cabin bed')
-    else logEvent('cabin', 'bed activate did not result in sleep')
-  } else {
-    logEvent('cabin', 'no bed block found at expected position')
+    if (bot.isSleeping) { logEvent('cabin', `sleeping in cabin bed at ${posStr(b)}`); return }
   }
+  logEvent('cabin', found ? 'no cabin bed resulted in sleep' : 'no bed block found at expected positions')
 }
 
 function penContainsXZ (x, z) {
@@ -2285,13 +2289,15 @@ async function walkUntilAxis ({
         lastProgressAt = now
       } else if (unstickStrafe && !strafeActive && now - lastProgressAt >= snagWindow) {
         // Snagged — pulse strafe briefly, then let forward carry us again.
-        strafeActive = unstickStrafe
+        // A function picks the side from the live position at snag time.
+        const side = typeof unstickStrafe === 'function' ? unstickStrafe(bot.entity?.position) : unstickStrafe
+        strafeActive = side
         strafeOffAt = now + unstickMs
-        bot.setControlState(unstickStrafe, true)
+        bot.setControlState(side, true)
         snagCount++
         const sp = bot.entity?.position
         if (sp) snagPositions.push({ x: +sp.x.toFixed(3), z: +sp.z.toFixed(3), ms: now - start })
-        logEvent('walk_until', `snag at ${axis}=${val.toFixed(2)} — pulsing strafe ${unstickStrafe} for ${unstickMs}ms`)
+        logEvent('walk_until', `snag at ${axis}=${val.toFixed(2)} — pulsing strafe ${side} for ${unstickMs}ms`)
         lastProgressAt = now // give the pulse time to work before another
       }
 
@@ -2735,6 +2741,163 @@ function boatSeek (waypoints, { throttle = 1, range = 3, rate = BOAT_TURN_RATE, 
     return { done: `arrived (${waypoints.length} waypoint${waypoints.length === 1 ? '' : 's'})` }
   }, { maxMs })
 }
+
+// ── Disembarking ──
+// On this server the dismount often never echoes back: the player is really
+// out (standing on top of the boat) but bot.vehicle stays set, and every move
+// after that is a slow, uncertain shove. At the cabin dock that shove slid
+// Roz off the boat into the water (2026-09-27). So: ask to dismount, and if
+// the ref survives a beat, trust the request and clear it (the pond routine
+// has always done this). Then step onto the nearest dry standing spot with
+// the pathfinder, which swims out if the step lands in the water.
+function findLanding (from, maxR = 4) {
+  let best = null
+  for (let dy = 0; dy <= 2; dy++) {
+    for (let dx = -maxR; dx <= maxR; dx++) {
+      for (let dz = -maxR; dz <= maxR; dz++) {
+        const x = Math.floor(from.x) + dx, y = Math.floor(from.y) + dy, z = Math.floor(from.z) + dz
+        const floor = bot.blockAt(new Vec3(x, y - 1, z))
+        const feet = bot.blockAt(new Vec3(x, y, z))
+        const head = bot.blockAt(new Vec3(x, y + 1, z))
+        if (!floor || !feet || !head) continue
+        // Empty-name modded blocks have unknown collision — never land on one.
+        if (!floor.name || floor.boundingBox !== 'block') continue
+        if (feet.boundingBox !== 'empty' || head.boundingBox !== 'empty') continue
+        if (/water|lava/.test(feet.name) || /water|lava/.test(head.name)) continue
+        const d = Math.hypot(x + 0.5 - from.x, z + 0.5 - from.z)
+        if (!best || d < best.d) best = { x, y, z, d }
+      }
+    }
+  }
+  return best
+}
+
+async function disembark ({ to = null, land = true } = {}) {
+  const v = bot.vehicle
+  if (!v) return { ok: false, error: 'not in a vehicle' }
+  if (pilot.session) pilot.session.supersede()
+  const boatPos = v.position.clone()
+  const startDeaths = deathCount
+  client.write('steer_vehicle', { sideways: 0, forward: 0, jump: 0x02 })
+  client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 })
+  bot.setControlState('sneak', true)
+  try { bot.dismount() } catch (_) {}
+  await sleep(600)
+  if (PERSONA !== 'private') bot.setControlState('sneak', false)
+  const confirmed = !bot.vehicle
+  if (!confirmed) {
+    logEvent('exit-boat', 'server did not echo the dismount — clearing vehicle ref')
+    bot.vehicle = null
+  }
+  stopPassengerObserving()
+  wasInVehicle = false
+  pilot.vehicleId = null
+  // Out of the boat we stand on top of it, not at its waterline.
+  if (bot.entity) bot.entity.position.set(boatPos.x, boatPos.y + 0.6, boatPos.z)
+  rawState.x = boatPos.x; rawState.y = boatPos.y + 0.6; rawState.z = boatPos.z
+  if (!land) {
+    logEvent('exit-boat', `dismounted (${confirmed ? 'confirmed' : 'forced'}), staying put`)
+    return { ok: true, dismounted: true, confirmed }
+  }
+  const spot = to ? { x: Math.floor(to.x), y: Math.floor(to.y), z: Math.floor(to.z) } : findLanding(boatPos)
+  if (!spot) {
+    logEvent('exit-boat', `dismounted (${confirmed ? 'confirmed' : 'forced'}), no dry landing within 4 blocks`)
+    return { ok: true, dismounted: true, confirmed, landed: false, error: 'no dry landing within 4 blocks' }
+  }
+  const arrived = await pathTo(spot, 0, 12000).catch(e => { logEvent('exit-boat', `landing path failed: ${e.message}`); return false })
+  const p = bot.entity.position
+  const landed = !!arrived && deathCount === startDeaths && Math.hypot(p.x - (spot.x + 0.5), p.z - (spot.z + 0.5)) <= 1.2 && Math.abs(p.y - spot.y) <= 1
+  logEvent('exit-boat', `dismounted (${confirmed ? 'confirmed' : 'forced'}), ${landed ? 'landed' : 'did NOT land'} at ${posStr(p)} (target ${spot.x}, ${spot.y}, ${spot.z})`)
+  return { ok: true, dismounted: true, confirmed, landed, landing: { x: spot.x, y: spot.y, z: spot.z }, pos: { x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2) } }
+}
+
+// ── River voyage: ocean cabin ↔ farm ──
+// The 13 charted checkpoints (journal/places/boat-route-new-home.md), dock →
+// farm port. Sailed by hand leg by leg both ways on 2026-09-27 with zero
+// server corrections; these are the same legs and throttles. Slow in the
+// harbors, faster on open water and the river.
+const RIVER_ROUTE = [
+  { x: -127, z: 348, throttle: 0.4, note: 'ocean cabin dock' },
+  { x: -133, z: 349, throttle: 0.5, note: 'away from dock' },
+  { x: -140, z: 342, throttle: 0.6, note: 'harbor mouth' },
+  { x: -154, z: 337, throttle: 0.8, note: 'open water' },
+  { x: -175, z: 361, throttle: 0.8, note: 'river mouth' },
+  { x: -189, z: 393, throttle: 0.8, note: 'mid river' },
+  { x: -199, z: 408, throttle: 0.8, note: 'river halfway' },
+  { x: -216, z: 428, throttle: 0.8, note: 'upper river' },
+  { x: -231, z: 444, throttle: 0.8, note: 'river branch' },
+  { x: -241, z: 472, throttle: 0.8, note: 'bridge north' },
+  { x: -239, z: 499, throttle: 0.7, note: 'under the bridge' },
+  { x: -245, z: 517, throttle: 0.6, note: 'bridge south' },
+  { x: -253.5, z: 520.8, throttle: 0.4, note: 'farm port' },
+]
+// Too close to dusk to start: the trip is ~2.5 min (~3000 ticks) and a
+// creeper on the riverbank killed Roz on the first attempt.
+const VOYAGE_LATEST_START = 9500
+
+async function mountNearestBoat (radius = 8) {
+  const p = bot.entity.position
+  const boat = Object.values(bot.entities)
+    .filter(e => e !== bot.entity && e.name === 'boat' && e.position.distanceTo(p) <= radius)
+    .sort((a, b) => a.position.distanceTo(p) - b.position.distanceTo(p))[0]
+  if (!boat) return false
+  if (boat.position.distanceTo(p) > 2.5) await pathTo({ x: Math.floor(boat.position.x), y: Math.round(boat.position.y), z: Math.floor(boat.position.z) }, 2, 10000)
+  await bot.activateEntity(boat)
+  await sleep(500)
+  return !!bot.vehicle
+}
+
+// toFarm: cabin → farm, ending at the wheat field center (Dad, 2026-09-27:
+// don't wait at the port). Otherwise farm → cabin, ending on the dock.
+async function runRiverVoyage (toFarm, { force = false } = {}) {
+  const label = toFarm ? 'sail home' : 'sail to cabin'
+  if (!force && (!bot.time.isDay || bot.time.timeOfDay >= VOYAGE_LATEST_START)) {
+    return { ok: false, error: 'too late in the day for the river — go at first light (force: true to override)' }
+  }
+  const gate = startTask('voyage', label)
+  if (!gate.allowed) return { ok: false, error: 'busy', task: gate.current, detail: gate.detail }
+  const myGen = abortGen
+  const startDeaths = deathCount
+  const legs = toFarm ? RIVER_ROUTE.slice(1) : RIVER_ROUTE.slice(0, -1).reverse()
+  const start = toFarm ? RIVER_ROUTE[0] : RIVER_ROUTE[RIVER_ROUTE.length - 1]
+  try {
+    logEvent('voyage', `${label}: ${legs.length} legs`)
+    if (!bot.vehicle) {
+      if (toFarm && insideCabinBedroom()) await cabinExitBedroom()
+      if (!toFarm && insideHouse()) await runGoOutside('the boat')
+      checkAbort(myGen)
+      await pathTo({ x: Math.floor(start.x), y: 63, z: Math.floor(start.z) }, 3, 60000)
+      checkAbort(myGen)
+      if (!await mountNearestBoat()) return { ok: false, error: `no boat to board near the ${start.note}` }
+    }
+    for (let i = 0; i < legs.length; i++) {
+      checkAbort(myGen)
+      if (deathCount !== startDeaths) return { ok: false, error: 'died en route', leg: i + 1 }
+      const leg = legs[i]
+      const last = i === legs.length - 1
+      const r = await boatSeek([{ x: leg.x, z: leg.z }], { throttle: leg.throttle, range: last ? 1 : 3, label: `${label} ${i + 1}/${legs.length} ${leg.note}` })
+      if (!String(r.result).startsWith('arrived')) {
+        logEvent('voyage', `${label}: stopped at leg ${i + 1}/${legs.length} (${leg.note}): ${r.result}`)
+        return { ok: false, error: `leg ${i + 1} (${leg.note}): ${r.result}`, pos: r.pos }
+      }
+    }
+    const off = await disembark()
+    if (!off.landed) return { ok: false, error: 'reached the far side but did not land', ...off }
+    if (toFarm) {
+      checkAbort(myGen)
+      await pathTo(HARVEST_WAYPOINTS.field_center, 1, 30000)
+    }
+    const p = bot.entity.position
+    logEvent('voyage', `${label}: done at ${posStr(p)}`)
+    return { ok: true, arrived: toFarm ? 'wheat field center' : 'cabin dock', pos: { x: +p.x.toFixed(1), y: +p.y.toFixed(1), z: +p.z.toFixed(1) } }
+  } catch (e) {
+    logEvent('voyage', `${label}: ${e.name === 'AbortError' ? 'stopped' : `failed: ${e.message}`}`)
+    return { ok: false, error: e.name === 'AbortError' ? 'stopped' : e.message }
+  } finally {
+    endTask('voyage')
+  }
+}
+
 async function runIdleBoating () {
   isIdleBoating = true
   try { return await _runIdleBoating() } finally { isIdleBoating = false }
@@ -5780,6 +5943,23 @@ async function runWheatCycle (harvestHalf) {
   return true
 }
 
+// Outdoor work (field harvests) must start before the door's own late cutoff
+// (runGoOutsideOnce refuses at 11500). Without this gate the ladder re-fires a
+// harvest every poll from dusk to bedtime, each one refused at the door.
+const SUSTAIN_OUTDOOR_CUTOFF = 11500
+let sustainDuskLoggedDay = -1
+function sustainOutdoorOk () {
+  const t = bot.time || {}
+  if (t.isDay && (t.timeOfDay ?? 0) < SUSTAIN_OUTDOOR_CUTOFF) return true
+  if (!insideHouse()) return true // already out: tasks handle their own bedtime yield
+  const day = t.day ?? 0
+  if (sustainDuskLoggedDay !== day) {
+    sustainDuskLoggedDay = day
+    logEvent('sustain', `past ${SUSTAIN_OUTDOOR_CUTOFF} — no outdoor harvests until dawn; indoor duties only`)
+  }
+  return false
+}
+
 async function runSustainFarm (user) {
   if (sustainState.active) { bot.chat('Already keeping the fire going.'); return }
   sustainState.active = true
@@ -5887,7 +6067,7 @@ async function runSustainFarm (user) {
       // below keeps the furnace loaded. Nothing extra to do per-poll.
 
       // Rung 3: the potato field.
-      if (duties.has('potatoes') && canWork()) {
+      if (duties.has('potatoes') && canWork() && sustainOutdoorOk()) {
         const pScan = scanKnownPotatoField()
         const due = pScan.potatoes > 0 &&
           (pScan.maturePct >= SUSTAIN_POTATO_MATURITY_PCT || sustainState.pendingWork.has('potatoes'))
@@ -5915,7 +6095,7 @@ async function runSustainFarm (user) {
         if (pCheck.maturePct < SUSTAIN_POTATO_MATURITY_PCT) sustainState.potatoRole = null
       }
       const holdsWheat = duties.has('north') || duties.has('south')
-      if (holdsWheat && !duties.has('potatoes') && !sustainState.potatoRole && !activeFireClaims().has('potatoes') && canWork()) {
+      if (holdsWheat && !duties.has('potatoes') && !sustainState.potatoRole && !activeFireClaims().has('potatoes') && canWork() && sustainOutdoorOk()) {
         if (rpsAccepted) {
           const challenger = rpsAccepted
           rpsAccepted = null
@@ -5973,7 +6153,7 @@ async function runSustainFarm (user) {
       // Rung 4 (bonus): wheat — held halves at >=85%, or acquired mid-work
       // via .q with the remainder still standing. One cycle per poll, then
       // re-evaluate the ladder from the top.
-      if (canWork() && bot.time?.isDay) {
+      if (canWork() && bot.time?.isDay && sustainOutdoorOk()) {
         const dueHalves = ['north', 'south'].filter(h =>
           duties.has(h) && (scanKnownWheatFields(h).maturePct >= 85 || sustainState.pendingWork.has(h)))
         if (dueHalves.length) {
@@ -7044,10 +7224,27 @@ const HOUSE_DOOR = { x: -272, y: 65, z: 572 }
 // `door_strafe` ctl action so we can tune without restarting.
 // Empirically: strafe-left while facing west over-steers south; the door
 // needs the opposite nudge, and only briefly (the door frame is 2 blocks).
-let EXIT_STRAFE = 'left'   // facing west, left = +z (south) — oak door hinge south
+let EXIT_STRAFE = 'auto'   // 'auto' = side-step toward the door line (z=572.5); or 'left'/'right'/null
 let ENTER_STRAFE = null    // no strafe on entry — corridor too narrow for either
                            // direction; left hits z=571 wall, right hits south side.
 let EXIT_STRAFE_MS = 200
+const EXIT_START_X = -267.5 // house_center block's middle (player coords)
+const EXIT_DOOR_Z = 572.5   // door-line center the exit walk must start on
+const EXIT_Z_TOL = 0.15     // re-align if drifted further than this after yaw lock
+const EXIT_XZ_TOL = 0.3     // refuse the doorway walk if the start is off by more
+
+// Lineup steps inside the house are sneak-walked: at full walk speed a step
+// overshoots 0.2–1.0 blocks, and one x-align slid her to (-266.6, 573.5), a
+// step from the charge pad (2026-09-28).
+async function exitAlignStep (axis, target, direction, maxMs = 3000) {
+  bot.setControlState('sneak', true)
+  try {
+    return await walkUntilAxis({ axis, target, direction, maxMs })
+  } finally {
+    bot.setControlState('sneak', false)
+    await sleep(300)
+  }
+}
 let ENTER_STRAFE_MS = 200
 
 // Face a yaw and confirm the rotation applied. Primary signal is
@@ -7116,18 +7313,30 @@ async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
   }
   logEvent('go-outside', `at orientation ${JSON.stringify(atOrigin.pos)}`)
 
+  // 2a. Align x onto the orientation block's center. The pathfinder's range-0
+  // goal accepts anywhere in the block; starting a full block east (x=-266.5)
+  // is how the 2026-09-28 exit ended up pinned on the charge pad.
+  const curXExit = bot.entity.position.x
+  if (Math.abs(curXExit - EXIT_START_X) > EXIT_XZ_TOL) {
+    const west = curXExit > EXIT_START_X
+    logEvent('go-outside', `x-align: ${curXExit.toFixed(2)}, nudging ${west ? '-x' : '+x'}`)
+    await faceYaw(west ? Math.PI / 2 : -Math.PI / 2)
+    await exitAlignStep('x', EXIT_START_X, west ? 'lte' : 'gte')
+    logEvent('go-outside', `x-align done: x=${bot.entity.position.x.toFixed(2)}`)
+  }
+
   // 2b. Align z toward door center (572.5). The collision face at x≈-270.7
   // catches westbound traffic when z > ~572.6; go-inside already does this.
   const curZExit = bot.entity.position.z
   if (curZExit > 572.7) {
     logEvent('go-outside', `z-align: ${curZExit.toFixed(2)} > 572.7, nudging -z`)
     await faceYaw(0)
-    await walkUntilAxis({ axis: 'z', target: 572.5, direction: 'lte', maxMs: 3000 })
+    await exitAlignStep('z', EXIT_DOOR_Z, 'lte')
     logEvent('go-outside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
   } else if (curZExit < 572.45) {
     logEvent('go-outside', `z-align: ${curZExit.toFixed(2)} < 572.45, nudging +z`)
     await faceYaw(Math.PI)
-    await walkUntilAxis({ axis: 'z', target: 572.5, direction: 'gte', maxMs: 3000 })
+    await exitAlignStep('z', EXIT_DOOR_Z, 'gte')
     logEvent('go-outside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
   }
 
@@ -7140,6 +7349,28 @@ async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
     throw new Error(`yaw didn't converge to west (got ${yawResult.yaw.toFixed(2)} rad)`)
   }
   logEvent('go-outside', `yaw locked west at ${yawResult.yaw.toFixed(3)} rad`)
+
+  // 3b. Momentum from the z-align keeps carrying her after it stops (572.50 →
+  // 572.82 seen), so settle and re-check before committing to the doorway.
+  await sleep(300)
+  for (let fix = 0; fix < 2; fix++) {
+    const zNow = bot.entity.position.z
+    if (Math.abs(zNow - EXIT_DOOR_Z) <= EXIT_Z_TOL) break
+    const south = zNow > EXIT_DOOR_Z
+    logEvent('go-outside', `z drifted to ${zNow.toFixed(3)} after yaw lock — re-aligning ${south ? '-z' : '+z'}`)
+    await faceYaw(south ? 0 : Math.PI)
+    await exitAlignStep('z', EXIT_DOOR_Z, south ? 'lte' : 'gte')
+    const again = await faceYaw(TARGET_YAW)
+    if (!again.ok) throw new Error(`yaw didn't converge to west after z re-align (got ${again.yaw.toFixed(2)} rad)`)
+    await sleep(300)
+  }
+  const startCheck = bot.entity.position
+  const offX = Math.abs(startCheck.x - EXIT_START_X)
+  const offZ = Math.abs(startCheck.z - EXIT_DOOR_Z)
+  if (offX > EXIT_XZ_TOL || offZ > EXIT_XZ_TOL) {
+    logEvent('go-outside', `refusing doorway walk: start off by dx=${offX.toFixed(2)} dz=${offZ.toFixed(2)} (tol ${EXIT_XZ_TOL})`)
+    throw new Error(`not at house_center orientation block (off by dx=${offX.toFixed(2)}, dz=${offZ.toFixed(2)})`)
+  }
   const preWalkPos = bot.entity?.position
   if (preWalkPos) logEvent('go-outside', `pre-walk pos=(${preWalkPos.x.toFixed(3)}, ${preWalkPos.y.toFixed(3)}, ${preWalkPos.z.toFixed(3)}) z-offset-from-door-center=${(preWalkPos.z - 572.5).toFixed(3)}`)
   sendEmote('cheer')
@@ -7159,7 +7390,14 @@ async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
 
   const walk = await walkUntilAxis({
     axis: 'x', target: -275, direction: 'lte', maxMs: 8000, bailOnDamage: true,
-    unstickStrafe: EXIT_STRAFE, unstickMs: EXIT_STRAFE_MS,
+    // Side-step back toward the door line, never away from it: a fixed 'left'
+    // (south) pulse from an already-south start is what walked her into the
+    // south-east corner and onto the charge pad. EXIT_STRAFE stays as the
+    // manual override via `door_strafe` when set to anything but 'auto'.
+    unstickStrafe: EXIT_STRAFE === 'auto'
+      ? (pos) => ((pos?.z ?? EXIT_DOOR_Z) > EXIT_DOOR_Z ? 'right' : 'left')
+      : EXIT_STRAFE,
+    unstickMs: EXIT_STRAFE_MS,
     // Tiny north nudge just as the threshold is crossed: pre-empts the
     // south-jamb catch at x≈-270.8 (oak door, hinge south).
     // Facing west, 'right' = -z = north.
@@ -12276,6 +12514,17 @@ function handleCommand (cmd) {
       runIdleBoating().catch(e => logEvent('go-boating-error', e.message))
       return { ok: true, started: true }
     }
+    case 'shear_sheep': {
+      // Same routine as the "shear the sheep" chat reflex, which helm mode
+      // switches off along with the rest of chat.
+      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+      abortGen++
+      runShearSheep().catch(e => {
+        if (e.name === 'AbortError') return
+        logEvent('shear-error', e.message)
+      })
+      return { ok: true, started: true }
+    }
     case 'go_into_pen': {
       if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
       runGoIntoPen().catch(e => logEvent('go-into-pen-error', e.message))
@@ -12415,29 +12664,18 @@ function handleCommand (cmd) {
       })
     }
     case 'exit_boat': {
-      if (!bot.vehicle) return { ok: false, error: 'not in a vehicle' }
-      const vidBefore = bot.vehicle.id
-      client.write('steer_vehicle', { sideways: 0, forward: 0, jump: 0x02 })
-      client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 })
-      bot.setControlState('sneak', true)
-      try { bot.dismount() } catch (_) {}
-      return sleep(600).then(() => {
-        if (PERSONA !== 'private') bot.setControlState('sneak', false)
-        if (!bot.vehicle) {
-          logEvent('exit-boat', 'dismounted')
-          return { ok: true, dismounted: true }
-        }
-        const vp = bot.vehicle.position
-        const bp = bot.entity.position
-        const drift = bp.distanceTo(vp)
-        if (drift > 2 || bot.vehicle.id !== vidBefore) {
-          logEvent('exit-boat', `vehicle ref stale (drift=${drift.toFixed(1)}) — clearing`)
-          bot.vehicle = null
-          return { ok: true, dismounted: true }
-        }
-        logEvent('exit-boat', 'dismount may have failed')
-        return { ok: true, dismounted: false }
-      })
+      // Dismount and step onto dry land. args: { to?: {x,y,z} landing block
+      // (default: nearest dry standing spot within 4), land?: false to just get out }
+      return disembark({ to: args.to || null, land: args.land !== false })
+    }
+    case 'sail_home': {
+      // Ocean cabin → farm by boat, ending at the wheat field center.
+      // args: { force?: true to start after VOYAGE_LATEST_START }
+      return runRiverVoyage(true, { force: !!args.force })
+    }
+    case 'sail_to_cabin': {
+      // Farm → ocean cabin by boat, ending on the cabin dock.
+      return runRiverVoyage(false, { force: !!args.force })
     }
     case 'boat_status': {
       const v = bot.vehicle
