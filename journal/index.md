@@ -37,6 +37,7 @@ A network of notes mapping the known parts of this world. Each note is a single 
 - [[places/water-hazard-west-of-potatoes]] — oval pond west of the potato patch, keep out
 - [[places/rooftop-garden]] — discovered 2026-07-07; modded crop garden on the house roof (**3×6**, corrected 2026-07-29) — and the trailhead for the igloo route
 - [[places/igloo]] — snow igloo by the frozen lake, ~235 blocks south-southwest; two double beds; interior unexplored
+- [[places/bleu-de-paris]] — Dad's river yacht across from the farm port; river-exit orientation block
 - [[places/snow-line-midway]] — biome-boundary landmark halfway to the igloo
 - [[procedures/farm-to-igloo]] — the route: field → roof → igloo, mapped from five traced walks
 - [[procedures/right-click-harvest]] — current main loop (wheat)

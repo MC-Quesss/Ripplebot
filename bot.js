@@ -712,6 +712,10 @@ function inPen () {
   return penContainsXZ(p.x, p.z) && p.y >= 63 && p.y <= 65
 }
 async function ensureInsideHouse () {
+  // In a boat, position is stale and pathTo can't move us — get out first
+  // (Muse, 2026-09-28: "stash everything" from the pond failed at the chest).
+  // Not landing is fine: runGoInside will swim to shore.
+  if (bot.vehicle) await disembark()
   if (inPen()) await runGoOutOfPen()
   if (!insideHouse()) await runGoInside()
   if (!insideHouse()) throw new Error('failed to get inside house')
@@ -2421,6 +2425,7 @@ function randomIdleWanderTarget () {
     if (r < 0.73) return 'pen'
     if (r < 0.73 + 0.12 + fb) return 'furnace'
     if (r < 0.85 + fb + 0.08) return 'pond'
+    if (r < 0.93 + fb + 0.05) return 'port'
     return 'stay'
   }
   if (fieldNow) {
@@ -2430,6 +2435,7 @@ function randomIdleWanderTarget () {
     if (r < 0.77) return 'pen'
     if (r < 0.77 + 0.10 + fb) return 'furnace'
     if (r < 0.87 + fb + 0.08) return 'pond'
+    if (r < 0.95 + fb + 0.05) return 'port'
     return 'stay'
   }
   if (r < 0.18) return 'inside'
@@ -2437,7 +2443,31 @@ function randomIdleWanderTarget () {
   if (r < 0.63) return 'pen'
   if (r < 0.63 + 0.12 + fb) return 'furnace'
   if (r < 0.75 + fb + 0.10) return 'pond'
+  if (r < 0.85 + fb + 0.08) return 'port'
   return 'stay'
+}
+
+// Farm port: stand on the bank by the paddle boats and look east across the
+// river, where Dad likes to be (Dad, 2026-09-28: "come visit from time to
+// time"). Stand point is the land block Roz walked to on 2026-09-28.
+const FARM_PORT_STAND = { x: -255, y: 63, z: 524 }
+
+async function runIdleWanderToPort () {
+  if (insideHouse()) await runGoOutside('the river')
+  if (insideHouse()) return
+  logEvent('idle-wander', 'heading to the farm port')
+  await pathTo(FARM_PORT_STAND, 2, 20000)
+  if (!bot.entity) return
+  await bot.look(-Math.PI / 2, 0, true) // face east, across the river
+  logEvent('idle-wander', `visiting the farm port at ${posStr(bot.entity.position)}`)
+  // Linger 20–40s, but give way at once to anything else (task, follow, stop,
+  // bedtime) so the wander's cleanup never clobbers someone else's goal.
+  const myGen = abortGen
+  const until = Date.now() + 20000 + Math.random() * 20000
+  while (Date.now() < until) {
+    if (abortGen !== myGen || !idleWanderEnabled || idleWanderBusy() || isBedtime()) return
+    await new Promise(resolve => setTimeout(resolve, 1000))
+  }
 }
 
 async function runIdleWanderToField ({ announce = true } = {}) {
@@ -3136,6 +3166,8 @@ async function tryIdleWander () {
       await runIdleWanderToFurnace()
     } else if (action === 'pond') {
       await runIdleBoating()
+    } else if (action === 'port') {
+      await runIdleWanderToPort()
     }
   } catch (e) {
     if (e.name === 'AbortError') return
@@ -3155,7 +3187,7 @@ function startIdleWanderTimer () {
     }, delay)
   }
   scheduleNext()
-  logEvent('idle-wander', 'timer started, interval 20–70s')
+  logEvent('idle-wander', `timer started, interval ${IDLE_WANDER_MIN_MS / 1000}–${IDLE_WANDER_MAX_MS / 1000}s`)
 }
 
 // ── Expressive output gate ───────────────────────────────────────────────────
@@ -3580,7 +3612,7 @@ function startAmbientActionTimer () {
     }, delay)
   }
   scheduleNext()
-  logEvent('ambient-action', 'timer started, interval 90–240s')
+  logEvent('ambient-action', `timer started, interval ${AMBIENT_ACTION_MIN_MS / 1000}–${AMBIENT_ACTION_MAX_MS / 1000}s`)
 }
 
 function stopAmbientActionTimer () {
@@ -9597,6 +9629,22 @@ const CHAT_HANDLERS = [
         logEvent('stash-all-error', e.message)
         bot.chat(`Stash failed: ${e.message}`)
       })
+    },
+  },
+  {
+    // "Get out of the boat": the chat equivalent of the exit_boat ctl command.
+    // Listed after stash-all so "get out of the boat and stash everything"
+    // stashes (which disembarks first via ensureInsideHouse).
+    name: 'exit_boat',
+    pattern: /\b(get|hop|climb|step|jump)\s+(out\s+of|off(\s+of)?)\s+(the|that|your)\s+boat\b|\b(exit|leave)\s+(the|your)\s+boat\b|\bdisembark\b/i,
+    handler: (_user) => {
+      if (!bot.vehicle) { bot.chat('I am not in a boat.'); return }
+      disembark()
+        .then(r => { if (r.landed === false) bot.chat('Out of the boat, but no dry land close by. Swimming for shore.') })
+        .catch(e => {
+          logEvent('exit-boat-error', e.message)
+          bot.chat(`Could not get out of the boat: ${e.message}`)
+        })
     },
   },
   {

@@ -7,6 +7,17 @@ name: session_log
 
 Reverse-chronological. Each session a header. Raw observations land here first; canonical facts get promoted to their own notes.
 
+## 2026-09-28 — Helm mode, a visit to the paddle boats (day 53822–53823)
+
+- Start: farm house (-268, 65, 570), HP 20, food 20, deaths 0, day 53822 tick 6833. Launched `--helm`; log monitor + bedtime alarm armed.
+- Night skipped cleanly: auto-sleep waited for Private, primary bed was taken, Roz took the left bed; 2/3 asleep tipped it.
+- Dad asked for a visit at the farm port. Walked out the door → pathfind to the port bank; Roz stood at (-255, 63, 524) beside the two paddle boats and waved east across the river. See [[boat-route-new-home]].
+- **Anomaly — helm mode is not fully operator-controlled.** Mid-walk, the proactive field-repair scan (15s timer, gated only on `activeTask`/bedtime/inside/pen) hijacked the pathfinder to replant one potato at (-284, 63, 576). The operator's `pathTo` then logged "reached" even though Roz was 60 blocks from the goal. Fix options offered (skip the scan in helm, or while an operator pathfind is live); undecided.
+- Dad asked that the port be a regular stop. Added idle-wander destination `port` (`runIdleWanderToPort`, stand point (-255, 63, 524), face east, linger 20–40s, yields to anything else). Only active outside helm mode; needs a restart.
+- Paddled the river twice for Dad: port → mid-river → port, then to the stern of Dad's yacht, the [[bleu-de-paris]]. All legs arrived, 0 corrections. Landed on the east shore with `exit_boat` (to a probed grass block), followed Dad; he marked a river-exit orientation block (~(-224, 62, 547), unconfirmed).
+- Bedtime hit on the far bank (alarm tick 12663, night by 13143). Auto-sleep brought Roz home on its own — swam the river, door routine, inside in ~30 s, HP 20.
+- Log fix: idle-wander and ambient-action timer start lines now print their real intervals (were stale: said 20–70s / 90–240s, actually 60–180s / 180–420s).
+
 ## 2026-09-27 — Helm mode, first boat trip to the ocean cabin (day 53668–53671)
 
 - Start: farm house (-267, 65, 571), HP 20, food 20, deaths 0, day 53668 tick 6037. Launched `--helm`; log monitor + bedtime alarm armed.

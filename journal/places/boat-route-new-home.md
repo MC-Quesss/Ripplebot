@@ -38,3 +38,10 @@ Reverse the checkpoints above (13 → 1).
 - World spawn is at ~(222, 65, 258) — far from both homes; modded blocks near world spawn (types 1059, 1069) have real collision and cause suffocation.
 - The rail line connects world spawn to the ocean cabin area — the bot can ride a minecart (activate the entity to mount). See [[spawn-station]].
 - See also: [[house]] for the farm.
+
+## Update — 2026-09-28: farm port bank + paddle boats
+
+The dry standing spot at the farm port is **(-255, 63, 524)** — reached by pathfinder straight from the
+house door pad. Two paddle boats are usually moored right there (~(-253, 62.5, 527) and (-254, 62.5, 520)).
+Dad likes to sit directly east, across the river (~(-232, 67, 533)). The port is now an idle-wander stop
+(`port`) — Roz visits, faces east, and lingers.
