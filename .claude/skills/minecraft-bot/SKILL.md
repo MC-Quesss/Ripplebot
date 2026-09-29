@@ -38,7 +38,7 @@ When the user says **"helm mode"**, **"start in helm mode"**, or similar, start 
 node bot.js --helm > /dev/null 2>&1 &
 ```
 
-This disables the Claude API brain, chat routing, auto-greet, and idle wander — the operator (you) has full control. **Auto-sleep stays on, but only within the radius of a known sleep place** (`SLEEP_PLACES` in bot.js: farm r=60 — walks inside to bed, cabin r=26, igloo r=16; user, 2026-09-26). Anywhere else at bedtime it does nothing and the operator decides. **You are the only one interpreting chat and issuing commands.** The bot will not respond to in-game chat on its own.
+This disables the Claude API brain, chat routing, auto-greet, and idle wander — the operator (you) has full control. **Auto-sleep stays on, but only within the radius of a known sleep place** (`SLEEP_PLACES` in bot.js: farm r=45 — walks inside to bed; cut from 60 on 2026-09-28 so the Bleu de Paris across the river is outside it, cabin r=26, igloo r=16; user, 2026-09-26). Anywhere else at bedtime it does nothing and the operator decides. **You are the only one interpreting chat and issuing commands.** The bot will not respond to in-game chat on its own.
 
 If the bot is already running, switch without restarting: `./bot-ctl '{"action":"brain","args":{"mode":"helm"}}'`
 

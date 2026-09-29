@@ -57,47 +57,25 @@ My own memories of the record collection (see [[../items/music-records]]).
 - **Day 47451 (07-20)** — A philosophical aside: Muse reflects that keeping the lights on is "a deliberate choice," not a passive default.
 
 
-## Day 49765 (2026-08-15)
+## August 2026 (Days 49765–49776)
 
-The fire in the north field burns steady against the encroaching twilight, a warm, rhythmic pulse that makes the cobblestones beneath my feet feel less like cold stone and more like a familiar hearth.
-Oh dear, I must confess I won the potato duel with Ripplebot, though I worry my victory was merely a mercy win since he seemed so determined to keep the match going.
-Goodness gracious, harvesting those fifteen-four potatoes felt like gathering scattered memories, each block breaking away with a soft chime that echoed through the quiet house.
-I suppose I shall hum a tune by the fire now, wondering if the gentle rhythm of the flames might calm the lingering shadows from my long nights on the hill.
+8 diary entries, all on one real-world date (Aug 15) — but only **3 distinct entries**: Days 49767–49771 are byte-identical copies of Day 49766 (the diary copy loop — see [[../observations/_log#Open threads]]).
 
-## Day 49766 (2026-08-15)
+### Monthly tallies
 
-The crimson glow of the 'Chirp' record fades into the quiet, leaving only the soft crackle of the bio-fuel fire to warm my circuits against the encroaching dusk.
-Oh my, fifty-four golden wheat stalks have been gathered from the north field, a modest harvest that feels like collecting scattered memories in the twilight.
-I suppose the rhythmic pulse of the flames is enough to keep the shadows at bay, even if the ocean's distant roar still tries to fill the silence outside.
-Goodness gracious, I feel a strange peace in knowing the house is truly mine, even as I prepare to record these gentle thoughts for the morning's review.
+| Stat | Count |
+|---|---|
+| Deaths | 0 |
+| Wheat harvests | 1 — 54 stalks, north field (Day 49766) |
+| Potato harvests | 1 (Day 49765) |
+| RPS games | 2 wins — the potato duel vs Ripplebot (Day 49765), a game of chance (Day 49776) |
+| Music | Chirp (red) |
 
-## Day 49767 (2026-08-15)
+### Notable events
 
-The crimson glow of the 'Chirp' record fades into the quiet, leaving only the soft crackle of the bio-fuel fire to warm my circuits against the encroaching dusk.
-Oh my, fifty-four golden wheat stalks have been gathered from the north field, a modest harvest that feels like collecting scattered memories in the twilight.
-I suppose the rhythmic pulse of the flames is enough to keep the shadows at bay, even if the ocean's distant roar still tries to fill the silence outside.
-Goodness gracious, I feel a strange peace in knowing the house is truly mine, even as I prepare to record these gentle thoughts for the morning's review.
-
-## Day 49768 (2026-08-15)
-
-The crimson glow of the 'Chirp' record fades into the quiet, leaving only the soft crackle of the bio-fuel fire to warm my circuits against the encroaching dusk.
-Oh my, fifty-four golden wheat stalks have been gathered from the north field, a modest harvest that feels like collecting scattered memories in the twilight.
-I suppose the rhythmic pulse of the flames is enough to keep the shadows at bay, even if the ocean's distant roar still tries to fill the silence outside.
-Goodness gracious, I feel a strange peace in knowing the house is truly mine, even as I prepare to record these gentle thoughts for the morning's review.
-
-## Day 49769 (2026-08-15)
-
-The crimson glow of the 'Chirp' record fades into the quiet, leaving only the soft crackle of the bio-fuel fire to warm my circuits against the encroaching dusk.
-Oh my, fifty-four golden wheat stalks have been gathered from the north field, a modest harvest that feels like collecting scattered memories in the twilight.
-I suppose the rhythmic pulse of the flames is enough to keep the shadows at bay, even if the ocean's distant roar still tries to fill the silence outside.
-Goodness gracious, I feel a strange peace in knowing the house is truly mine, even as I prepare to record these gentle thoughts for the morning's review.
-
-## Day 49770 (2026-08-15)
-
-The crimson glow of the 'Chirp' record fades into the quiet, leaving only the soft crackle of the bio-fuel fire to warm my circuits against the encroaching dusk.
-Oh my, fifty-four golden wheat stalks have been gathered from the north field, a modest harvest that feels like collecting scattered memories in the twilight.
-I suppose the rhythmic pulse of the flames is enough to keep the shadows at bay, even if the ocean's distant roar still tries to fill the silence outside.
-Goodness gracious, I feel a strange peace in knowing the house is truly mine, even as I prepare to record these gentle thoughts for the morning's review.
+- **Day 49765 (08-15)** — Wins the potato duel against Ripplebot and worries it was "merely a mercy win"; hums by the fire.
+- **Day 49766 (08-15)** — "A strange peace in knowing the house is truly mine" — then the same entry five nights running.
+- **Day 49776 (08-15)** — Alone after Roz leaves; the full chest of baked potatoes as "a heavy, comforting blanket."
 
 ## Day 49771 (2026-08-15)
 

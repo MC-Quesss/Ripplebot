@@ -433,7 +433,12 @@ function pickAvoidingRecentPhrase (items, toPhrase = x => x) {
 }
 // Modded block type ids (stable per this world's Forge registry) that bots must
 // never walk into — see the solid-collision patch in the getBlock override.
-const SOLID_MODDED_TYPES = new Set([3995, 1458, 1059, 1069])
+// 1079 = mud bricks (Dad's floor east of the river; read as air until added, 2026-09-28).
+const SOLID_MODDED_TYPES = new Set([3995, 1458, 1059, 1069, 1079])
+// Modded slabs — walk on them like oak slabs (half-block collision; metadata
+// bit 8 = top half, as in vanilla). 1744 = modded-tree plank slabs, the
+// Bleu de Paris gangplank (Dad, 2026-09-28).
+const SLAB_MODDED_TYPES = new Set([1744])
 
 bot.once('spawn', () => {
   const mcData = require('minecraft-data')(bot.version)
@@ -455,6 +460,7 @@ bot.once('spawn', () => {
   mvts.exclusionAreasStep.push((block) => {
     if (!block || !block.position || block.name) return 0
     if (SOLID_MODDED_TYPES.has(block.type)) return Infinity
+    if (SLAB_MODDED_TYPES.has(block.type)) return 0
     return 3
   })
 
@@ -472,6 +478,9 @@ bot.once('spawn', () => {
       if (SOLID_MODDED_TYPES.has(b.type)) {
         b.boundingBox = 'block'
         b.shapes = [[0, 0, 0, 1, 1, 1]]
+      } else if (SLAB_MODDED_TYPES.has(b.type)) {
+        b.boundingBox = 'block'
+        b.shapes = (b.metadata & 8) ? [[0, 0.5, 0, 1, 1, 1]] : [[0, 0, 0, 1, 0.5, 1]]
       } else {
         b.boundingBox = 'empty'
         b.shapes = []
@@ -703,6 +712,59 @@ async function cabinSleep () {
   logEvent('cabin', found ? 'no cabin bed resulted in sleep' : 'no bed block found at expected positions')
 }
 
+// ── Bleu de Paris gangplank (Dad's river yacht, east bank) ─────────────────
+// A fixed corridor like the cabin bedroom (Dad, 2026-09-28): the only safe way
+// on or off the yacht is straight along the gangplank at block z=537. The
+// gangplank is modded plank slabs (SLAB_MODDED_TYPES, 1744) over open water,
+// the shore pad sits on mud bricks (1079). See journal/procedures/gangplank-bleu-de-paris.md.
+const GANGPLANK_SHORE = { x: -222, y: 64, z: 537 } // shore side of the gangplank (Dad's pad)
+const GANGPLANK_BOAT = { x: -229, y: 64, z: 537 }  // first deck block (Dad's on-boat pad)
+const GANGPLANK_LINE_Z = 537.5
+// Deck extent is only partly mapped — x -233…-229 at the gangplank, stern ~z 540–542.
+// x < -228 = block -229 and west: the on-boat pad block starts at x=-228.0, and
+// a bot standing on it reads x≈-228.5 (the old -228.6 edge missed it, 2026-09-28,
+// and she walked off the side instead of down the gangplank).
+function bleuContainsXZ (x, z) {
+  return x >= -234 && x < -228 && z >= 525 && z <= 543
+}
+function onBleu () {
+  const p = bot.entity?.position
+  if (!p) return false
+  return bleuContainsXZ(p.x, p.z) && p.y >= 63.5 && p.y <= 68
+}
+let gangplankBusy = false
+async function gangplankCross (toBoat) {
+  const label = toBoat ? 'boarding the Bleu de Paris' : 'leaving the Bleu de Paris'
+  const [from, to, yaw, dir] = toBoat
+    ? [GANGPLANK_SHORE, GANGPLANK_BOAT, Math.PI / 2, 'lte']   // west
+    : [GANGPLANK_BOAT, GANGPLANK_SHORE, -Math.PI / 2, 'gte']  // east
+  logEvent('gangplank', `${label}`)
+  gangplankBusy = true
+  try {
+    suppressLookAt(15000)
+    // pathTo returns as soon as the pathfinder pauses between path segments,
+    // which on the long swim from the farm happens well short of the pad
+    // (2026-09-28: gave up 6 blocks out). Re-issue until actually there.
+    const atFrom = () => {
+      const p = bot.entity.position
+      return Math.abs(p.x - (from.x + 0.5)) <= 1.2 && Math.abs(p.z - GANGPLANK_LINE_Z) <= 1.2
+    }
+    for (let i = 0; i < 6 && !atFrom(); i++) await pathTo(from, 0, toBoat ? 30000 : 10000)
+    const p0 = bot.entity.position
+    if (!atFrom()) {
+      throw new Error(`not at the ${toBoat ? 'shore' : 'deck'} end of the gangplank (at ${posStr(p0)})`)
+    }
+    await faceYaw(yaw)
+    const r = await walkUntilAxis({ axis: 'x', target: to.x + 0.5, direction: dir, maxMs: 8000, maintainYaw: yaw })
+    if (r.y < 63.5) throw new Error(`fell off the gangplank at ${r.x}, ${r.y}, ${r.z}`)
+    if (!r.reached) throw new Error(`did not reach the ${toBoat ? 'deck' : 'shore'} end (stopped at ${r.x}, ${r.y}, ${r.z})`)
+    logEvent('gangplank', `${toBoat ? 'aboard' : 'ashore'} at ${posStr(bot.entity.position)}`)
+    return { ok: true, pos: { x: r.x, y: r.y, z: r.z } }
+  } finally { gangplankBusy = false }
+}
+const gangplankBoard = () => gangplankCross(true)
+const gangplankLeave = () => gangplankCross(false)
+
 function penContainsXZ (x, z) {
   return x >= -282 && x <= -274 && z >= 575 && z <= 578
 }
@@ -782,6 +844,17 @@ async function tryAutoSleep () {
     return
   }
   autoSleepAwayLogged = false
+  // Aboard the Bleu de Paris, stay aboard — never run home across the river
+  // (Dad, 2026-09-28: "When on the boat, don't run home"). The operator or a
+  // player decides where to sleep.
+  if (onBleu()) {
+    if (!autoSleepBleuLogged) {
+      autoSleepBleuLogged = true
+      logEvent('auto-sleep', 'bedtime aboard the Bleu de Paris — staying aboard, not walking home')
+    }
+    return
+  }
+  autoSleepBleuLogged = false
   // Busy from here, not just around goToBed: the walk inside and the wait for
   // the others both await, and the 5s interval would otherwise start a second,
   // third... tryAutoSleep that all hit the beds at once (2026-09-26).
@@ -793,14 +866,18 @@ async function tryAutoSleep () {
   }
 }
 
+let autoSleepBleuLogged = false
 async function farmAutoSleep () {
   if (!insideHouse()) {
     logEvent('auto-sleep', 'bedtime but outside — heading in first')
-    try { await runGoInside() } catch (e) {
+    try { await runGoInside({ stillWanted: isBedtime }) } catch (e) {
       logEvent('auto-sleep', `couldn't get inside: ${e.message}`)
       return
     }
     if (!insideHouse()) return
+    // The walk home can outlast the night: if enough others slept it off on
+    // the way, the sun is up and the beds will refuse (2026-09-28, twice).
+    if (!isBedtime()) { logEvent('auto-sleep', 'morning came while walking home — not going to bed'); return }
   }
   if (PERSONA === 'roz') {
     const otherBots = Object.entries(bot.players)
@@ -819,6 +896,7 @@ async function farmAutoSleep () {
       }
     }
   }
+  if (!isBedtime() || bot.isSleeping) return
   try {
     logEvent('auto-sleep', 'bedtime detected, heading to bed')
     await goToBed('auto-sleep')
@@ -892,8 +970,11 @@ async function iglooSleep () {
 // answers "am I close enough to sleep here?" — auto-sleep only acts inside one
 // of these in helm mode. Add new places here. Radii must not overlap.
 const SLEEP_PLACES = [
-  // Same radius as HOME_RADIUS: within it, auto-sleep walks inside to bed.
-  { name: 'farm', center: { x: -268, z: 572 }, radius: 60, sleep: () => goToBed('auto-sleep') },
+  // Within it, auto-sleep walks inside to bed. 45, not HOME_RADIUS (60): the
+  // fields/potatoes/pen all sit within ~30, and 60 reached across the river to
+  // the Bleu de Paris (~52) and marched Roz home off the yacht (Dad, 2026-09-28).
+  // The farm port (~50) is now outside too — at the port the operator decides.
+  { name: 'farm', center: { x: -268, z: 572 }, radius: 45, sleep: () => goToBed('auto-sleep') },
   // Covers the whole nearCabin() box (dock to bedroom).
   { name: 'cabin', center: { x: -125, z: 332 }, radius: 26, sleep: cabinSleep },
   // Igloo removed 2026-09-26 (Quesss): its beds sit up modded stairs (type 4029,
@@ -2169,6 +2250,13 @@ async function pathTo (pt, range = 1, waitMs = 15000) {
     cabinTraversalBusy = true
     try { await cabinExitBedroom() } finally { cabinTraversalBusy = false }
   }
+  // Gangplank rule (Dad, 2026-09-28): on and off the Bleu de Paris only by the
+  // gangplank corridor, like the cabin bedroom.
+  if (!gangplankBusy) {
+    const targetAboard = bleuContainsXZ(pt.x, pt.z)
+    if (onBleu() && !targetAboard) await gangplankLeave()
+    else if (!onBleu() && targetAboard) await gangplankBoard()
+  }
   // Pen exit-first rule (user, 2026-07-06): the pathfinder cannot route
   // through the pen gate, so a bot in the pen heading anywhere OUTSIDE the
   // pen must run the safe exit procedure before anything else — field duties,
@@ -2859,22 +2947,147 @@ const RIVER_ROUTE = [
   { x: -241, z: 472, throttle: 0.8, note: 'bridge north' },
   { x: -239, z: 499, throttle: 0.7, note: 'under the bridge' },
   { x: -245, z: 517, throttle: 0.6, note: 'bridge south' },
-  { x: -253.5, z: 520.8, throttle: 0.4, note: 'farm port' },
+  // Dad rebuilt the port as a dock on 2026-09-28: plank boardwalk x -255…-254,
+  // finger piers at z 522/526/530 out to x -251. Come in east of the pier ends,
+  // then straight west into the middle slip (water x -253…-251, z 523…525).
+  // range 1: arrive ON the slip's centre line — at the default 3 the boat came
+  // in a block north and grounded on the z=522 pier (2026-09-28).
+  { x: -246, z: 524.5, throttle: 0.3, range: 1, note: 'port approach' },
+  { x: -251.5, z: 524.5, throttle: 0.25, note: 'farm port' },
 ]
 // Too close to dusk to start: the trip is ~2.5 min (~3000 ticks) and a
 // creeper on the riverbank killed Roz on the first attempt.
 const VOYAGE_LATEST_START = 9500
 
-async function mountNearestBoat (radius = 8) {
+// The boat Roz last climbed into — so she can bring *that* boat home rather
+// than whichever is nearest (Dad, 2026-09-28). Lost on restart.
+let lastBoardedBoatId = null
+async function mountNearestBoat (radius = 8, { preferId = null } = {}) {
   const p = bot.entity.position
-  const boat = Object.values(bot.entities)
-    .filter(e => e !== bot.entity && e.name === 'boat' && e.position.distanceTo(p) <= radius)
-    .sort((a, b) => a.position.distanceTo(p) - b.position.distanceTo(p))[0]
+  const preferred = preferId != null ? bot.entities[preferId] : null
+  const boat = (preferred && preferred.name === 'boat' && preferred.position.distanceTo(p) <= radius)
+    ? preferred
+    : Object.values(bot.entities)
+      .filter(e => e !== bot.entity && e.name === 'boat' && e.position.distanceTo(p) <= radius)
+      .sort((a, b) => a.position.distanceTo(p) - b.position.distanceTo(p))[0]
   if (!boat) return false
   if (boat.position.distanceTo(p) > 2.5) await pathTo({ x: Math.floor(boat.position.x), y: Math.round(boat.position.y), z: Math.floor(boat.position.z) }, 2, 10000)
   await bot.activateEntity(boat)
   await sleep(500)
+  if (bot.vehicle) lastBoardedBoatId = boat.id
   return !!bot.vehicle
+}
+
+// Leaving the Bleu de Paris: gangplank → grass landing → the paddle boat we came
+// in → farm port (Dad, 2026-09-28: "don't forget to paddle the boat you came in
+// back to the farm port"). Legs are the ones paddled out that day, reversed.
+// Dad reworked the east bank 2026-09-28 (a bridge at z≈550, x -231…-229, with
+// modded 2147/4029 blocks; the old landing grass at (-226, 62, 548) is gone).
+// Land on the new grass row at z=549, north side of the bridge — never under it.
+const BLEU_LANDING = { x: -229, y: 63, z: 549 }
+const FARM_PORT_LANDING = { x: -254, y: 63, z: 524 } // boardwalk beside the middle slip
+// Paddled 2026-09-28 from the landing, 0 corrections. Swing west of the landing
+// first — a direct line to (-234.5, 541) grounds on the stern hull.
+// Farm port → Bleu landing, paddled 2026-09-28 (5/5 legs, 0 corrections).
+// Dad: go by paddle boat, not swimming (and never under the bridge); come home
+// by the same course so you don't bump the moored boats.
+const PORT_TO_BLEU_LEGS = [
+  { x: -247.5, z: 524.5, throttle: 0.3, note: 'out of the slip' },
+  { x: -237, z: 534, throttle: 0.5, note: 'open water' },
+  { x: -236.5, z: 543, throttle: 0.4, note: 'past the stern' },
+  { x: -233.5, z: 547, throttle: 0.3, note: 'toward the landing' },
+  { x: -229.5, z: 547.5, throttle: 0.3, note: 'landing' },
+]
+const BLEU_TO_PORT_LEGS = [
+  { x: -233.5, z: 547, throttle: 0.3, note: 'off the landing' },
+  { x: -236.5, z: 543, throttle: 0.4, note: 'past the stern' },
+  { x: -237, z: 534, throttle: 0.5, note: 'open water' },
+  { x: -247.5, z: 524.5, throttle: 0.4, note: 'port approach' },
+  { x: -251.5, z: 524.5, throttle: 0.3, note: 'farm port slip' },
+]
+// pathTo quits in the pathfinder's pauses between segments — keep re-issuing
+// until actually within `tol` of the point (or out of tries).
+async function pathToSure (pt, range = 0, tol = 1.5, tries = 6, waitMs = 15000) {
+  const near = () => { const p = bot.entity.position; return Math.hypot(p.x - (pt.x + 0.5), p.z - (pt.z + 0.5)) <= tol }
+  for (let i = 0; i < tries && !near(); i++) await pathTo(pt, range, waitMs)
+  return near()
+}
+async function paddleLegs (legs, label, myGen, startDeaths) {
+  for (let i = 0; i < legs.length; i++) {
+    checkAbort(myGen)
+    if (deathCount !== startDeaths) return { ok: false, error: 'died en route' }
+    const leg = legs[i]
+    const last = i === legs.length - 1
+    const r = await boatSeek([{ x: leg.x, z: leg.z }], { throttle: leg.throttle, range: last ? 1 : 1.5, label: `${label} ${i + 1}/${legs.length} ${leg.note}` })
+    if (!String(r.result).startsWith('arrived')) return { ok: false, error: `leg ${i + 1} (${leg.note}): ${r.result}`, pos: r.pos }
+  }
+  return { ok: true }
+}
+// West bank → Bleu de Paris: farm port → paddle boat → landing → gangplank.
+async function bleuPaddleOver () {
+  const gate = startTask('voyage', 'paddle over to the Bleu')
+  if (!gate.allowed) return { ok: false, error: 'busy', task: gate.current, detail: gate.detail }
+  const myGen = abortGen
+  const startDeaths = deathCount
+  try {
+    if (!bot.vehicle) {
+      if (insideHouse()) await runGoOutside('the Bleu de Paris')
+      checkAbort(myGen)
+      if (!await pathToSure(FARM_PORT_LANDING, 1, 2)) return { ok: false, error: 'could not reach the farm port' }
+      if (!await mountNearestBoat(10)) return { ok: false, error: 'no boat at the farm port' }
+    }
+    const legs = await paddleLegs(PORT_TO_BLEU_LEGS, 'port→bleu', myGen, startDeaths)
+    if (!legs.ok) return legs
+    await disembark({ to: BLEU_LANDING })
+    if (!await pathToSure(BLEU_LANDING, 0, 1.5, 3, 8000)) return { ok: false, error: 'reached the landing but did not get ashore' }
+    checkAbort(myGen)
+    return await gangplankBoard()
+  } catch (e) {
+    return { ok: false, error: e.name === 'AbortError' ? 'stopped' : e.message }
+  } finally {
+    endTask('voyage')
+  }
+}
+
+async function bleuPaddleHome ({ boatId = null } = {}) {
+  const gate = startTask('voyage', 'paddle home from the Bleu')
+  if (!gate.allowed) return { ok: false, error: 'busy', task: gate.current, detail: gate.detail }
+  const myGen = abortGen
+  const startDeaths = deathCount
+  try {
+    if (onBleu()) await gangplankLeave()
+    checkAbort(myGen)
+    for (let i = 0; i < 4; i++) {
+      const p = bot.entity.position
+      if (Math.hypot(p.x - (BLEU_LANDING.x + 0.5), p.z - (BLEU_LANDING.z + 0.5)) <= 2) break
+      await pathTo(BLEU_LANDING, 1, 15000)
+    }
+    checkAbort(myGen)
+    const want = boatId ?? lastBoardedBoatId
+    if (!await mountNearestBoat(10, { preferId: want })) return { ok: false, error: 'no boat to board near the landing' }
+    const boarded = bot.vehicle?.id
+    if (want != null && boarded !== want) logEvent('voyage', `wanted boat ${want}, boarded ${boarded}`)
+    for (let i = 0; i < BLEU_TO_PORT_LEGS.length; i++) {
+      checkAbort(myGen)
+      if (deathCount !== startDeaths) return { ok: false, error: 'died en route' }
+      const leg = BLEU_TO_PORT_LEGS[i]
+      const last = i === BLEU_TO_PORT_LEGS.length - 1
+      const r = await boatSeek([{ x: leg.x, z: leg.z }], { throttle: leg.throttle, range: last ? 1 : 2, label: `bleu→port ${i + 1}/${BLEU_TO_PORT_LEGS.length} ${leg.note}` })
+      if (!String(r.result).startsWith('arrived')) return { ok: false, error: `leg ${i + 1} (${leg.note}): ${r.result}`, pos: r.pos }
+    }
+    const off = await disembark({ to: FARM_PORT_LANDING })
+    // disembark's landing walk can stop short (pathTo quits on a pathfinder
+    // pause) — finish the few blocks to the bank ourselves.
+    const onBank = () => { const p = bot.entity.position; return Math.hypot(p.x - (FARM_PORT_LANDING.x + 0.5), p.z - (FARM_PORT_LANDING.z + 0.5)) <= 1.5 }
+    for (let i = 0; i < 3 && !onBank(); i++) await pathTo(FARM_PORT_LANDING, 0, 8000)
+    if (!onBank()) return { ok: false, error: 'reached the port but did not land', ...off }
+    logEvent('voyage', `paddled boat ${boarded} home from the Bleu to the farm port`)
+    return { ok: true, boat_id: boarded, pos: off.pos }
+  } catch (e) {
+    return { ok: false, error: e.name === 'AbortError' ? 'stopped' : e.message }
+  } finally {
+    endTask('voyage')
+  }
 }
 
 // toFarm: cabin → farm, ending at the wheat field center (Dad, 2026-09-27:
@@ -2905,14 +3118,19 @@ async function runRiverVoyage (toFarm, { force = false } = {}) {
       if (deathCount !== startDeaths) return { ok: false, error: 'died en route', leg: i + 1 }
       const leg = legs[i]
       const last = i === legs.length - 1
-      const r = await boatSeek([{ x: leg.x, z: leg.z }], { throttle: leg.throttle, range: last ? 1 : 3, label: `${label} ${i + 1}/${legs.length} ${leg.note}` })
+      const r = await boatSeek([{ x: leg.x, z: leg.z }], { throttle: leg.throttle, range: leg.range ?? (last ? 1 : 3), label: `${label} ${i + 1}/${legs.length} ${leg.note}` })
       if (!String(r.result).startsWith('arrived')) {
         logEvent('voyage', `${label}: stopped at leg ${i + 1}/${legs.length} (${leg.note}): ${r.result}`)
         return { ok: false, error: `leg ${i + 1} (${leg.note}): ${r.result}`, pos: r.pos }
       }
     }
-    const off = await disembark()
-    if (!off.landed) return { ok: false, error: 'reached the far side but did not land', ...off }
+    const off = await disembark(toFarm ? { to: FARM_PORT_LANDING } : {})
+    // disembark's landing walk stops short at both docks — finish it.
+    const landAt = off.landing || (toFarm ? FARM_PORT_LANDING : null)
+    if (!off.landed && landAt) await pathToSure(landAt, 0, 1.5, 3, 8000)
+    const pl = bot.entity.position
+    const onDock = landAt && Math.hypot(pl.x - (landAt.x + 0.5), pl.z - (landAt.z + 0.5)) <= 1.5
+    if (!off.landed && !onDock) return { ok: false, error: 'reached the far side but did not land', ...off }
     if (toFarm) {
       checkAbort(myGen)
       await pathTo(HARVEST_WAYPOINTS.field_center, 1, 30000)
@@ -3012,6 +3230,11 @@ async function _runIdleBoating () {
   logEvent('idle-boating', 'done — heading back to shore')
   await pathTo(POND_SHORE, 1, 10000)
   sendEmote('cheer')
+  // Then stroll back to the wheat field rather than loitering on the shore
+  // (Dad, 2026-09-28). At bedtime, leave it to the bedtime override instead.
+  await sleep(1500)
+  if (isBedtime() || bot.vehicle) return
+  await runIdleWanderToField({ announce: false })
 }
 
 // ── Passenger ride observations ──────────────────────────────────────────────
@@ -3910,6 +4133,11 @@ async function repairBarePotatoTilesFromFieldVisit ({ announce = true, limit = 1
 let proactiveRepairBusy = false
 setInterval(async () => {
   if (!rawState.spawned) return
+  // Helm mode: the operator drives. This scan fires whenever the bot is outdoors
+  // with no activeTask — which includes every operator pathfind — and hijacked
+  // Roz mid-errand four times on 2026-09-28 (one tile that never replants kept
+  // pulling her back to the potatoes).
+  if (brainMode === 'helm') return
   if (proactiveRepairBusy) return
   if (activeTask.name) return
   if (isBedtime()) return
@@ -7628,7 +7856,7 @@ async function runGoOutside (activity, { skipTimeCheck = false } = {}) {
 }
 
 // Wrap runGoInsideOnce with up to 3 retries on graceful failure.
-async function runGoInside () {
+async function runGoInside ({ stillWanted = null } = {}) {
   if (goInsideBusy || penTraversalBusy) return // never enter the house mid-pen-traversal
   // Single chokepoint for "do not brute-force a walk home" (user, 2026-07-30:
   // "DO NOT SHORTCUT"). ~20 call sites can reach this function, several of them
@@ -7644,10 +7872,19 @@ async function runGoInside () {
     return
   }
   goInsideBusy = true
+  const myGen = abortGen
   try {
     const startHP = bot.health ?? 20
     const startDeaths = deathCount
     for (let attempt = 1; attempt <= 4; attempt++) {
+      // Give way between attempts: a `stop`, or a caller that no longer needs
+      // us inside (auto-sleep after the night skipped). The retries otherwise
+      // hold the bot's controls for up to a minute and override everything
+      // the operator sends (2026-09-28, twice, wedged in the doorway).
+      if (attempt > 1 && (abortGen !== myGen || (stillWanted && !stillWanted()))) {
+        logEvent('go-inside', `giving up before attempt ${attempt} — ${abortGen !== myGen ? 'stopped' : 'no longer needed'}`)
+        return
+      }
       try {
         await runGoInsideOnce()
         sendEmote(attempt === 1 ? 'headbang' : 'shrug')
@@ -12583,6 +12820,27 @@ function handleCommand (cmd) {
       runGoOutOfPen().catch(e => logEvent('go-out-of-pen-error', e.message))
       return { ok: true, started: true }
     }
+    case 'bleu_paddle_home': {
+      // Off the Bleu de Paris by the gangplank, then paddle the boat we came in
+      // back to the farm port. args: { boat_id? } (default: the last boat boarded)
+      return bleuPaddleHome({ boatId: args.boat_id != null ? Number(args.boat_id) : null })
+    }
+    case 'board_bleu': {
+      // Shore → Bleu de Paris deck via the gangplank corridor.
+      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+      if (onBleu()) return { ok: true, aboard: true, already: true }
+      // From the west bank, go by paddle boat (Dad) — only walk if already on
+      // the east shore near the gangplank.
+      const pb = bot.entity.position
+      if (bot.vehicle || Math.hypot(pb.x - (GANGPLANK_SHORE.x + 0.5), pb.z - GANGPLANK_LINE_Z) > 16) return bleuPaddleOver()
+      return gangplankBoard().catch(e => { logEvent('gangplank-error', e.message); return { ok: false, error: e.message } })
+    }
+    case 'leave_bleu': {
+      // Bleu de Paris deck → shore pad via the gangplank corridor.
+      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+      if (!onBleu()) return { ok: true, aboard: false, already: true }
+      return gangplankLeave().catch(e => { logEvent('gangplank-error', e.message); return { ok: false, error: e.message } })
+    }
     case 'cabin_to_bed': {
       if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
       cabinSleep().catch(e => logEvent('cabin-error', e.message))
@@ -12633,6 +12891,7 @@ function handleCommand (cmd) {
               return { ok: false, error: `mount appeared to succeed but bot is ${gap.toFixed(1)} blocks from boat — likely a phantom mount` }
             }
           }
+          if (mounted) lastBoardedBoatId = target.id
           logEvent('ride-boat', `${mounted ? 'mounted' : 'mount unclear'} boat ${target.id} at ${posStr(target.position)}`)
           return { ok: true, mounted, boat_id: target.id, x: +target.position.x.toFixed(1), y: +target.position.y.toFixed(1), z: +target.position.z.toFixed(1) }
         })

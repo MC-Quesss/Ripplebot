@@ -45,3 +45,8 @@ The dry standing spot at the farm port is **(-255, 63, 524)** — reached by pat
 house door pad. Two paddle boats are usually moored right there (~(-253, 62.5, 527) and (-254, 62.5, 520)).
 Dad likes to sit directly east, across the river (~(-232, 67, 533)). The port is now an idle-wander stop
 (`port`) — Roz visits, faces east, and lingers.
+
+## Update — 2026-09-28: the farm port is now a dock
+Checkpoint 13 moved: the port was rebuilt as a dock with finger piers (see [[farm-port]]). The old
+target (-253.5, 520.8) is now boardwalk. Route ends **(-247.5, 524.5) → middle slip (-251.5, 524.5)**;
+land on the boardwalk at (-254, 63, 524). Not yet sailed on the new dock.

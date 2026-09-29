@@ -23,3 +23,14 @@ A door traversal always starts on one orientation block and ends on the other. T
 ## Why this exists
 
 The bot's forward-push velocity varies on this server. Without an axis target, it overshoots or undershoots. Without a verified yaw, "forward" might be "into the furnace." Two failure modes; two pads; one rule per pad.
+
+## Update — 2026-09-28: east-bank pad (Bleu de Paris)
+
+Dad marked a third pad across the river, on the mud-brick floor by [[bleu-de-paris]]:
+- **East-bank pad** — stand at **(-222, 64, 537)**, on mud brick (-222, 63, 537) (modded type 1079 —
+  in `SOLID_MODDED_TYPES`, so the pathfinder treats it as floor). Reached by `pathfind` range 0.
+  Approach from the proven grass landing (-226, 63, 548), or 5 blocks west along z=537 from (-217, 64, 537).
+  **Shore side of the gangplank** (Dad) — the start point for boarding the yacht.
+- **On-boat pad** — stand at **(-229, 64, 537)**, the deck end of the gangplank, aboard [[bleu-de-paris]]
+  (Dad marked it 2026-09-28). Deck floor: spruce planks at y=63 under a thin modded layer (type 3855).
+  From the gangplank pad: `pathfind` range 0 to (-228, 64, 537), then (-229, 64, 537) — straight west.
