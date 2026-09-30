@@ -96,3 +96,11 @@ Since harvests keep the wheat on hand (see [[../procedures/right-click-harvest]]
 ## Related
 - [[../chests/house-kitchen-chest]] — the alternative wheat destination
 - [[../procedures/right-click-harvest]] — the harvest that triggers the question
+
+## Update — 2026-09-29: the machine is a macerator, solar-powered
+
+Quesss confirmed that the machine below the hopper is the **macerator**. It grinds
+potatoes and wheat into **chaff** for the bio-diesel engine. Its power comes from
+the 2×2 solar panels on the roof (see [[rooftop-garden#Solar panels (2026-09-29)]]).
+The full chain: sun → roof panels → macerator ← hopper ← harvests → chaff →
+bio-diesel → Oceanside.

@@ -434,11 +434,19 @@ function pickAvoidingRecentPhrase (items, toPhrase = x => x) {
 // Modded block type ids (stable per this world's Forge registry) that bots must
 // never walk into — see the solid-collision patch in the getBlock override.
 // 1079 = mud bricks (Dad's floor east of the river; read as air until added, 2026-09-28).
-const SOLID_MODDED_TYPES = new Set([3995, 1458, 1059, 1069, 1079])
+// 622 = apiary, 623 = bee house (Dad's bee cross on spruce planks by the lighthouse,
+// centre (-404, 68, 256); Dad named them 2026-09-29). 1095 = modded fir. Roz
+// suffocated at (-404, 68/69, 261) with fir at her feet and an apiary at her head.
+const SOLID_MODDED_TYPES = new Set([3995, 1458, 1059, 1069, 1079, 622, 623, 1095])
 // Modded slabs — walk on them like oak slabs (half-block collision; metadata
 // bit 8 = top half, as in vanilla). 1744 = modded-tree plank slabs, the
 // Bleu de Paris gangplank (Dad, 2026-09-28).
 const SLAB_MODDED_TYPES = new Set([1744])
+// Modded ground blocks shorter than a full block, like vanilla grass path:
+// type -> top height. 1058 = silty grass block (ice cove SW of the lighthouse,
+// 2026-09-29). Roz stood at y≈65.94 on it = 15/16 tall. As full-solid she was
+// embedded 0.06 and couldn't move; with no collision she sank into it.
+const SHORT_MODDED_TYPES = new Map([[1058, 15 / 16]])
 
 bot.once('spawn', () => {
   const mcData = require('minecraft-data')(bot.version)
@@ -460,7 +468,7 @@ bot.once('spawn', () => {
   mvts.exclusionAreasStep.push((block) => {
     if (!block || !block.position || block.name) return 0
     if (SOLID_MODDED_TYPES.has(block.type)) return Infinity
-    if (SLAB_MODDED_TYPES.has(block.type)) return 0
+    if (SLAB_MODDED_TYPES.has(block.type) || SHORT_MODDED_TYPES.has(block.type)) return 0
     return 3
   })
 
@@ -478,6 +486,9 @@ bot.once('spawn', () => {
       if (SOLID_MODDED_TYPES.has(b.type)) {
         b.boundingBox = 'block'
         b.shapes = [[0, 0, 0, 1, 1, 1]]
+      } else if (SHORT_MODDED_TYPES.has(b.type)) {
+        b.boundingBox = 'block'
+        b.shapes = [[0, 0, 0, 1, SHORT_MODDED_TYPES.get(b.type), 1]]
       } else if (SLAB_MODDED_TYPES.has(b.type)) {
         b.boundingBox = 'block'
         b.shapes = (b.metadata & 8) ? [[0, 0.5, 0, 1, 1, 1]] : [[0, 0, 0, 1, 0.5, 1]]
@@ -2838,21 +2849,28 @@ function runPilot (label, step, { maxMs = 120000, hold = false } = {}) {
 
 // Seek a chain of waypoints by piloting: aim at the bearing, turn at `rate`,
 // ease the throttle down over the last `easeDist` blocks of the final leg.
+// Waypoints may carry their own `throttle` and `range`. A waypoint with an
+// explicit range is a precision point (e.g. a slip's centre line): the boat
+// eases into it like the final one. Every other intermediate waypoint is a
+// fly-through at full leg throttle, with no slowdown, so a multi-leg route
+// runs as one continuous glide instead of stop-start (Dad, 2026-09-29).
 function boatSeek (waypoints, { throttle = 1, range = 3, rate = BOAT_TURN_RATE, easeDist = 8, label = 'seek' } = {}) {
   pilotSync()
   let i = 0
   const maxMs = 30000 + waypoints.reduce((acc, w, k) => {
     const prev = k ? waypoints[k - 1] : pilot
-    return acc + Math.hypot(w.x - prev.x, w.z - prev.z) / (BOAT_MAX_SPEED * Math.max(throttle, 0.3)) * 50 * 2
+    return acc + Math.hypot(w.x - prev.x, w.z - prev.z) / (BOAT_MAX_SPEED * Math.max(w.throttle ?? throttle, 0.3)) * 50 * 2
   }, 0)
   return runPilot(label, () => {
     while (i < waypoints.length) {
       const w = waypoints[i]
       const d = Math.hypot(w.x - pilot.x, w.z - pilot.z)
       const last = i === waypoints.length - 1
-      if (d >= (last ? range : Math.max(range, 5))) {
-        const ease = last ? Math.max(0.25, Math.min(1, d / easeDist)) : 1
-        return { goalYaw: compassToMcYaw(bearingCompass(pilot.x, pilot.z, w.x, w.z)), throttle: throttle * ease, rate }
+      const precise = last || w.range != null
+      const r = w.range ?? (last ? range : Math.max(range, 5))
+      if (d >= r) {
+        const ease = precise ? Math.max(0.25, Math.min(1, d / easeDist)) : 1
+        return { goalYaw: compassToMcYaw(bearingCompass(pilot.x, pilot.z, w.x, w.z)), throttle: (w.throttle ?? throttle) * ease, rate }
       }
       i++
     }
@@ -3007,6 +3025,189 @@ const BLEU_TO_PORT_LEGS = [
 ]
 // pathTo quits in the pathfinder's pauses between segments — keep re-issuing
 // until actually within `tol` of the point (or out of tries).
+// ── Bee keeping (Dad, 2026-09-29/30) ──────────────────────────────────────
+// Forestry hives at the lighthouse bee cross: 4 apiaries + 5 bee houses. When a
+// queen dies the hive needs a new pair: a wintry princess into slot 1, wintry
+// drones into slot 2. A 64-drone stack jams the output: keep 1, toss the rest.
+// Everything else stays put. Procedure: journal/procedures/apiary-tending.md.
+//
+// Dad's rule (2026-09-30): NEVER start the keeper unless Dad has brought Roz to
+// the lighthouse by boat. So there is no chat trigger and no auto-start; the
+// operator starts it with the `keep_bees` ctl, it refuses away from the bee
+// cross, and it stops itself if Roz is ever carried off (never walks back).
+const BEE_CROSS = { x: -404, y: 68, z: 256 }
+const BEE_CROSS_RADIUS = 30
+// hive block + the ground spot beside it Roz stands on to reach it
+const BEE_HIVES = [
+  { kind: 'apiary', name: 'south apiary', x: -404, y: 69, z: 261, stand: { x: -402, z: 260 } },
+  { kind: 'apiary', name: 'east apiary', x: -399, y: 69, z: 256, stand: { x: -401, z: 258 } },
+  { kind: 'apiary', name: 'north apiary', x: -404, y: 69, z: 251, stand: { x: -402, z: 253 } },
+  { kind: 'apiary', name: 'west apiary', x: -409, y: 69, z: 256, stand: { x: -407, z: 258 } },
+  { kind: 'bee house', name: 'south bee house', x: -404, y: 69, z: 262, stand: { x: -402, z: 263 } },
+  { kind: 'bee house', name: 'east bee house', x: -398, y: 69, z: 256, stand: { x: -397, z: 258 } },
+  { kind: 'bee house', name: 'west bee house', x: -410, y: 69, z: 256, stand: { x: -410, z: 258 } },
+  { kind: 'bee house', name: 'north bee house', x: -404, y: 69, z: 250, stand: { x: -402, z: 249 } },
+  { kind: 'bee house', name: 'middle bee house', x: -404, y: 70, z: 256, stand: { x: -402, z: 254 } },
+]
+const BEE_ROUND_MS = 5 * 60 * 1000 // apiary queens last ~20 min; 5 min keeps the gap short
+const BEE_MIN_HP = 16 // below this a round is skipped (the 09-29 suffocation lesson)
+
+function nearBeeCross () {
+  const p = bot.entity?.position
+  return !!p && Math.hypot(p.x - BEE_CROSS.x, p.z - BEE_CROSS.z) <= BEE_CROSS_RADIUS
+}
+
+// Open one hive and replace a dead queen / missing drones. Works on apiaries
+// (48-slot window) and bee houses (45); tells them apart by window size.
+async function tendApiary (x, y, z, dryRun = false) {
+  const b = bot.blockAt(new Vec3(x, y, z))
+  if (!b) return { ok: false, error: 'no block' }
+  const PRINCESS = 4972, DRONE = 4971
+  const isWintry = (it) => !!(it && it.nbt && JSON.stringify(it.nbt).includes('forestry.speciesWintry'))
+  const desc = (it) => it ? { type: it.type, count: it.count, wintry: isWintry(it) } : null
+  return (async () => {
+    const opened = new Promise((resolve, reject) => {
+      const t = setTimeout(() => { bot.removeListener('windowOpen', onOpen); reject(new Error('no window opened')) }, 2500)
+      const onOpen = (w) => { clearTimeout(t); resolve(w) }
+      bot.once('windowOpen', onOpen)
+    })
+    await bot.activateBlock(b)
+    const win = await opened
+    await sleep(400)
+    try {
+      // Apiary: 12 tile slots (queen, drone, 3 frames, 7 outputs).
+      // Bee house: 9 tile slots (queen, drone, 7 outputs), no frames.
+      const tile = win.slots.length - 36
+      const firstOut = tile === 12 ? 5 : tile === 9 ? 2 : -1
+      if (firstOut < 0) return { ok: false, error: `unexpected window size ${win.slots.length}` }
+      const base = 36
+      const kind = tile === 12 ? 'apiary' : 'bee house'
+      const QUEEN = base, DRONES = base + 1
+      const outputs = [0, 1, 2, 3, 4, 5, 6].map(i => base + firstOut + i)
+      const before = { queen: desc(win.slots[QUEEN]), drone: desc(win.slots[DRONES]),
+        outputs: outputs.map(s => ({ slot: s - base, ...desc(win.slots[s]) })).filter(o => o.type) }
+      const actions = []
+      const move = async (from, to, label) => {
+        actions.push({ move: label, from: from - base, to: to - base })
+        if (dryRun) return
+        await bot.clickWindow(from, 0, 0) // pick up the stack
+        await sleep(150)
+        await bot.clickWindow(to, 0, 0) // place it
+        await sleep(150)
+        if (win.selectedItem || bot.inventory.selectedItem) await bot.clickWindow(from, 0, 0) // put any leftover back
+      }
+      if (!win.slots[QUEEN]) {
+        const p = outputs.find(s => win.slots[s] && win.slots[s].type === PRINCESS && isWintry(win.slots[s]))
+        if (p) await move(p, QUEEN, 'wintry princess -> queen slot')
+        else actions.push({ note: 'queen slot empty but no wintry princess in the outputs' })
+      }
+      if (!win.slots[DRONES]) {
+        const d = outputs.find(s => win.slots[s] && win.slots[s].type === DRONE && isWintry(win.slots[s]))
+        if (d) await move(d, DRONES, 'wintry drones -> drone slot')
+        else actions.push({ note: 'drone slot empty but no wintry drone in the outputs' })
+      }
+      // A full drone stack (64) jams the output. Dad: take them out, keep 1
+      // in the slot, discard the rest into the world like poison potatoes.
+      const dr = win.slots[DRONES]
+      if (dr && dr.count >= 64) {
+        actions.push({ reset: 'drone stack full: keep 1, toss the rest', count: dr.count })
+        if (!dryRun) {
+          await bot.clickWindow(DRONES, 0, 0) // pick up the whole stack
+          await sleep(150)
+          await bot.clickWindow(DRONES, 1, 0) // right-click: put one back
+          await sleep(150)
+          await bot.clickWindow(-999, 0, 0) // click outside the window: drop the rest
+          await sleep(150)
+        }
+      }
+      await sleep(300)
+      const after = { queen: desc(win.slots[QUEEN]), drone: desc(win.slots[DRONES]) }
+      logEvent('apiary', `tend ${kind} (${b.position.x}, ${b.position.y}, ${b.position.z})${dryRun ? ' [dry run]' : ''}: queen=${before.queen ? before.queen.type : 'EMPTY'} drone=${before.drone ? before.drone.type : 'EMPTY'} actions=${actions.length}`)
+      return { ok: true, kind, dryRun, before, actions, after }
+    } finally {
+      bot.closeWindow(win)
+    }
+  })().catch(e => ({ ok: false, error: e.message }))
+}
+
+const beeState = { active: false, gen: 0, timer: null, rounds: 0, moves: 0, startedAt: null, lastRoundAt: null, lastError: null }
+
+function keepBeesStatus () {
+  const { timer, ...rest } = beeState
+  return { ...rest, nearBeeCross: nearBeeCross() }
+}
+
+function stopKeepBees (reason) {
+  const was = beeState.active
+  beeState.active = false
+  beeState.gen++
+  if (beeState.timer) { clearTimeout(beeState.timer); beeState.timer = null }
+  if (was) logEvent('bees', `keeper stopped (${reason}) after ${beeState.rounds} rounds, ${beeState.moves} moves`)
+  return { ok: true, wasActive: was }
+}
+
+function startKeepBees ({ intervalMs } = {}) {
+  if (beeState.active) return { ok: false, error: 'already keeping bees', ...keepBeesStatus() }
+  if (!nearBeeCross()) return { ok: false, error: 'not at the bee cross — Dad brings Roz here by boat first' }
+  beeState.active = true
+  beeState.gen++
+  beeState.rounds = 0
+  beeState.moves = 0
+  beeState.startedAt = Date.now()
+  beeState.lastError = null
+  const every = Number(intervalMs) > 0 ? Number(intervalMs) : BEE_ROUND_MS
+  const gen = beeState.gen
+  logEvent('bees', `keeper started (round every ${Math.round(every / 1000)}s)`)
+  const tick = async () => {
+    if (!beeState.active || beeState.gen !== gen) return
+    try { await runBeeRound() } catch (e) { beeState.lastError = e.message; logEvent('bees', `round error: ${e.message}`) }
+    if (beeState.active && beeState.gen === gen) beeState.timer = setTimeout(tick, every)
+  }
+  tick()
+  return { ok: true, started: true, intervalMs: every }
+}
+
+// One pass over all nine hives, then top up food. Skips the round (does not
+// queue it) when another task holds the bot, and cuts it short when HP drops.
+// Night is not a reason to stop: the bee cross has no bed, and Dad asked Roz
+// to stay there through the night.
+async function runBeeRound () {
+  const gen = beeState.gen
+  if (!nearBeeCross()) { stopKeepBees('carried away from the bee cross'); return }
+  if (taskBusy()) { logEvent('bees', `round skipped: busy with ${activeTask.name}`); return }
+  beeState.rounds++
+  const moves = []
+  for (const h of BEE_HIVES) {
+    if (!beeState.active || beeState.gen !== gen) return
+    if ((bot.health ?? 0) < BEE_MIN_HP) { logEvent('bees', `round ${beeState.rounds} cut short: HP ${bot.health}`); break }
+    try {
+      await pathTo({ x: h.stand.x, y: 68, z: h.stand.z }, 1, 10000)
+    } catch (e) {
+      if (e instanceof AbortError) { stopKeepBees('stop command'); return }
+      throw e
+    }
+    const r = await tendApiary(h.x, h.y, h.z)
+    if (!r.ok) { logEvent('bees', `${h.name}: ${r.error}`); continue }
+    const did = (r.actions || []).filter(a => a.move || a.reset)
+    if (did.length) {
+      moves.push(`${h.name}: ${did.map(a => a.move || a.reset).join(', ')}`)
+      beeState.moves += did.length
+    }
+    for (const a of (r.actions || [])) if (a.note) logEvent('bees', `${h.name}: ${a.note}`)
+  }
+  beeState.lastRoundAt = Date.now()
+  logEvent('bees', `round ${beeState.rounds} done${moves.length ? ': ' + moves.join('; ') : ' (all queens alive)'}`)
+  // Auto-eat stays quiet while hive windows cycle, and the first click after a
+  // round is often rejected (the hive windows scramble the slot model), so feed
+  // her here and retry once.
+  if ((bot.food ?? 20) <= 14) {
+    try { await eatSomething() } catch (_) {
+      await sleep(2000)
+      try { await eatSomething() } catch (e) { logEvent('bees', `eat failed at food=${bot.food}: ${e.message}`) }
+    }
+  }
+}
+
 async function pathToSure (pt, range = 0, tol = 1.5, tries = 6, waitMs = 15000) {
   const near = () => { const p = bot.entity.position; return Math.hypot(p.x - (pt.x + 0.5), p.z - (pt.z + 0.5)) <= tol }
   for (let i = 0; i < tries && !near(); i++) await pathTo(pt, range, waitMs)
@@ -3113,16 +3314,17 @@ async function runRiverVoyage (toFarm, { force = false } = {}) {
       checkAbort(myGen)
       if (!await mountNearestBoat()) return { ok: false, error: `no boat to board near the ${start.note}` }
     }
-    for (let i = 0; i < legs.length; i++) {
-      checkAbort(myGen)
-      if (deathCount !== startDeaths) return { ok: false, error: 'died en route', leg: i + 1 }
-      const leg = legs[i]
-      const last = i === legs.length - 1
-      const r = await boatSeek([{ x: leg.x, z: leg.z }], { throttle: leg.throttle, range: leg.range ?? (last ? 1 : 3), label: `${label} ${i + 1}/${legs.length} ${leg.note}` })
-      if (!String(r.result).startsWith('arrived')) {
-        logEvent('voyage', `${label}: stopped at leg ${i + 1}/${legs.length} (${leg.note}): ${r.result}`)
-        return { ok: false, error: `leg ${i + 1} (${leg.note}): ${r.result}`, pos: r.pos }
-      }
+    // One pilot session for the whole river: intermediate legs are fly-through,
+    // so the boat keeps its speed instead of easing to a near-stop at each one.
+    // Only the final dock and any precision point (explicit range) ease in.
+    checkAbort(myGen)
+    const r = await boatSeek(legs.map((leg, i) => ({
+      x: leg.x, z: leg.z, throttle: leg.throttle, range: i === legs.length - 1 ? (leg.range ?? 1) : leg.range
+    })), { label: `${label} (${legs.length} legs)` })
+    if (deathCount !== startDeaths) return { ok: false, error: 'died en route' }
+    if (!String(r.result).startsWith('arrived')) {
+      logEvent('voyage', `${label}: stopped: ${r.result}`)
+      return { ok: false, error: r.result, pos: r.pos }
     }
     const off = await disembark(toFarm ? { to: FARM_PORT_LANDING } : {})
     // disembark's landing walk stops short at both docks — finish it.
@@ -9807,6 +10009,7 @@ const CHAT_HANDLERS = [
     pattern: /\b(stop|stay|halt|wait there|hold up)\b/i,
     handler: (_user) => {
       abortGen++
+      stopKeepBees('stop (chat)')
       bot.pathfinder.setGoal(null)
       clearControlStates()
       const wasSustaining = sustainState.active
@@ -9832,6 +10035,7 @@ const CHAT_HANDLERS = [
     pattern: /\b(stand down|chill(\s+out)?|just chill|at ease|settle down)\b/i,
     handler: (user) => {
       abortGen++
+      stopKeepBees('stand down (chat)')
       bot.pathfinder.setGoal(null)
       clearControlStates()
       if (followTarget) { followTarget = null; followEntity = null; followChainPos = 0 }
@@ -11957,6 +12161,7 @@ function handleCommand (cmd) {
     }
     case 'stop': {
       abortGen++
+      stopKeepBees('stop')
       if (activeTask.name) {
         logEvent('task', `force-stopped: ${activeTask.name}`)
         activeTask.name = null
@@ -12274,6 +12479,20 @@ function handleCommand (cmd) {
         }
       })
     }
+    case 'tend_apiary': {
+      // One hive, once. args: { x, y, z, dry_run? }. See tendApiary().
+      return tendApiary(Number(args.x), Number(args.y), Number(args.z), !!args.dry_run)
+    }
+    case 'keep_bees': {
+      // Start the bee keeper (see runKeepBees). Refused away from the bee cross.
+      return startKeepBees({ intervalMs: args.interval_ms })
+    }
+    case 'keep_bees_stop': {
+      return stopKeepBees(args.reason || 'ctl')
+    }
+    case 'keep_bees_status': {
+      return { ok: true, ...keepBeesStatus() }
+    }
     case 'furnace_state': {
       // Open a furnace and report what's in each slot. Slots: 0=input,
       // 1=fuel, 2=output. Assumes fuel is already present.
@@ -12450,7 +12669,13 @@ function handleCommand (cmd) {
       })).catch(e => ({ ok: false, error: e.message }))
     }
     case 'inventory': {
-      const items = bot.inventory.items().map(i => ({ name: i.name, count: i.count, slot: i.slot }))
+      // type/metadata/nbt identify modded items that report name 'unknown'
+      // (Forestry bees keep their species in NBT, 2026-09-29).
+      const items = bot.inventory.items().map(i => {
+        const it = { name: i.name, count: i.count, slot: i.slot, type: i.type, metadata: i.metadata }
+        if (i.nbt) it.nbt = JSON.stringify(i.nbt).slice(0, 400)
+        return it
+      })
       const held = bot.heldItem ? { name: bot.heldItem.name, count: bot.heldItem.count } : null
       return { ok: true, held, items }
     }
