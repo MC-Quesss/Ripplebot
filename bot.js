@@ -977,6 +977,63 @@ async function iglooSleep () {
   }
 }
 
+// ── Bee cabin (Dad built it 2026-09-30, vanilla spruce, by the bee cross) ──
+// ONE way in and out: the front door on the south wall at x -403. Everything
+// else is wall or type-1306 glass windows — never path around it.
+// See journal/places/bee-cabin.md.
+const BEE_CABIN_OUTSIDE_DOOR = { x: -402.5, y: 66, z: 244.7 } // "outside the front door"
+const BEE_CABIN_INSIDE_DOOR = { x: -402.7, y: 66, z: 241.0 }  // "inside the front door"
+const BEE_CABIN_BEDS = [ // foot blocks; heads at z 237
+  { x: -405, y: 66, z: 238 },
+  { x: -406, y: 66, z: 238 },
+]
+function insideBeeCabin () {
+  const p = bot.entity?.position
+  return !!p && p.x > -407 && p.x < -401 && p.z > 237 && p.z < 242 && p.y > 65.5 && p.y < 68
+}
+function nearBeeCabinDoor () {
+  const p = bot.entity?.position
+  return !!p && Math.abs(p.x - BEE_CABIN_OUTSIDE_DOOR.x) <= 3 && p.z >= 242.5 && p.z <= 248
+}
+// Entry, verified 2026-09-30: due north from the outside point, hop the 1-block
+// stone lip at z 242, on to the wool. Pathfinder stalls on the modded steps here.
+async function beeCabinEnter () {
+  await bot.look(0, 0, true)
+  await walkUntilAxis({ axis: 'z', target: BEE_CABIN_OUTSIDE_DOOR.z, direction: 'lte', maxMs: 2500, maintainYaw: 0 })
+  // Hold jump through the lip: a 300 ms hop before walking stalled at z 243.3
+  // on the first live night (2026-09-30); the retry 5 s later made it.
+  bot.setControlState('jump', true)
+  try {
+    await walkUntilAxis({ axis: 'z', target: BEE_CABIN_INSIDE_DOOR.z + 0.3, direction: 'lte', maxMs: 2500, maintainYaw: 0 })
+  } finally {
+    bot.setControlState('jump', false)
+  }
+}
+async function beeCabinSleep () {
+  if (!insideBeeCabin()) {
+    if (!nearBeeCabinDoor()) {
+      logEvent('bee-cabin', 'not inside and not at the front door — operator decides')
+      return
+    }
+    await beeCabinEnter()
+    if (!insideBeeCabin()) { logEvent('bee-cabin', `entry failed at ${posStr(bot.entity.position)}`); return }
+  }
+  await pathTo({ x: -404, y: 66, z: 239 }, 1, 6000).catch(() => false)
+  let found = false
+  for (const b of BEE_CABIN_BEDS) {
+    const bed = bot.blockAt(new Vec3(b.x, b.y, b.z))
+    if (!bed || bed.name !== 'bed') continue
+    found = true
+    if (bed.metadata & 0x4) { logEvent('bee-cabin', `bed at ${posStr(b)} is occupied — trying the next`); continue }
+    try { await bot.activateBlock(bed) } catch (e) {
+      logEvent('bee-cabin', `bed activate failed at ${posStr(b)}: ${e.message}`)
+    }
+    await sleep(1000)
+    if (bot.isSleeping) { logEvent('bee-cabin', `sleeping in bee cabin bed at ${posStr(b)}`); return }
+  }
+  logEvent('bee-cabin', found ? 'no bee cabin bed resulted in sleep' : 'no bed block found at expected positions')
+}
+
 // Known sleep places (user, 2026-09-26). Each has a center and a radius that
 // answers "am I close enough to sleep here?" — auto-sleep only acts inside one
 // of these in helm mode. Add new places here. Radii must not overlap.
@@ -988,6 +1045,9 @@ const SLEEP_PLACES = [
   { name: 'farm', center: { x: -268, z: 572 }, radius: 45, sleep: () => goToBed('auto-sleep') },
   // Covers the whole nearCabin() box (dock to bedroom).
   { name: 'cabin', center: { x: -125, z: 332 }, radius: 26, sleep: cabinSleep },
+  // Bee cabin (Dad, 2026-09-30): covers the cabin and the bee cross (~13 away),
+  // not the dock (~39). Outside the door, beeCabinSleep only acts at the door.
+  { name: 'bee-cabin', center: { x: -404, z: 243 }, radius: 16, sleep: beeCabinSleep },
   // Igloo removed 2026-09-26 (Quesss): its beds sit up modded stairs (type 4029,
   // zero collision) that the bot cannot climb. Re-add once beds are reachable:
   // { name: 'igloo', center: { x: -325, z: 796 }, radius: 16, sleep: iglooSleep },
@@ -7275,6 +7335,9 @@ async function tryFoodSafety () {
   if (!foodSafetyEnabled || foodSafetyBusy || restockBusy) return
   if (taskBusy() || goInsideBusy || autoSleepBusy || penTraversalBusy) return
   if (!bot.entity || bot.isSleeping) return
+  // Never from a boat: on 2026-09-30 it dismounted Roz mid-river to walk to the
+  // kitchen chest. Hunger can wait until she lands.
+  if (bot.vehicle) return
   if (bot.currentWindow) { foodSafetyWindowCooldownUntil = Date.now() + 30000; return }
   if (Date.now() < foodSafetyWindowCooldownUntil) return
   if (bot.health == null) return
@@ -7420,6 +7483,9 @@ async function tryCollectBake () {
   if (!pendingBake.active || pendingBakeBusy) return
   if (taskBusy() || goInsideBusy || autoSleepBusy || foodSafetyBusy || penTraversalBusy) return
   if (!bot.entity || bot.isSleeping || isBedtime()) return
+  // Never from a boat or from away: on 2026-09-30 it would have pathed Roz home
+  // from the bee cove mid-voyage. The batch waits in the furnace until she's back.
+  if (bot.vehicle || distanceFromHome() > HOME_RADIUS) return
   if (Date.now() < pendingBake.doneAt) return
   // (2026-07-02 priority inversion: the old "wheat first" gate deferred baked-
   // potato collection to a ripe wheat field — exactly backwards. The potato
@@ -11282,6 +11348,9 @@ bot.on('physicsTick', () => {
   if (followTarget) return
   const me = bot.entity?.position
   if (!me) return
+  // Farm-only: the blind 1.5-block sidestep pushed Roz off the bee-cove dock
+  // into the sea when Dad stood beside her (2026-09-30, drowned).
+  if (bot.vehicle || distanceFromHome() > HOME_RADIUS) return
   const tooClose = nearbyPlayers(0.8)
   if (tooClose.length === 0) return
   const other = tooClose[0].entity.position
@@ -12755,6 +12824,10 @@ function handleCommand (cmd) {
       if (sleepPlaceHere()?.name === 'igloo') {
         iglooSleep().catch(e => logEvent('sleep', `igloo sleep failed: ${e.message}`))
         return { ok: true, started: true, location: 'igloo' }
+      }
+      if (sleepPlaceHere()?.name === 'bee-cabin') {
+        beeCabinSleep().catch(e => logEvent('sleep', `bee cabin sleep failed: ${e.message}`))
+        return { ok: true, started: true, location: 'bee-cabin' }
       }
       if (!insideHouse() && !insideCabinBedroom()) return { ok: false, error: 'not inside' }
       if (insideCabinBedroom()) {

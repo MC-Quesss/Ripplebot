@@ -21,12 +21,12 @@ You also maintain a structured journal of the world. The journal is the source o
 ## Starting the bot
 
 ```
-node bot.js > /dev/null 2>&1 &
+nohup node bot.js > /dev/null 2>&1 & disown
 ```
 
 **Important:** redirect stdout to `/dev/null`, NOT to `bot.log`. The bot's `logEvent()` already writes to both stdout and bot.log via its own write stream — redirecting stdout to bot.log causes every line to appear twice.
 
-Use `run_in_background: true`. Wait ~14s for spawn. Confirm with `./bot-ctl '{"action":"pos"}'` — a JSON reply means it's live. `[ctl error] ECONNREFUSED` means it's dead.
+Run it as a plain (foreground) Bash call with `nohup … & disown` — **never `run_in_background: true`**: the harness kills background commands at their time limit (30 min default), which dropped Roz mid-session with no goodbye (2026-09-30). Wait ~14s for spawn. Confirm with `./bot-ctl '{"action":"pos"}'` — a JSON reply means it's live. `[ctl error] ECONNREFUSED` means it's dead.
 
 If already running (`lsof -i :25580` or the pos check succeeds), don't launch another.
 
@@ -35,7 +35,7 @@ If already running (`lsof -i :25580` or the pos check succeeds), don't launch an
 When the user says **"helm mode"**, **"start in helm mode"**, or similar, start the bot with `--helm`:
 
 ```
-node bot.js --helm > /dev/null 2>&1 &
+nohup node bot.js --helm > /dev/null 2>&1 & disown
 ```
 
 This disables the Claude API brain, chat routing, auto-greet, and idle wander — the operator (you) has full control. **Auto-sleep stays on, but only within the radius of a known sleep place** (`SLEEP_PLACES` in bot.js: farm r=45 — walks inside to bed; cut from 60 on 2026-09-28 so the Bleu de Paris across the river is outside it, cabin r=26, igloo r=16; user, 2026-09-26). Anywhere else at bedtime it does nothing and the operator decides. **You are the only one interpreting chat and issuing commands.** The bot will not respond to in-game chat on its own.
@@ -246,7 +246,7 @@ When restarting or stopping the bot, **always announce in game chat first** so o
 1. Announce in chat (see above)
 2. `sleep 2 && ./bot-ctl '{"action":"quit"}'`
 3. Process exits; confirm with `lsof -i :25580` showing nothing.
-4. If restarting, launch with `node bot.js > /dev/null 2>&1 &` and wait ~14s for spawn.
+4. If restarting, launch with `nohup node bot.js > /dev/null 2>&1 & disown` (not `run_in_background`) and wait ~14s for spawn.
 
 ## When things break
 

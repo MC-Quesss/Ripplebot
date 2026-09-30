@@ -38,6 +38,8 @@ A network of notes mapping the known parts of this world. Each note is a single 
 - [[places/rooftop-garden]] — discovered 2026-07-07; modded crop garden on the house roof (**3×6**, corrected 2026-07-29) — and the trailhead for the igloo route
 - [[places/igloo]] — snow igloo by the frozen lake, ~235 blocks south-southwest; two double beds; interior unexplored
 - [[places/farm-port]] — the dock: boardwalk, three finger piers, boat slips (rebuilt 2026-09-28)
+- [[places/boat-route-bee-cove]] — farm port → bee-cove dock, 6 waypoints (2026-09-30); landing hazard: Roz drowned under the dock
+- [[places/bee-cabin]] — Roz's spruce sleeping cabin by the bee cross, built by Quesss 2026-09-30
 - [[places/bleu-de-paris]] — Dad's river yacht across from the farm port; river-exit orientation block
 - [[procedures/gangplank-bleu-de-paris]] — fixed corridor on/off Dad's yacht (like the cabin bedroom corridor)
 - [[places/snow-line-midway]] — biome-boundary landmark halfway to the igloo
