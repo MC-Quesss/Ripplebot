@@ -1483,7 +1483,7 @@ async function tryWriteDiary () {
   const ownTail = readDiaryTail(DIARY_PATH)
   const peers = peerDiaryTails()
   const context = buildExpressiveContext([
-    `It is bedtime on day ${day}. Write tonight's diary entry — 2 to 4 short first-person sentences in your voice about how the day actually went. Be concrete; no headings, no date line. Never quote what other players said word-for-word — this is your own experience, told in your own words.`,
+    `It is bedtime on day ${day}. Write tonight's diary entry — 2 to 4 short first-person sentences in your voice about how the day actually went. Be concrete; no headings, no date line. Never quote what other players said word-for-word — this is your own experience, told in your own words. Privacy rule: this diary lives in a public journal, so NEVER name specific players or housemates. When you mention another person, use a role or relationship — "a friend", "a neighbor", "a fellow farmer", "a housemate", "another bot", "someone who stopped by" — never a real name or nickname.`,
     events.length ? `What happened today:\n- ${events.join('\n- ')}` : 'Nothing much happened today — a quiet one.',
     ownTail ? `Your previous entry, for continuity:\n...${ownTail}` : null,
     peers.length ? `${peers.join('\n\n')}\n\nIf a housemate's entry touches something you experienced too, you may nod to it.` : null,
@@ -1590,14 +1590,16 @@ function saveMusicMemory () {
 }
 
 function captureListeningMemory (via) {
+  // Journal snapshot kept with each disc play. We deliberately do NOT record
+  // *which* players were online or who queued the record — the diary is in a
+  // public repo, so player handles stay out of the saved memory. The LLM is
+  // separately told to generalize names when it writes prose into the journal.
   const parts = []
-  const others = Object.keys(bot.players || {}).filter(n => n !== bot.username)
-  if (others.length) parts.push(`with ${others.join(', ')}`)
   if (bot.isRaining) parts.push('raining')
   parts.push(describeTimeOfDay())
   if (activeTask.name) parts.push(`during ${activeTask.name}`)
   else if (sustainState.active) parts.push('while keeping the fire')
-  if (via !== 'self') parts.push(`put on by ${via}`)
+  if (via !== 'self') parts.push('put on by someone else')
   return parts.join('; ')
 }
 
@@ -1620,7 +1622,7 @@ function markRecordHeard (recordName, { via = 'self' } = {}) {
     expressiveGenerate({
       system: personaSpec.systemPrompt,
       exemplars: personaSpec.exemplars,
-      context: buildExpressiveContext(`"${info.title}" (the ${info.color} disc) is playing on the jukebox${via === 'self' ? ' — you just put it on' : ` — ${via} put it on`}. Write ONE short private sentence for your journal about what this song makes you feel or remember. It is a note to yourself, not chat.`),
+      context: buildExpressiveContext(`"${info.title}" (the ${info.color} disc) is playing on the jukebox${via === 'self' ? ' — you just put it on' : ' — someone else put it on'}. Write ONE short private sentence for your journal about what this song makes you feel or remember. It is a note to yourself, not chat. Privacy rule: this journal lives in a public repo — NEVER name specific players or housemates. If you mention another person, use a role ("a friend", "a neighbor", "a fellow farmer", "a housemate", "another bot") rather than a real name.`),
     }).then(line => {
       if (!line) return
       const mm = musicMemoryFor(recordName)
