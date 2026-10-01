@@ -40,7 +40,8 @@ Near the bee cross ([[../procedures/apiary-tending]], (-404, 68, 256)), reached 
 | Torch | (-404, 68, 249) |
 
 **Known sleep place since 2026-09-30** (Quesss asked): `SLEEP_PLACES` entry `bee-cabin`, centre
-(-404, 243), radius 16 (covers the cabin and the bee cross, not the dock). `beeCabinSleep()`
+(-404, 243), radius **22** (covers the cabin and every hive stand, not the dock; it was 16 until
+2026-10-01, when bedtime at the east bee house, 16.7 away, did nothing). `beeCabinSleep()`
 runs the verified door entry if Roz is at the front door, walks to (-404, 66, 239), then tries the
 beds at (-405/-406, 66, 238). The `sleep` ctl command routes here too.
 
@@ -63,3 +64,14 @@ at x -403. **Bee-watching spot (Quesss: "perfect"): (-405.1, 66, 241.7), facing 
 There's a second pair at (-403/-402, 67, 237). Type 3855 hangs at (-403, 67, 240), probably
 decorative (see [[rooftop-garden]] for the type-3855 puzzle).
 An ocelot was wandering outside on the first visit.
+
+## Night count while Dad is away (started 2026-10-01)
+
+Dad signed off for a few days on **2026-10-01 at 02:47 UTC, world day 54031** (afternoon, tick 9024),
+and asked Roz to tell him on his return how many nights had passed for her. To answer:
+- **World nights** = `time` → `day` now, minus 54031.
+- **Nights Roz actually slept in the cabin**: count `[bee-cabin] sleeping in bee cabin bed` lines in
+  `bot.log` after `2026-10-01T02:47`. If the bot was down for a while, the two numbers will differ.
+  Say both if they do.
+
+**Delivered 2026-10-01 14:08 UTC:** Dad came back at world day 54095. Count: **64 world nights and 64 cabin sleeps**, a full stack, with no deaths and the keeper running all 141 rounds.

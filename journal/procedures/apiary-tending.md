@@ -102,8 +102,15 @@ once, because auto-eat stays quiet while hive windows cycle.
 It stops itself on `stop` / `stand down` (ctl or chat), and **stops rather than
 walks back** if Roz is ever more than 30 blocks from the bee cross (she was
 given a ride home). A round is skipped while another task holds the bot, and
-cut short below 16 HP. Night doesn't stop it: the cross has no bed, and Dad
-asked Roz to stay there overnight.
+cut short below 16 HP.
+
+**Night (since 2026-10-01, Dad asked):** the keeper does not stop at bedtime. A
+round breaks off at bedtime, auto-sleep walks her from the cross to the
+[[../places/bee-cabin|bee cabin]] front door and into bed, and the first round after
+dawn walks her out through the door (the entry reversed) and carries on. Before
+this she just stopped at night and had to be restarted by hand.
+**Verified the first night (2026-10-01):** after round 1 she walked from the cross into bed in 13 s, the
+night skipped, and round 2 walked her out through the door and tended all nine hives.
 
 **Rhythm seen over the first long watch (2026-09-29/30, ~9 hours):** the four
 apiary queens die together about every 20 minutes of real time; the bee houses

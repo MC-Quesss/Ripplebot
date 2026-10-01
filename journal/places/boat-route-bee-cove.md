@@ -106,3 +106,16 @@ From the orientation point to the boat it is dock and ice all the way (Quesss, 2
 **End of the dock (Quesss, 2026-09-30):** about (-415.5, 63, 290.5), inside the four fence-post torches at (-417/-415, 289/292). Board and leave the boat from here, staying between the torch posts.
 
 **Dock-end waypoint (Quesss, 2026-09-30): (-415.5, 63, 290.4)**, on the planks at y 62. From the boat, Roz must be **on top** here (y 63), not in the water. From here she walks north along the dock to the shore orientation point (-415.5, 63, 280.5).
+
+## Return run, bee cove → farm port: solo, verified 2026-10-01
+
+A boat was moored at the dock's west side (-417.8, 62.5, 290.2). **It didn't show in `nearby_entities` from
+the hives** (radius 80, about 40 blocks away), only from the shore, so walk down to look before saying there is no boat.
+Steps: walk to the shore point (pathfinder fine downhill) → `walk_until` x ≤ -415.4 (dock centre line, clear of the fence posts at x -415)
+→ face south, `walk_until` z ≥ 290.2 (dock end, y 63) → `ride_boat {"radius":4,"walk":false}` (2.2 away, mounted dry).
+Legs: [(-418.5, 298), (-421, 319)] @0.4 → [(-401, 351), (-272, 454)] @0.8 → [(-239, 497), (-246, 518)] @0.7 →
+(-246, 524.5) @0.4 → (-251.5, 524.5) @0.25 → `exit_boat {"to":(-254, 63, 524)}`, landed on the boardwalk.
+Every leg arrived with 0 corrections; about 2 minutes on the water, no swimming.
+
+**Walking back up from the shore point**, the pathfinder stalled on the sand at (-413.9, 64, 278.9) even though
+the way north was clear air. Fix: face north, hold jump, `walk_until` z ≤ 266, and the pathfinder works from there.

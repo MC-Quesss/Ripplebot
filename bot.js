@@ -1009,8 +1009,23 @@ async function beeCabinEnter () {
     bot.setControlState('jump', false)
   }
 }
+// Exit = the entry reversed (verified live 2026-10-01): from inside the door,
+// face due south, down the lip, out to the outside point.
+async function beeCabinExit () {
+  await pathTo({ x: -403, y: 66, z: 240 }, 0, 6000).catch(() => false)
+  await bot.look(Math.PI, 0, true)
+  await walkUntilAxis({ axis: 'z', target: BEE_CABIN_OUTSIDE_DOOR.z, direction: 'gte', maxMs: 4000, maintainYaw: Math.PI })
+}
 async function beeCabinSleep () {
   if (!insideBeeCabin()) {
+    // Mid-hive the keeper owns the pathfinder; it breaks off at bedtime and
+    // the next 5s auto-sleep poll lands here with it free.
+    if (beeState.inRound) return
+    // Keeping the bees, she is out at the cross at dusk: walk to the front
+    // door herself (Dad, 2026-10-01: the keeper must not just stop at night).
+    if (!nearBeeCabinDoor() && beeState.active && nearBeeCross()) {
+      await pathToSure({ x: -403, y: 66, z: 245 }, 0, 1.5, 3, 10000).catch(() => false)
+    }
     if (!nearBeeCabinDoor()) {
       logEvent('bee-cabin', 'not inside and not at the front door — operator decides')
       return
@@ -1045,9 +1060,11 @@ const SLEEP_PLACES = [
   { name: 'farm', center: { x: -268, z: 572 }, radius: 45, sleep: () => goToBed('auto-sleep') },
   // Covers the whole nearCabin() box (dock to bedroom).
   { name: 'cabin', center: { x: -125, z: 332 }, radius: 26, sleep: cabinSleep },
-  // Bee cabin (Dad, 2026-09-30): covers the cabin and the bee cross (~13 away),
-  // not the dock (~39). Outside the door, beeCabinSleep only acts at the door.
-  { name: 'bee-cabin', center: { x: -404, z: 243 }, radius: 16, sleep: beeCabinSleep },
+  // Bee cabin (Dad, 2026-09-30): covers the cabin and every hive stand at the
+  // bee cross (farthest, the south bee house stand, is 20.1 away — 16 left the
+  // east bee house out and bedtime there did nothing, 2026-10-01), not the dock
+  // (~49). Outside, beeCabinSleep walks to the door only while keeping bees.
+  { name: 'bee-cabin', center: { x: -404, z: 243 }, radius: 22, sleep: beeCabinSleep },
   // Igloo removed 2026-09-26 (Quesss): its beds sit up modded stairs (type 4029,
   // zero collision) that the bot cannot climb. Re-add once beds are reachable:
   // { name: 'igloo', center: { x: -325, z: 796 }, radius: 16, sleep: iglooSleep },
@@ -3190,7 +3207,7 @@ async function tendApiary (x, y, z, dryRun = false) {
   })().catch(e => ({ ok: false, error: e.message }))
 }
 
-const beeState = { active: false, gen: 0, timer: null, rounds: 0, moves: 0, startedAt: null, lastRoundAt: null, lastError: null }
+const beeState = { active: false, gen: 0, timer: null, rounds: 0, moves: 0, startedAt: null, lastRoundAt: null, lastError: null, inRound: false }
 
 function keepBeesStatus () {
   const { timer, ...rest } = beeState
@@ -3229,17 +3246,29 @@ function startKeepBees ({ intervalMs } = {}) {
 
 // One pass over all nine hives, then top up food. Skips the round (does not
 // queue it) when another task holds the bot, and cuts it short when HP drops.
-// Night is not a reason to stop: the bee cross has no bed, and Dad asked Roz
-// to stay there through the night.
+// Night does not stop the keeper (Dad, 2026-10-01): at bedtime the round breaks
+// off, auto-sleep walks her into the bee cabin, and the first round after dawn
+// walks her back out through the door and carries on.
 async function runBeeRound () {
+  if (beeState.inRound) return
+  beeState.inRound = true
+  try { await runBeeRoundInner() } finally { beeState.inRound = false }
+}
+async function runBeeRoundInner () {
   const gen = beeState.gen
   if (!nearBeeCross()) { stopKeepBees('carried away from the bee cross'); return }
   if (taskBusy()) { logEvent('bees', `round skipped: busy with ${activeTask.name}`); return }
+  if (bot.isSleeping || isBedtime()) { logEvent('bees', 'round skipped: bedtime'); return }
+  if (insideBeeCabin()) {
+    await beeCabinExit()
+    if (insideBeeCabin()) { logEvent('bees', `round skipped: could not leave the bee cabin (${posStr(bot.entity.position)})`); return }
+  }
   beeState.rounds++
   const moves = []
   for (const h of BEE_HIVES) {
     if (!beeState.active || beeState.gen !== gen) return
     if ((bot.health ?? 0) < BEE_MIN_HP) { logEvent('bees', `round ${beeState.rounds} cut short: HP ${bot.health}`); break }
+    if (isBedtime()) { logEvent('bees', `round ${beeState.rounds} cut short: bedtime`); break }
     try {
       await pathTo({ x: h.stand.x, y: 68, z: h.stand.z }, 1, 10000)
     } catch (e) {
