@@ -86,3 +86,11 @@ sailed by hand on 2026-09-27. **Not yet run end-to-end as one command.**
 - bot.js handles it now (`[vehicle] server confirmed dismount …`). `seatedBoat()` uses the boat's passenger list as the truth, and `disembark`/idle boating re-ask up to 3× and refuse to pretend they're out while still listed (`exit_boat` → `{ok:false, seated:true}`).
 - `[vehicle] set_passengers boat <id> → [...]` lines log every boat boarding change, so you can see who is aboard which boat.
 - `confirmed: true`: verified live at the pond (Roz in, out, landed).
+
+## Update 2026-10-01 (night) — `sail_to_cabin` passed end to end as one command
+
+- Roz started inside the farm house at dawn. One call did the rest: out the door, boarded at the farm port, flew 13 legs in one pilot session, and landed on the cabin dock (-127, 63, 347).
+- The river leg took about 2 min (03:34:13 → 03:36:14), with 0 server corrections and no grounding.
+- The dismount was server-confirmed, which makes it the first clean dock exit with the new set_passengers handling.
+- `sail_home` is still untested as one command.
+- **2026-10-02, `sail_home` also passed end to end as one command, with Dad aboard.** Roz started in the cabin bedroom: corridor exit, boarded boat 1181, Quesss joined as passenger (`set_passengers → [7647,826]`), 13 legs in ~1:45, 0 corrections. Dad switched to another boat near the farm port before arrival. The exit was server-confirmed, but the first landing walk stopped at (-252, 63, 523), 2 blocks short of the port landing. The `pathToSure` finish caught it and she walked on to the wheat field center. Both voyage commands now count as verified.
