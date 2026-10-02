@@ -79,3 +79,10 @@ walks to the **wheat field center (-283, 64, 562)** (Dad: don't wait at the port
 Both are an `activeTask` ("voyage"), stop on `stop`, abort on a death, and refuse to start at night or after
 tick 9500 (the trip is ~3000 ticks; river mobs) unless `"force":true`. Per-leg throttles are the ones
 sailed by hand on 2026-09-27. **Not yet run end-to-end as one command.**
+
+## Update 2026-10-01 — dismounts are now confirmed by the server
+
+- The dismount echo always arrived: `set_passengers` for the boat, with us missing from the list. Mineflayer ignores that case, which is why every exit before this logged "forced".
+- bot.js handles it now (`[vehicle] server confirmed dismount …`). `seatedBoat()` uses the boat's passenger list as the truth, and `disembark`/idle boating re-ask up to 3× and refuse to pretend they're out while still listed (`exit_boat` → `{ok:false, seated:true}`).
+- `[vehicle] set_passengers boat <id> → [...]` lines log every boat boarding change, so you can see who is aboard which boat.
+- `confirmed: true`: verified live at the pond (Roz in, out, landed).

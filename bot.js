@@ -2417,6 +2417,7 @@ function verifyAtOrientation (pt, xzTol = 1.5, yTol = 0.6) {
 // `thresholdStrafe`: { at, strafe, ms } — proactive one-shot pulse fired when
 //   the axis crosses `at`, steering around a known catch point (door jamb)
 //   before the reactive snag detector would have to rescue us.
+const WALK_WRONG_WAY_TOL = 0.75 // blocks of backward travel before walkUntilAxis bails
 async function walkUntilAxis ({
   axis, target, direction = 'gte', maxMs = 8000, bailOnDamage = false,
   unstickStrafe = null, unstickMs = 200, snagWindow = 500, snagThreshold = 0.1,
@@ -2438,6 +2439,12 @@ async function walkUntilAxis ({
     let thresholdFired = false
     let snagCount = 0
     let snagPositions = []
+    // Wrong-way guard: furthest progress toward the target so far. Forward is
+    // the only key held, so falling back WALK_WRONG_WAY_TOL behind it means
+    // we are facing away (bad yaw, or something turned us mid-walk). Without
+    // this a backwards walk ran its whole timeout — 34 blocks the wrong way
+    // once (2026-09-19), into walls more often.
+    let bestVal = bot.entity?.position?.[axis] ?? 0
     const timer = setInterval(() => {
       const now = Date.now()
       const val = bot.entity?.position?.[axis] ?? 0
@@ -2483,23 +2490,26 @@ async function walkUntilAxis ({
         lastProgressAt = now // give the pulse time to work before another
       }
 
+      if (direction === 'gte' ? val > bestVal : val < bestVal) bestVal = val
+      const wrongWay = (direction === 'gte' ? bestVal - val : val - bestVal) > WALK_WRONG_WAY_TOL
+
       const reached = direction === 'gte' ? val >= target : val <= target
       const hpDrop = bailOnDamage && (bot.health ?? 20) < startHp - 2
       const died = deathCount > startDeaths
-      if (reached || died || hpDrop || now - start > maxMs) {
+      if (reached || died || hpDrop || wrongWay || now - start > maxMs) {
         bot.setControlState('forward', false)
         if (strafeActive) bot.setControlState(strafeActive, false)
         clearInterval(timer)
         const p = bot.entity?.position || { x: 0, y: 0, z: 0 }
         const endX = +p.x.toFixed(3)
         const endZ = +p.z.toFixed(3)
-        const outcome = reached ? 'OK' : died ? 'DIED' : hpDrop ? 'HP_DROP' : 'TIMEOUT'
+        const outcome = reached ? 'OK' : died ? 'DIED' : hpDrop ? 'HP_DROP' : wrongWay ? 'WRONG_WAY' : 'TIMEOUT'
         const snagSummary = snagPositions.length > 0
           ? ` snags=[${snagPositions.map(s => `(${s.x},${s.z}@${s.ms}ms)`).join(',')}]`
           : ''
         logEvent('walk_until', `trace ${axis}→${target}: ${outcome} start=(${startX},${startZ}) end=(${endX},${endZ}) snags=${snagCount} elapsed=${now - start}ms threshold=${thresholdFired}${snagSummary}`)
         resolve({
-          reached, died, hpDrop,
+          reached, died, hpDrop, wrongWay: !reached && wrongWay,
           x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2),
           elapsed_ms: now - start,
         })
@@ -2965,6 +2975,51 @@ function boatSeek (waypoints, { throttle = 1, range = 3, rate = BOAT_TURN_RATE, 
 // the ref survives a beat, trust the request and clear it (the pond routine
 // has always done this). Then step onto the nearest dry standing spot with
 // the pathfinder, which swims out if the step lands in the water.
+// The dismount echo DOES arrive — as set_passengers for the boat with us
+// missing from the list — but mineflayer only updates bot.vehicle when our id
+// is IN the list, so it never notices we got out. That blind spot is why the
+// dismount code used to clear bot.vehicle by hand, which lied whenever the
+// dismount really failed: Muse sat in the pond boat answering "I am not in a
+// boat" to every "get out" (2026-10-01). Handle the echo here, and keep the
+// boat's passenger list as the server's word on who is aboard.
+client.on('set_passengers', ({ entityId, passengers }) => {
+  const v = bot.entities[entityId]
+  if (v && v.name === 'boat') logEvent('vehicle', `set_passengers boat ${entityId} → [${passengers.join(',')}]`)
+  if (!v || !bot.entity || passengers.includes(bot.entity.id)) return
+  const i = v.passengers ? v.passengers.indexOf(bot.entity) : -1
+  if (i >= 0) v.passengers.splice(i, 1)
+  if (bot.entity.vehicle === v) bot.entity.vehicle = null
+  if (bot.vehicle === v) {
+    bot.vehicle = null
+    logEvent('vehicle', `server confirmed dismount from ${v.name} ${v.id}`)
+    bot.emit('dismount', v)
+  }
+})
+// The boat we are really sitting in: bot.vehicle, or — after some path cleared
+// that ref by hand — a nearby boat whose server passenger list still has us.
+function seatedBoat () {
+  if (bot.vehicle) return bot.vehicle
+  if (!bot.entity) return null
+  return Object.values(bot.entities).find(e =>
+    e.name === 'boat' && Array.isArray(e.passengers) && e.passengers.includes(bot.entity) &&
+    (!bot.entity.position || !e.position || e.position.distanceTo(bot.entity.position) <= 8)
+  ) || null
+}
+// Ask to get out, re-asking until the server confirms or tries run out.
+// Returns true once the server has us out of the boat.
+async function requestDismount (v, tries = 3) {
+  for (let t = 0; t < tries; t++) {
+    client.write('steer_vehicle', { sideways: 0, forward: 0, jump: 0x02 })
+    client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 })
+    try { if (bot.vehicle) bot.dismount() } catch (_) {}
+    for (let w = 0; w < 6; w++) {
+      await sleep(100)
+      if (!v.passengers || !v.passengers.includes(bot.entity)) { if (bot.vehicle === v) bot.vehicle = null; return true }
+    }
+  }
+  return false
+}
+
 function findLanding (from, maxR = 4) {
   let best = null
   for (let dy = 0; dy <= 2; dy++) {
@@ -2988,21 +3043,19 @@ function findLanding (from, maxR = 4) {
 }
 
 async function disembark ({ to = null, land = true } = {}) {
-  const v = bot.vehicle
+  const v = seatedBoat()
   if (!v) return { ok: false, error: 'not in a vehicle' }
   if (pilot.session) pilot.session.supersede()
   const boatPos = v.position.clone()
   const startDeaths = deathCount
-  client.write('steer_vehicle', { sideways: 0, forward: 0, jump: 0x02 })
-  client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 })
   bot.setControlState('sneak', true)
-  try { bot.dismount() } catch (_) {}
-  await sleep(600)
+  const confirmed = await requestDismount(v)
   if (PERSONA !== 'private') bot.setControlState('sneak', false)
-  const confirmed = !bot.vehicle
   if (!confirmed) {
-    logEvent('exit-boat', 'server did not echo the dismount — clearing vehicle ref')
-    bot.vehicle = null
+    // Still on the boat's passenger list: we are still seated. Say so rather
+    // than pretend — clearing the ref here is what stranded Muse.
+    logEvent('exit-boat', `server still lists us aboard ${v.name} ${v.id} after 3 dismount requests`)
+    return { ok: false, error: 'still seated — the server did not let me out', seated: true }
   }
   stopPassengerObserving()
   wasInVehicle = false
@@ -3509,15 +3562,12 @@ async function _runIdleBoating () {
 
   // Dismount — force-clear bot.vehicle if the protocol dismount doesn't take,
   // since on this modded server the event often doesn't fire back.
-  if (bot.vehicle) {
-    client.write('steer_vehicle', { sideways: 0, forward: 0, jump: 0x02 })
-    client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 })
-    try { bot.dismount() } catch (_) {}
-    await sleep(500)
-    if (bot.vehicle) {
-      logEvent('idle-boating', 'dismount did not clear vehicle ref — forcing')
-      bot.vehicle = null
-    }
+  const seat = seatedBoat()
+  if (seat && !(await requestDismount(seat))) {
+    // Never clear the ref by hand: that left Muse seated but convinced it was
+    // ashore (2026-10-01). Stay put; "get out of the boat" can try again.
+    logEvent('idle-boating', `server still lists us aboard boat ${seat.id} — staying in the boat`)
+    return
   }
 
   logEvent('idle-boating', 'done — heading back to shore')
@@ -7735,7 +7785,7 @@ async function tryClearPenPlate () {
   penPlateSince = null
   logEvent('pen-plate', 'dwelled >3s on plate — stepping north off it')
   try {
-    await faceYaw(Math.PI) // face -z (decrease z toward 571)
+    await faceYaw(0) // face north, -z (decrease z toward 571)
     await walkUntilAxis({ axis: 'z', target: 571, direction: 'lte', maxMs: 3000 })
     await ensurePenDoorClosed() // make sure the door didn't stay propped open
   } catch (e) {
@@ -7795,10 +7845,17 @@ const EXIT_XZ_TOL = 0.3     // refuse the doorway walk if the start is off by mo
 // Lineup steps inside the house are sneak-walked: at full walk speed a step
 // overshoots 0.2–1.0 blocks, and one x-align slid her to (-266.6, 573.5), a
 // step from the charge pad (2026-09-28).
+// Each step faces its own heading (derived from axis + direction, so the yaw
+// can't disagree with the walk), refuses to walk if the turn didn't take, and
+// holds that heading for the whole step.
+const ALIGN_YAW = { x: { lte: Math.PI / 2, gte: -Math.PI / 2 }, z: { lte: 0, gte: Math.PI } }
 async function exitAlignStep (axis, target, direction, maxMs = 3000) {
+  const yaw = ALIGN_YAW[axis][direction]
+  const faced = await faceYaw(yaw)
+  if (!faced.ok) throw new Error(`align ${axis} ${direction}: yaw didn't converge (got ${faced.yaw.toFixed(2)} rad)`)
   bot.setControlState('sneak', true)
   try {
-    return await walkUntilAxis({ axis, target, direction, maxMs })
+    return await walkUntilAxis({ axis, target, direction, maxMs, maintainYaw: yaw })
   } finally {
     bot.setControlState('sneak', false)
     await sleep(300)
@@ -7879,7 +7936,6 @@ async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
   if (Math.abs(curXExit - EXIT_START_X) > EXIT_XZ_TOL) {
     const west = curXExit > EXIT_START_X
     logEvent('go-outside', `x-align: ${curXExit.toFixed(2)}, nudging ${west ? '-x' : '+x'}`)
-    await faceYaw(west ? Math.PI / 2 : -Math.PI / 2)
     await exitAlignStep('x', EXIT_START_X, west ? 'lte' : 'gte')
     logEvent('go-outside', `x-align done: x=${bot.entity.position.x.toFixed(2)}`)
   }
@@ -7889,12 +7945,10 @@ async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
   const curZExit = bot.entity.position.z
   if (curZExit > 572.7) {
     logEvent('go-outside', `z-align: ${curZExit.toFixed(2)} > 572.7, nudging -z`)
-    await faceYaw(0)
     await exitAlignStep('z', EXIT_DOOR_Z, 'lte')
     logEvent('go-outside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
   } else if (curZExit < 572.45) {
     logEvent('go-outside', `z-align: ${curZExit.toFixed(2)} < 572.45, nudging +z`)
-    await faceYaw(Math.PI)
     await exitAlignStep('z', EXIT_DOOR_Z, 'gte')
     logEvent('go-outside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
   }
@@ -7917,7 +7971,6 @@ async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
     if (Math.abs(zNow - EXIT_DOOR_Z) <= EXIT_Z_TOL) break
     const south = zNow > EXIT_DOOR_Z
     logEvent('go-outside', `z drifted to ${zNow.toFixed(3)} after yaw lock — re-aligning ${south ? '-z' : '+z'}`)
-    await faceYaw(south ? 0 : Math.PI)
     await exitAlignStep('z', EXIT_DOOR_Z, south ? 'lte' : 'gte')
     const again = await faceYaw(TARGET_YAW)
     if (!again.ok) throw new Error(`yaw didn't converge to west after z re-align (got ${again.yaw.toFixed(2)} rad)`)
@@ -7948,7 +8001,7 @@ async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
   }
 
   const walk = await walkUntilAxis({
-    axis: 'x', target: -275, direction: 'lte', maxMs: 8000, bailOnDamage: true,
+    axis: 'x', target: -275, direction: 'lte', maxMs: 8000, bailOnDamage: true, maintainYaw: TARGET_YAW,
     // Side-step back toward the door line, never away from it: a fixed 'left'
     // (south) pulse from an already-south start is what walked her into the
     // south-east corner and onto the charge pad. EXIT_STRAFE stays as the
@@ -7997,7 +8050,7 @@ async function runGoInsideOnce () {
     logEvent('go-inside', `pathfind to outside_orientation failed; walking manually`)
     await faceYaw(Math.PI / 2) // face west
     await walkUntilAxis({ axis: 'x', target: -275, direction: 'lte', maxMs: 6000 })
-    await faceYaw(Math.PI) // face -z (decrease z toward 572)
+    await faceYaw(0) // face north, -z (decrease z toward 572)
     await walkUntilAxis({ axis: 'z', target: 572, direction: 'lte', maxMs: 4000 })
   }
   if (deathCount > startDeaths) throw new Error('died en route to outside_orientation')
@@ -8069,7 +8122,7 @@ async function runGoInsideOnce () {
   }
 
   // 6. Walk_until x ≥ -268. Single push, no strafe.
-  const walk = await walkUntilAxis({ axis: 'x', target: -268, direction: 'gte', maxMs: 8000, bailOnDamage: true, unstickStrafe: ENTER_STRAFE, unstickMs: ENTER_STRAFE_MS })
+  const walk = await walkUntilAxis({ axis: 'x', target: -268, direction: 'gte', maxMs: 8000, bailOnDamage: true, maintainYaw: TARGET_YAW, unstickStrafe: ENTER_STRAFE, unstickMs: ENTER_STRAFE_MS })
 
   // Restore original getBlock.
   bot.world.getBlock = origGetBlock
@@ -8123,7 +8176,7 @@ async function resetToHouseSide (target /* HOUSE_CENTER or OUTSIDE_ORIENTATION *
   // Correct z to match the orientation block's z=572
   const zOff = (bot.entity?.position?.z ?? 572) - 572
   if (Math.abs(zOff) > 0.8) {
-    await faceYaw(zOff > 0 ? Math.PI : 0).catch(() => {}) // z>572 → face -z; z<572 → face +z
+    await faceYaw(zOff > 0 ? 0 : Math.PI).catch(() => {}) // z>572 → face north (-z); z<572 → face south (+z)
     await walkUntilAxis({ axis: 'z', target: 572, direction: zOff > 0 ? 'lte' : 'gte', maxMs: 4000 }).catch(() => {})
   }
   await pathTo(target, 0, 6000).catch(() => {})
@@ -10176,7 +10229,7 @@ const CHAT_HANDLERS = [
     name: 'exit_boat',
     pattern: /\b(get|hop|climb|step|jump)\s+(out\s+of|off(\s+of)?)\s+(the|that|your)\s+boat\b|\b(exit|leave)\s+(the|your)\s+boat\b|\bdisembark\b/i,
     handler: (_user) => {
-      if (!bot.vehicle) { bot.chat('I am not in a boat.'); return }
+      if (!seatedBoat()) { bot.chat('I am not in a boat.'); return }
       disembark()
         .then(r => { if (r.landed === false) bot.chat('Out of the boat, but no dry land close by. Swimming for shore.') })
         .catch(e => {

@@ -43,3 +43,10 @@ onPad=true` ~1.2s later — zero snags, zero retries, first attempt every time.
 - [[../places/orientation-blocks]]
 - [[../places/yaw-convention]]
 - [[enter-house]]
+
+## Update 2026-10-01 — wrong-way guard + heading lock
+
+- Each alignment step faces its own heading (x: west/east, z: north/south), refuses to walk if the turn didn't take, and holds that heading with `maintainYaw`. The doorway walk holds west the same way.
+- `walk_until` now stops on 0.75 blocks of backward travel (`WRONG_WAY`), so a bad heading can't charge into a wall for the full timeout.
+- The retry's reset step (`resetToHouseSide`) used to face **south** when it meant north (yaw π, not 0). Fixed; see [[yaw-convention]].
+- `confirmed: false` for the new code until a live exit is observed.

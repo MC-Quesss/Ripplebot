@@ -33,6 +33,23 @@ review with the user.
 *Layout reshuffled 2026-08-08 after a mystery visitor took Far and several other
 items from the kitchen chest. Blocks replaces Far in the collection.*
 
+## Update 2026-10-01: Oceanside resource pack retracks six discs
+
+Dad picked six songs, and a resource pack (`oceanside-pack.zip`) swaps them onto discs: same disc items, new audio and tooltip. Anyone who accepts the server pack hears the new song. Anyone without it hears C418 as before. **Live 2026-10-01:** hosted as GitHub release `resourcepack-v1` on MC-Quesss/Ripplebot (SHA-1 `857f2ccc064252f49f0362d1d23beab474a14b68`) and set in `server.properties`. Dad tested it with his local copy removed: after the server restart, the pack was offered on join and the new songs played.
+
+| Disc | Now plays | Length |
+|---|---|---|
+| BOP `record_wanderer` | John Michael Howell - Medusa | 2:10 |
+| `record_13` | Kid Koala - Scratchhappyland | 4:27 |
+| `record_mall` | Mulatu Astatke - Tezeta | 6:17 (377s) |
+| `record_strad` | Neil Young - Harvest Moon | 5:03 |
+| `record_11` | John Michael Howell - Story Of A Warrior | 2:10 |
+| `record_chirp` | Death Cab for Cutie - I Will Follow You into the Dark | 3:09 (189s) |
+
+Two of these are in the farm collection: **Mall and Chirp**. `RECORD_INFO` in bot.js still says Mall/197s and Chirp/185s, so a bot playing Mall announces "Mall" and thinks the song ended three minutes early. Update `RECORD_INFO` when the pack goes live.
+
+How it works: each disc's `.ogg` is replaced at its own path (`minecraft:sounds/records/<disc>.ogg`, `biomesoplenty:sounds/records/wanderer.ogg`), the songs are mono so they come from the jukebox, and one-line `en_us.lang` overrides change the tooltips. Turning the pack on reloads every mod's assets, so the game freezes for about a minute. That's normal.
+
 ## Update 2026-08-08 — Far lost, Blocks joins
 
 A mystery guest raided the kitchen chest, making off with Far, the pot,

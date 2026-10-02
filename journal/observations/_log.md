@@ -11,6 +11,16 @@ Reverse-chronological. Raw observations land here first; canonical facts get pro
 
 ## Recent sessions
 
+### 2026-10-01 (evening) — Helm mode: one quick night, and a compass correction (days 54129–54130)
+
+- Launched in helm at the farm house (full HP/food, 0 deaths). Muse and Quesss online. Muse now speaks in Rain's all-caps voice under its own name.
+- Auto-sleep: primary bed was taken, so Roz took the left one. Night skipped at 2/3 (66%).
+- `rps_fun` silently did nothing: `runFunRpsChallenger` returns early indoors, but the ctl reply still said `started:true`. Muse's own challenge went unanswered at the same time, because helm mode has no brain to accept it.
+- **Anomaly → fix: walks that went the wrong way.** Muse hit the house wall on the first exit attempt of idle boating. In Roz's log, 15 `walk_until` traces ended farther from their target than they started (one went 34 blocks the wrong way). Three spots said "face -z" but used yaw π, which is **south**: `resetToHouseSide`, the go-inside manual fallback, and `tryClearPenPlate`. Fixed. `walkUntilAxis` now stops after 0.75 blocks of backward travel (outcome `WRONG_WAY`). The house exit's alignment steps now confirm their turn and hold it. See [[exit-house]], [[yaw-convention]].
+- **Live door test passed** (day 54131, morning): `go_outside` went center → outside pad in 2.0s, heading held, threshold strafe fired, no snags.
+- **Muse got stuck in the pond boat** and kept answering "I am not in a boat" to Dad. Cause: mineflayer bug. When a passenger gets out, the server sends `set_passengers` for the boat with that passenger missing from the list, but mineflayer only updates `bot.vehicle` when the bot is *in* the list. So it never saw any dismount, and the code always cleared the ref by hand ("forced" on every exit in the log). That hand-clear was wrong when the dismount really failed. Fix: bot.js now handles that packet itself, `seatedBoat()` checks the boat's passenger list (the server's record), dismounts retry up to 3× and never clear the ref while still listed, and the "get out" reflex uses `seatedBoat()`. **Verified live:** Roz boarded the pond boat beside Muse, ran `exit_boat`, got `[vehicle] server confirmed dismount` and `dismounted (confirmed)`, the first ever, and landed on shore. See [[boat-piloting]].
+- Open: Muse is still seated until restarted. Muse and Private need restarts to pick up both fixes.
+
 ### 2026-09-30 (evening) — Helm mode: two quick nights at the farm (days 53998–54000)
 
 - Launched in helm at the farm house beds (full HP/food, 0 deaths). Players: Private, Quesss, ABBYO.
