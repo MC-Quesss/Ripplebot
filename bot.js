@@ -4815,19 +4815,43 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
   }
 }
 
-// Craft plant balls from surplus wheat seeds at the project bench.
-// 8-seed ring (perimeter slots 0,1,2,3,5,6,7,8; center 4 empty).
-// The bench computes output on GUI-open, not on placement, so each craft is:
-// place ring → close → reopen → take output from slot 28.
+// Craft plant balls from surplus wheat seeds at the house crafting spot.
+// 8-seed ring, center empty. Two kinds of table, told apart by window size:
+// - ProjectRed Project Bench (the original): ring 0,1,2,3,5,6,7,8, output 28,
+//   inventory from 29. It computes output on GUI-open, not on placement, so
+//   each craft is place ring → close → reopen → take output.
+// - Vanilla crafting table (46 slots): ring 1,2,3,4,6,7,8,9, output 0,
+//   inventory from 10. Output appears on placement — one open crafts them all.
+//   It did not open at all in June; verified working 2026-10-03, and Dad is
+//   swapping the bench for one.
 const BENCH_POS = { x: -270, y: 65, z: 569 }
 const BENCH_RING_SLOTS = [0, 1, 2, 3, 5, 6, 7, 8]
 const BENCH_OUTPUT_SLOT = 28
 const BENCH_PLAYER_INV_START = 29 // bench has 29 own slots (0-28)
+const VANILLA_TABLE_SLOTS = 46
+
+function benchLayout (win) {
+  if (win.slots.length === VANILLA_TABLE_SLOTS) {
+    return { vanilla: true, ring: [1, 2, 3, 4, 6, 7, 8, 9], gridFirst: 1, gridLast: 9, output: 0, invStart: 10 }
+  }
+  return { vanilla: false, ring: BENCH_RING_SLOTS, gridFirst: 0, gridLast: 8, output: BENCH_OUTPUT_SLOT, invStart: BENCH_PLAYER_INV_START }
+}
+
+// The block at BENCH_POS, or — if the new table went in a step away — the
+// nearest crafting_table within 4 blocks of it. 4 keeps the outdoor table
+// at (-274, 64, 566) (~5 away, through the wall) out of the search.
+function findBenchBlock () {
+  const at = bot.blockAt(new Vec3(BENCH_POS.x, BENCH_POS.y, BENCH_POS.z))
+  if (at && at.name !== 'air') return at
+  const table = bot.registry.blocksByName.crafting_table
+  if (!table) return null
+  return bot.findBlock({ point: new Vec3(BENCH_POS.x, BENCH_POS.y, BENCH_POS.z), matching: table.id, maxDistance: 4 })
+}
 
 function openBench () {
   return new Promise((resolve, reject) => {
-    const benchBlock = bot.blockAt(new Vec3(BENCH_POS.x, BENCH_POS.y, BENCH_POS.z))
-    if (!benchBlock) return reject(new Error('bench block not loaded'))
+    const benchBlock = findBenchBlock()
+    if (!benchBlock) return reject(new Error('no bench or crafting table at the house crafting spot'))
     const timeout = setTimeout(() => {
       bot.removeListener('windowOpen', onOpen)
       reject(new Error('bench window did not open in 3s'))
@@ -4857,25 +4881,33 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
 
-  // Each cycle: open bench fresh, place 8, close, reopen, take output, clear grid, close.
-  // Closing between place and take ensures the server processes the recipe.
+  // Each cycle: place 8, take output, clear grid. The Project Bench needs a
+  // close → reopen between place and take (it only computes output on open);
+  // a vanilla table shows the output at once, so one open serves every ball.
   // Every click pair (pick up → put down) is verified so we never leave items on cursor.
   let crafted = 0
+  let win = null
+  let layout = null
   for (let i = 0; i < craftable; i++) {
     // ── Phase 1: place 8 ingredients in the ring ──
-    let win
-    try { win = await openBench() } catch (e) {
-      logEvent('craft', `bench open fail: ${e.message}`)
-      break
+    if (!win) {
+      try { win = await openBench() } catch (e) {
+        logEvent('craft', `bench open fail: ${e.message}`)
+        break
+      }
+      await sleep(250)
+      layout = benchLayout(win)
+      if (i === 0) logEvent('craft', `using ${layout.vanilla ? 'vanilla crafting table' : 'project bench'} (${win.slots.length} slots)`)
     }
-    await sleep(250)
 
     // First clear any leftovers from a prior crash/desync
-    await benchClearGrid(win)
+    await benchClearGrid(win, layout)
 
-    const seedStack = win.items().find(it => it.name === ingredient && it.slot >= BENCH_PLAYER_INV_START)
-    if (!seedStack || seedStack.count < 8) {
-      win.close()
+    // Any stack with enough — the first match can be a short leftover stack
+    // sitting ahead of a full one (87 seeds = 23 + 64 stalled at 7, 2026-10-03).
+    const seedStack = win.items().find(it => it.name === ingredient && it.slot >= layout.invStart && it.count >= 8)
+    if (!seedStack) {
+      win.close(); win = null
       logEvent('craft', `no ${ingredient} stack >= 8 in bench window`)
       break
     }
@@ -4884,7 +4916,7 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
       // Pick up the full stack, then right-click each ring slot to place exactly 1.
       await bot.clickWindow(seedStack.slot, 0, 0) // left-click = pick up stack
       await sleep(120)
-      for (const ringSlot of BENCH_RING_SLOTS) {
+      for (const ringSlot of layout.ring) {
         await bot.clickWindow(ringSlot, 1, 0) // right-click = place 1 from cursor
         await sleep(120)
       }
@@ -4893,56 +4925,61 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
       await sleep(120)
     } catch (e) {
       logEvent('craft', `ring placement error: ${e.message}`)
-      await benchSafeCursorDump(win)
-      win.close()
+      await benchSafeCursorDump(win, layout)
+      win.close(); win = null
       break
     }
-
-    win.close()
-    await sleep(600)
 
     // ── Phase 2: take the output and clear the grid ──
-    let win2
-    try { win2 = await openBench() } catch (e) {
-      logEvent('craft', `bench reopen fail: ${e.message}`)
-      break
+    if (layout.vanilla) {
+      await sleep(250)
+    } else {
+      win.close(); win = null
+      await sleep(600)
+      try { win = await openBench() } catch (e) {
+        logEvent('craft', `bench reopen fail: ${e.message}`)
+        break
+      }
+      await sleep(250)
     }
-    await sleep(250)
 
-    const output = win2.slots[BENCH_OUTPUT_SLOT]
+    const output = win.slots[layout.output]
     if (!output) {
-      logEvent('craft', `no output at slot ${BENCH_OUTPUT_SLOT} after reopen (ball #${i + 1})`)
+      logEvent('craft', `no output at slot ${layout.output} (ball #${i + 1})`)
       // Clear the grid so ingredients don't stay on the bench
-      await benchClearGrid(win2)
-      win2.close()
+      await benchClearGrid(win, layout)
+      win.close(); win = null
       break
     }
 
     try {
       // Shift-click the output to move it straight to inventory
-      await bot.clickWindow(BENCH_OUTPUT_SLOT, 0, 1)
+      await bot.clickWindow(layout.output, 0, 1)
       await sleep(200)
     } catch (e) {
       logEvent('craft', `take output error: ${e.message}`)
-      await benchSafeCursorDump(win2)
-      win2.close()
+      await benchSafeCursorDump(win, layout)
+      win.close(); win = null
       break
     }
 
     // Clear grid leftovers (modded bench doesn't auto-clear on output take)
-    await benchClearGrid(win2)
+    await benchClearGrid(win, layout)
 
-    win2.close()
-    await sleep(250)
+    if (!layout.vanilla) {
+      win.close(); win = null
+      await sleep(250)
+    }
     crafted++
   }
+  if (win) win.close()
 
   logEvent('craft', `crafted ${crafted} plant balls, ${ingredient} remaining: ${countOnHand(ingredient)}`)
   return { crafted }
 }
 
-async function benchClearGrid (win) {
-  for (let s = 0; s <= 8; s++) {
+async function benchClearGrid (win, layout) {
+  for (let s = layout.gridFirst; s <= layout.gridLast; s++) {
     const item = win.slots[s]
     if (!item || item.count === 0) continue
     try {
@@ -4953,21 +4990,21 @@ async function benchClearGrid (win) {
       try {
         await bot.clickWindow(s, 0, 0)
         await sleep(100)
-        await benchSafeCursorDump(win)
+        await benchSafeCursorDump(win, layout)
       } catch (__) {}
     }
   }
 }
 
-async function benchSafeCursorDump (win) {
-  for (let s = BENCH_PLAYER_INV_START; s < win.slots.length; s++) {
+async function benchSafeCursorDump (win, layout) {
+  for (let s = layout.invStart; s < win.slots.length; s++) {
     if (!win.slots[s]) {
       try { await bot.clickWindow(s, 0, 0); await sleep(100) } catch (_) {}
       return
     }
   }
   // No empty slot — put back where we got it
-  try { await bot.clickWindow(BENCH_PLAYER_INV_START, 0, 0); await sleep(100) } catch (_) {}
+  try { await bot.clickWindow(layout.invStart, 0, 0); await sleep(100) } catch (_) {}
 }
 
 // "Keep the fire going" — autonomous sustain loop. Watches the wheat field;

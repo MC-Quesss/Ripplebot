@@ -125,3 +125,17 @@ surplus seeds to plant balls in a single action. See [[../observations/_log]] (2
 - [[../places/house]] — the bench replaced the old crafting table at (-270,65,569)
 - [[bake-potatoes]] — the 2×2 inventory-grid crafting (always-open window 0; never needed the table)
 - [[../observations/_log]]
+
+## Update — 2026-10-03: the vanilla crafting table works now
+
+At Dad's suggestion Roz tried the **vanilla crafting table outside the farmhouse at (-274, 64, 566)**.
+Right-click (`activate_block`) opened a normal **46-slot window** (`window_slots`: 0 = output,
+1–9 = grid, 10–45 = inventory). One plant ball, placed by hand: left-click the seed stack (8),
+right-click ring slots 1 2 3 4 6 7 8 9 (one seed each, center 5 empty). **The output appeared in
+slot 0 at once, no close and reopen.** Shift-click slot 0 → ball in inventory (8 → 9), grid
+empty, nothing on the cursor, no server rejects. Compare the bench's per-ball close/reopen and its
+"no output at slot 28" / "Server didn't respond" failures seen the same day.
+
+The June finding (no server response at all) no longer holds; cause unknown (server mod change, or
+the bot's window handling). **Candidate change:** move `craftPlantBalls` to this table. Single
+craft proven; batch crafting is not tested yet.
