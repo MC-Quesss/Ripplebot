@@ -3431,6 +3431,12 @@ function onBeeDock () {
   const p = bot.entity?.position
   return !!p && !bot.vehicle && p.x >= -420 && p.x <= -412 && p.z >= 276 && p.z <= 293 && p.y >= 61 && p.y <= 66
 }
+// Sailing needs daylight to spare; walking up from the dock or starting at
+// the cross does not.
+function beeVoyageTooLate (where) {
+  const sailing = where === 'farm' || where === 'boat'
+  return sailing && (!bot.time.isDay || bot.time.timeOfDay >= BEE_VOYAGE_LATEST_START)
+}
 function beeVoyageWhere () {
   if (!bot.entity?.position) return 'unknown'
   if (seatedBoat()) return 'boat'
@@ -3487,8 +3493,7 @@ async function runBeeVoyage ({ force = false } = {}) {
   if (beeState.active) return { ok: true, already: true, ...keepBeesStatus() }
   const where = beeVoyageWhere()
   if (where === 'unknown') return { ok: false, where, error: 'I do not know the way to the bees from here' }
-  const sailing = where === 'farm' || where === 'boat'
-  if (sailing && !force && (!bot.time.isDay || bot.time.timeOfDay >= BEE_VOYAGE_LATEST_START)) {
+  if (!force && beeVoyageTooLate(where)) {
     return { ok: false, where, error: 'too late in the day for the cove — I will go at first light' }
   }
   treadWaterEnabled = true // every docking leans on it (Dad, 2026-10-05)
@@ -10474,6 +10479,7 @@ const CHAT_HANDLERS = [
       if (taskBusy()) { bot.chat(`I am in the middle of ${activeTask.name} — tell me to stop first.`); return }
       const where = beeVoyageWhere()
       if (where === 'unknown') { bot.chat('I do not know the way to the bees from here. Bring me to the farm or the cove first.'); return }
+      if (beeVoyageTooLate(where)) { bot.chat('Too late in the day for the cove — the trip would land in the dark. Ask me at first light.'); return }
       abortGen++
       followTarget = null; followEntity = null; followChainPos = 0
       sustainPause('bee_voyage')
@@ -10525,6 +10531,7 @@ const CHAT_HANDLERS = [
       if (away <= HOME_RADIUS) { bot.chat('I am already home.'); return }
       if (nearBeeCove()) {
         // From the bees home is by boat (Dad, 2026-10-05).
+        if (beeVoyageTooLate('boat')) { bot.chat('Too late in the day for the water — I will sleep at the cabin and sail home at first light.'); return }
         abortGen++
         followTarget = null; followEntity = null; followChainPos = 0
         sustainPause('bee_voyage')
