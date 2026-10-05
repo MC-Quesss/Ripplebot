@@ -75,3 +75,8 @@ and asked Roz to tell him on his return how many nights had passed for her. To a
   Say both if they do.
 
 **Delivered 2026-10-01 14:08 UTC:** Dad came back at world day 54095. Count: **64 world nights and 64 cabin sleeps**, a full stack, with no deaths and the keeper running all 141 rounds.
+
+**Entry stall, 2026-10-04 (Dad spotted the cause):** the entry from the outside point failed at (-402.9, 66, 243.3), on the stone lip.
+She was **0.4 west of the door's centre line (x -402.5)**, so her shoulder caught the west jamb. Fix in bot.js (needs a restart):
+`beeCabinEnter` now walks onto x ≈ -402.5 before turning north. Until she's restarted, line her up by hand (`look` east, `walk_until` x ≥ -402.6).
+Also: auto-sleep walks her to the door **only while keep_bees is running**. Idle at the cross, the operator has to bring her to the door.

@@ -130,3 +130,45 @@ fired.
 - ~~Moving items inside a modded window needs raw window clicks.~~ Built:
   `clickWindow` pick-up / place works in both hive windows.
 - The drone-64 reset is still untested live.
+
+## Gap seen 2026-10-04: a hive with no princess of its own stays empty
+
+Round 139 (08:24Z, day ~54390) was the first time this happened. The **south bee house** queen died and its own outputs held no
+wintry princess, so the keeper logged "queen slot empty but no wintry princess in the outputs" and moved on.
+Round 140 found the same thing. `tendApiary` only refills a hive from **that hive's own** outputs. A queenless hive produces nothing,
+so it can't recover by itself. Roz's pack had no spare princesses, only six stacks of wintry drones.
+Not fixed: moving a princess from another hive's outputs breaks "leave every other item alone", so it's waiting for Dad.
+Options: (a) Dad hands Roz a few spare wintry princesses, which go in via the manual pack move above, or (b) the keeper
+pockets one spare princess when a hive's outputs hold more than it needs, and uses it for queenless hives.
+Round 143 (08:45Z): the **west bee house** went queenless the same way, so two of five bee houses are down. Bee houses seem to run out first. Apiaries (with frames) have kept their own princesses so far.
+
+**2026-10-04 14:52Z:** Dad asked Roz to start keeping the bees again. There are now **lemon and cherry trees** near the hives that need pollinating; the aim is to cross-breed them into **plum**. The bees pollinate on their own. The keeper only keeps the queens alive.
+Round 10 after the restart (15:42Z): the **west bee house** had a wintry princess and drones in its outputs again and was refilled. Something put them there. Probably Dad, after hearing the report; not confirmed. The south bee house is still queenless.
+Round 11 (15:47Z): the **south bee house** had a princess and drones in its outputs too and was refilled. All nine hives are queened again. Someone, almost certainly Dad, restocked both houses by hand.
+
+## "Tend the bees" and "come home": the whole trip as one routine (Dad, 2026-10-05)
+
+Dad asked for a general skill like "keep the fire going", so any bot can get itself to the bees and back. bot.js `runBeeVoyage` / `runBeeVoyageHome`.
+- **To the bees:** chat **"tend the bees"** (also keep / look after / go to / back to the bees), or ctl `bee_voyage` {force?}.
+- **Stop the keeper:** **"take a break from / stop the bees"**.
+- **Home:** **"come home" / "come back to the farm"** said at the cove, or ctl `bee_voyage_home` {force?}.
+- **Treading water:** both trips switch the tread-water reflex on first. Every docking leans on it.
+
+**To the bees:**
+1. **Where am I?** (`beeVoyageWhere`) One of: boat, bee dock (x -420…-412, z 276…293), bee cross (within 30, or in the cabin), farm (within HOME_RADIUS), or unknown. Unknown means it refuses and says so.
+2. **Farm:** go outside → farm port boardwalk → `mountNearestBoat(10)` → due east out of the slip on its own z → the charted legs
+   (-246, 518) / (-239, 497) / (-272, 454) @0.7 → (-401, 351) / (-421, 319) @0.8 → (-418.5, 298) @0.3. Already in a boat on the route: carry on from the nearest leg.
+   It sets off only in daylight before tick 9000 (force overrides).
+3. **Landing** (worked 2026-10-03): push north up the dock's west side to (-418.4, 285.5) @0.2. The boat grounds by the z 289 torch post.
+   Then face east → dismount → **at once** walk east to x ≥ -416.0 onto the planks. If she slips in, the reflex treads and the walk east climbs her out (up to 3 tries). Then north to the stone (z ≤ 280.6).
+4. **Walk up:** over the citrus stairs to the sand (-416, 64, 274) → the east apiary stand (-401, 68, 258), inside the bee-cabin sleep radius.
+5. **Keeper starts.** Sleeping at the cabin and walking out at dawn come with it.
+
+**Home** (worked 2026-10-01 and 2026-10-05):
+1. Stop the keeper.
+2. Leave the cabin if inside → shore point → dock centre line x -415.6 → south to the dock end z 290.2 → board the moored boat (radius 4).
+3. Return legs (-418.5, 298) / (-421, 319) @0.4 → (-401, 351) / (-272, 454) @0.8 → (-239, 497) / (-246, 518) @0.7 → (-246, 524.5) @0.4 → slip (-251.5, 524.5) @0.25.
+4. `exit_boat` to the boardwalk. If she lands in the water (2026-10-05), swim due west to x ≤ -254.2 onto the boardwalk.
+5. Walk to the wheat field centre.
+
+The walk-home reflex no longer takes the igloo road from more than 40 blocks off it. That road started from the bee cross on 2026-10-05, 330 blocks away across the sea.

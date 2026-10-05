@@ -139,3 +139,26 @@ empty, nothing on the cursor, no server rejects. Compare the bench's per-ball cl
 The June finding (no server response at all) no longer holds; cause unknown (server mod change, or
 the bot's window handling). **Candidate change:** move `craftPlantBalls` to this table. Single
 craft proven; batch crafting is not tested yet.
+
+## Update — 2026-10-03 (later): bench retired, vanilla table in its place, verified by Muse
+
+Dad swapped the Project Bench at (-270, 65, 569) for a **vanilla crafting table** in the same spot.
+`craftPlantBalls` now detects the table by window size (46 slots = vanilla: ring 1–4 and 6–9, output 0,
+inventory from 10; anything else = the bench layout). On a vanilla table it opens once and crafts every
+ball in that window, with no close and reopen. `findBenchBlock()` falls back to a `crafting_table`
+within 4 blocks of the spot (4 keeps the outdoor table out). Dad committed it as `61b7e67 normal table`.
+**Not yet verified.** Muse (pulled code) harvested 108 wheat on fire duty and *said* "plant balls
+complete", but Dad saw no balls made. A bot's chat line is not evidence; I called it a pass too early
+and took that back. Verify with world state (balls in the hopper or chest, or Dad watching the table).
+Bread is unaffected (it uses the 2×2 inventory grid).
+- **Verified on Roz, 2026-10-03 (day 54219 dawn)** from log and inventory, not chat. `morning-balls` →
+  `using vanilla crafting table (46 slots)` → `crafted 3 plant balls, wheat_seeds remaining: 4` (28 seeds:
+  24 used, 4 left) → hopper `deposited=12`, then bench lock released. Muse's odd run just before ("cookware",
+  "wrong table") best fits Muse still running the **old** bench code on the new table: old ring 0–8
+  includes the vanilla output slot 0, and old "output" slot 28 is a player-inventory slot in a vanilla
+  window. Unconfirmed until Muse's machine is checked (`git log -1`, its bot.log craft lines).
+- **Muse verified too** (same day, by Dad's eyes, not chat): **35 plant balls in the hopper** from Muse's
+  fire-duty harvest on the pulled code. 108 wheat ≈ 13 balls; the rest came from seeds. My old-code idea
+  was wrong (Dad confirmed Muse pulled before restarting). The **"cookware" oddity is unexplained**. Chat
+  debug added to `craftPlantBalls` (`CRAFT_DEBUG_CHAT`): it narrates table type and layout, the item in the
+  output slot (name#type:meta), grid clears, and every stop reason, so the next craft shows it.

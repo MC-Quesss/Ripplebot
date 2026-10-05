@@ -119,3 +119,58 @@ Every leg arrived with 0 corrections; about 2 minutes on the water, no swimming.
 
 **Walking back up from the shore point**, the pathfinder stalled on the sand at (-413.9, 64, 278.9) even though
 the way north was clear air. Fix: face north, hold jump, `walk_until` z ≤ 266, and the pathfinder works from there.
+
+## Solo run, 2026-10-03: water legs perfect again, landing failed, drowned (death 3)
+
+Quesss asked Roz to paddle to the bees herself. Farm south slip → due east out of the slip → the verified legs →
+(-418.5, 298) @0.3 → (-418.6, 290.6) @0.2: every leg arrived with 0 corrections, and she moored at (-418.6, 291.2)
+between the dock-end torch posts. The night skipped while she sat aboard.
+- **Dock probe:** the dock is a single layer of planks at y 62 with **water underneath** (y 61). There's no step. A fence is at
+  (-417, 63, 292).
+- **A theory tested and disproved:** I thought vanilla's dismount would place her on the adjacent planks and
+  `disembark()`'s "on top of the boat" override was spoiling it. A plain sneak-dismount (no override) still left her
+  above the water at the boat's x (-418.6). The server did **not** move her onto the dock.
+- She then sank and drifted about 4 blocks **south**, past the dock end, while facing east with forward and jump held. That's the
+  cove current again (prismarine-physics applies flowing-water push).
+- **Why she drowned:** jump was held only in timed `control` bursts from separate ctl calls. Each burst
+  ended on its own timer, and in the gaps she sank about 8 blocks. The last burst brought her from y 51.7 to 60.4 and she
+  died about 2 blocks short of air. Quesss saw it as "stopped swimming once damage started". The 4 s burst ran out at the moment
+  the drowning damage began.
+- **Fix (bot.js):** an always-on **tread-water reflex**. Every physics tick, while in water and not in a boat, it holds jump
+  until she's out. It's re-asserted each tick, so a pathfinder or `setGoal(null)` (the ≤6 HP "breaking off" path) can't
+  release it. ctl `tread_water` {enabled?} for status/toggle. Also fixed: a real mount from ~4.3 blocks was cleared as
+  a "phantom" (the check now trusts the boat's passenger list). The reflex has since held her up at every slip into the water (2026-10-03, 2026-10-05).
+- **Still unsolved:** getting from the boat onto the dock. Ideas: a plank step at water level (Dad), or pull the boat up
+  against the dock's west face and test the climb-out with the reflex, in shallow farm water first.
+
+## Solo run #2, 2026-10-03: FIRST SUCCESSFUL SOLO LANDING ✓
+
+Same day, the tread-water reflex loaded. Farm south slip (boat 1186907) → (-246, 528.4) @0.4 → the verified legs → (-418.5, 298) @0.3,
+then **north along the dock's west side** toward mid-dock (-418.4, 285.5) @0.2. The boat **ran aground at (-418.4, 289.6)**, beside the
+z 289 torch post (6 corrections). It won't go further north there. **Landing that worked:** `look` east (yaw -1.5708) → `control sneak` 500 ms
+(dismount confirmed) → `look` east again → **`walk_until` x ≥ -416.0 at once** (909 ms, reached). She stepped from the boat top straight
+onto the planks at (-415.8, 63, 288.4). **She never entered the water** (no tread-water event). Then `look` north, `walk_until` z ≤ 280.6 → shore
+point (-415.7, 63, 280.2) → `keep_bees` (27 blocks from the cross, accepted).
+Why it likely worked where 09-30 failed: an **immediate** walk east with no `disembark()` pathfinding step, from a boat pressed in at the north
+end, where the dock face is about 1.4 blocks from the boat centre. The 09-30 and morning attempts paused (pathTo, or a sneak with no walk) and fell in.
+This is the landing the `tend the bees` routine uses.
+
+## Citrus-wood stairs at the shore point (Dad, 2026-10-05): verified both ways
+
+Dad added a citrus-wood stair, **type 516** (empty name, metadata 3), at (-416, 63, 277), between the sand (y 63/64 at z ≤ 276) and the stone
+shore (top y 62, z 277–280). It's not in `SOLID_MODDED_TYPES`, so the pathfinder sees it as zero-collision, and physics does the stepping.
+- **Downhill** (cabin door → `pathfind` (-415, 63, 280) range 1): got over it, but stopped at z 278.2. Then `look` south + `walk_until` z ≥ 280.3 reached the stone point.
+- **Uphill** (stone point → `pathfind` (-416, 64, 274) range 1): reached (-415.5, 64, 275.5) on the sand with no help. The old stall on the sand
+  (see *Walking back up from the shore point*) is fixed by the stair.
+
+**Update the same day: stair shape added (bot.js `STAIR_MODDED_TYPES` = {516}, `stairShapes(meta)`), verified after a restart.** Before the fix, the uphill
+pathfinder walked *around* the stairs, and walking down by hand hung her half a block up on the edge at z 278.1 (a hop got her free).
+After the fix, `pathfind` from the sand (-416, 64, 275) to the stone (-416, 63, 280) and back went straight over the middle stair both
+ways with no catch, and a walk down by hand took about 1 s. Dad watched and confirmed it. The stairs rise toward the sand (metadata 3 = ascends north).
+
+## Return run, 2026-10-05: bee dock → farm port, with a wet landing that the reflex handled
+
+Shore point by pathfinder (down the citrus stairs) → `walk_until` x ≤ -415.6 → face south, `walk_until` z ≥ 290.2 (dock end, y 63) → `ride_boat` radius 4 (boat 1186907) →
+the return legs at 0.4 / 0.8 / 0.7 / 0.4 / 0.25, every leg 0 corrections. At the port, `exit_boat` to (-254, 63, 524) dropped her into the water north of the
+z 522 pier at (-251.5, 520.5). **The tread-water reflex kept her at the surface (air 20/20)**, then `look` west + `walk_until` x ≤ -254.2 brought her onto the boardwalk in 0.25 s.
+**Lesson (Dad): treading water matters on every docking, successful ones included.** Both bee voyages switch the reflex on at the start, and each landing finishes with a swim-and-climb toward the known dry edge.

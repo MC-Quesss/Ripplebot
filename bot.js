@@ -447,6 +447,24 @@ const SLAB_MODDED_TYPES = new Set([1744])
 // 2026-09-29). Roz stood at y≈65.94 on it = 15/16 tall. As full-solid she was
 // embedded 0.06 and couldn't move; with no collision she sank into it.
 const SHORT_MODDED_TYPES = new Map([[1058, 15 / 16]])
+// Modded stairs — vanilla stair shapes (bottom slab + raised half on the
+// ascending side; metadata 0-3 = ascends E/W/S/N, bit 4 = upside down).
+// 516 = citrus-wood stairs, bee-cove shore (Dad, 2026-10-05): with no shape
+// Roz hung on the edge half up, half down, and the pathfinder walked around.
+const STAIR_MODDED_TYPES = new Set([516])
+function stairShapes (meta) {
+  const top = (meta & 4) !== 0
+  const slab = top ? [0, 0.5, 0, 1, 1, 1] : [0, 0, 0, 1, 0.5, 1]
+  const y0 = top ? 0 : 0.5
+  const y1 = top ? 0.5 : 1
+  const half = [
+    [0.5, y0, 0, 1, y1, 1], // ascends east
+    [0, y0, 0, 0.5, y1, 1], // ascends west
+    [0, y0, 0.5, 1, y1, 1], // ascends south
+    [0, y0, 0, 1, y1, 0.5], // ascends north
+  ][meta & 3]
+  return [slab, half]
+}
 
 bot.once('spawn', () => {
   const mcData = require('minecraft-data')(bot.version)
@@ -468,7 +486,7 @@ bot.once('spawn', () => {
   mvts.exclusionAreasStep.push((block) => {
     if (!block || !block.position || block.name) return 0
     if (SOLID_MODDED_TYPES.has(block.type)) return Infinity
-    if (SLAB_MODDED_TYPES.has(block.type) || SHORT_MODDED_TYPES.has(block.type)) return 0
+    if (SLAB_MODDED_TYPES.has(block.type) || SHORT_MODDED_TYPES.has(block.type) || STAIR_MODDED_TYPES.has(block.type)) return 0
     return 3
   })
 
@@ -492,6 +510,9 @@ bot.once('spawn', () => {
       } else if (SLAB_MODDED_TYPES.has(b.type)) {
         b.boundingBox = 'block'
         b.shapes = (b.metadata & 8) ? [[0, 0.5, 0, 1, 1, 1]] : [[0, 0, 0, 1, 0.5, 1]]
+      } else if (STAIR_MODDED_TYPES.has(b.type)) {
+        b.boundingBox = 'block'
+        b.shapes = stairShapes(b.metadata)
       } else {
         b.boundingBox = 'empty'
         b.shapes = []
@@ -998,6 +1019,15 @@ function nearBeeCabinDoor () {
 // Entry, verified 2026-09-30: due north from the outside point, hop the 1-block
 // stone lip at z 242, on to the wool. Pathfinder stalls on the modded steps here.
 async function beeCabinEnter () {
+  // Line up on the door's centre line first: from x -402.9 her shoulder caught
+  // the west jamb on the lip and the entry stalled (Dad spotted it, 2026-10-04).
+  const px = bot.entity?.position?.x
+  if (px != null && Math.abs(px - BEE_CABIN_OUTSIDE_DOOR.x) > 0.2) {
+    const east = px < BEE_CABIN_OUTSIDE_DOOR.x
+    const yaw = east ? -Math.PI / 2 : Math.PI / 2
+    await bot.look(yaw, 0, true)
+    await walkUntilAxis({ axis: 'x', target: BEE_CABIN_OUTSIDE_DOOR.x + (east ? -0.1 : 0.1), direction: east ? 'gte' : 'lte', maxMs: 1500, maintainYaw: yaw }).catch(() => false)
+  }
   await bot.look(0, 0, true)
   await walkUntilAxis({ axis: 'z', target: BEE_CABIN_OUTSIDE_DOOR.z, direction: 'lte', maxMs: 2500, maintainYaw: 0 })
   // Hold jump through the lip: a 300 ms hop before walking stalled at z 243.3
@@ -3163,10 +3193,10 @@ const BLEU_TO_PORT_LEGS = [
 // drones into slot 2. A 64-drone stack jams the output: keep 1, toss the rest.
 // Everything else stays put. Procedure: journal/procedures/apiary-tending.md.
 //
-// Dad's rule (2026-09-30): NEVER start the keeper unless Dad has brought Roz to
-// the lighthouse by boat. So there is no chat trigger and no auto-start; the
-// operator starts it with the `keep_bees` ctl, it refuses away from the bee
-// cross, and it stops itself if Roz is ever carried off (never walks back).
+// Dad's rule (2026-09-30, widened 2026-10-05): the keeper never starts itself.
+// It starts on request only: the `keep_bees` ctl (at the cross), or "tend the
+// bees" in chat / the `bee_voyage` ctl, which gets there first (runBeeVoyage).
+// It refuses away from the bee cross and stops itself if carried off.
 const BEE_CROSS = { x: -404, y: 68, z: 256 }
 const BEE_CROSS_RADIUS = 30
 // hive block + the ground spot beside it Roz stands on to reach it
@@ -3350,6 +3380,225 @@ async function runBeeRoundInner () {
       try { await eatSomething() } catch (e) { logEvent('bees', `eat failed at food=${bot.food}: ${e.message}`) }
     }
   }
+}
+
+// ── Bee voyage: "tend the bees" (Dad, 2026-10-05) ──
+// The general routine, any bot: work out where it is, get to the bee cross
+// (by boat from the farm port when at the farm), then start the keeper. The
+// keeper already breaks off at dusk, sleeps in the bee cabin and walks out at
+// dawn. Legs and landing are the solo runs of 2026-09-30/10-01/10-03, every
+// water leg 0 corrections (journal/places/boat-route-bee-cove.md).
+const PORT_TO_BEE_COVE_LEGS = [
+  { x: -246, z: 518, throttle: 0.7, note: 'up the river' },
+  { x: -239, z: 497, throttle: 0.7, note: 'under the bridge' },
+  { x: -272, z: 454, throttle: 0.7, note: 'open ocean' },
+  { x: -401, z: 351, throttle: 0.8, note: 'south of the ice sheet' },
+  { x: -421, z: 319, throttle: 0.8, note: 'into the cove' },
+  { x: -418.5, z: 298, throttle: 0.3, note: 'off the dock end' },
+]
+// Then north up the dock's west side: the boat grounds by the z 289 torch post
+// (-418.4, 289.6), and a walk east straight after the dismount steps her onto
+// the planks (2026-10-03). Walk at once — a pause (pathTo, a bare sneak) lets
+// her drop in. If she does go in, the tread-water reflex holds her at the
+// surface and the same walk east climbs her out onto the planks, exactly as at
+// the farm port on 2026-10-05 (Dad: treading water matters on every docking).
+const BEE_DOCK_PUSH = { x: -418.4, z: 285.5 }
+const BEE_DOCK_PLANKS_X = -416.0
+const BEE_SHORE_POINT_Z = 280.6 // stone at the head of the dock
+const BEE_SAND_ABOVE_STAIRS = { x: -416, y: 64, z: 274 } // up the citrus stairs
+const BEE_CROSS_ARRIVAL = { x: -401, y: 68, z: 258 } // east apiary stand, inside the bee-cabin sleep radius
+const BEE_VOYAGE_LATEST_START = 9000 // ~2 min of water + the walk up, done well before dusk
+
+function onBeeDock () {
+  const p = bot.entity?.position
+  return !!p && !bot.vehicle && p.x >= -420 && p.x <= -412 && p.z >= 276 && p.z <= 293 && p.y >= 61 && p.y <= 66
+}
+function beeVoyageWhere () {
+  if (!bot.entity?.position) return 'unknown'
+  if (seatedBoat()) return 'boat'
+  if (onBeeDock()) return 'bee dock'
+  if (insideBeeCabin() || nearBeeCross()) return 'bee cross'
+  if (distanceFromHome() <= HOME_RADIUS) return 'farm'
+  return 'unknown'
+}
+
+// Boat → planks → stone → sand → the cross. Assumes the bot is aboard at the
+// end of the water legs.
+async function beeDockLandAndWalkUp (myGen) {
+  const r = await boatSeek([BEE_DOCK_PUSH], { throttle: 0.2, range: 1, label: 'bee dock: up the west side' })
+  const bp = r.pos || bot.entity.position
+  if (!(bp.x >= -419.6 && bp.x <= -417.4 && bp.z >= 283 && bp.z <= 291.5)) {
+    return { ok: false, error: `boat stopped at (${(+bp.x).toFixed(1)}, ${(+bp.z).toFixed(1)}), not beside the dock (${r.result}) — staying aboard` }
+  }
+  checkAbort(myGen)
+  treadWaterEnabled = true
+  await bot.look(-Math.PI / 2, 0, true)
+  const off = await disembark({ land: false })
+  if (!off.ok) return { ok: false, error: off.error || 'could not get out of the boat' }
+  const onPlanks = () => { const p = bot.entity.position; return p.x >= BEE_DOCK_PLANKS_X - 0.3 && p.y >= 62.8 && !bot.entity.isInWater }
+  for (let i = 0; i < 3 && !onPlanks(); i++) {
+    // First pass: the dry step. Later passes: treading at the surface, swim east and climb on.
+    await walkUntilAxis({ axis: 'x', target: BEE_DOCK_PLANKS_X, direction: 'gte', maxMs: i ? 6000 : 2500, maintainYaw: -Math.PI / 2 })
+    if (!onPlanks()) await sleep(300)
+  }
+  if (!onPlanks()) return { ok: false, error: `did not get onto the dock (${posStr(bot.entity.position)}) — treading water` }
+  checkAbort(myGen)
+  await walkUntilAxis({ axis: 'z', target: BEE_SHORE_POINT_Z, direction: 'lte', maxMs: 6000, maintainYaw: 0 })
+  return beeWalkUpFromDock(myGen)
+}
+async function beeWalkUpFromDock (myGen) {
+  const p = bot.entity.position
+  if (p.z > BEE_SHORE_POINT_Z + 0.5) {
+    // Still out on the planks: the centre line x -415.8 clears the torch posts.
+    await bot.look(0, 0, true)
+    await walkUntilAxis({ axis: 'z', target: BEE_SHORE_POINT_Z, direction: 'lte', maxMs: 8000, maintainYaw: 0 })
+  }
+  checkAbort(myGen)
+  if (!await pathToSure(BEE_SAND_ABOVE_STAIRS, 1, 2, 3, 10000)) return { ok: false, error: `stuck below the stairs at ${posStr(bot.entity.position)}` }
+  checkAbort(myGen)
+  if (!await pathToSure(BEE_CROSS_ARRIVAL, 1, 2, 4, 15000)) return { ok: false, error: `stuck on the way up to the cross at ${posStr(bot.entity.position)}` }
+  return { ok: true }
+}
+
+async function runBeeVoyage ({ force = false } = {}) {
+  if (beeState.active) return { ok: true, already: true, ...keepBeesStatus() }
+  const where = beeVoyageWhere()
+  if (where === 'unknown') return { ok: false, where, error: 'I do not know the way to the bees from here' }
+  const sailing = where === 'farm' || where === 'boat'
+  if (sailing && !force && (!bot.time.isDay || bot.time.timeOfDay >= BEE_VOYAGE_LATEST_START)) {
+    return { ok: false, where, error: 'too late in the day for the cove — I will go at first light' }
+  }
+  treadWaterEnabled = true // every docking leans on it (Dad, 2026-10-05)
+  const gate = startTask('voyage', 'to the bees')
+  if (!gate.allowed) return { ok: false, where, error: 'busy', task: gate.current, detail: gate.detail }
+  const myGen = abortGen
+  const startDeaths = deathCount
+  let res
+  try {
+    logEvent('voyage', `to the bees: starting from the ${where}`)
+    if (where === 'farm') {
+      if (insideHouse()) await runGoOutside('the boat')
+      checkAbort(myGen)
+      if (!await pathToSure(FARM_PORT_LANDING, 1, 2)) throw new Error('could not reach the farm port')
+      if (!await mountNearestBoat(10)) throw new Error('no boat at the farm port')
+    }
+    if (where === 'farm' || where === 'boat') {
+      pilotSync()
+      const bp = seatedBoat()?.position || bot.entity.position
+      let legs = PORT_TO_BEE_COVE_LEGS
+      if (Math.hypot(bp.x + 251, bp.z - 526) <= 8) {
+        // In a port slip: straight east out of it on its own z first.
+        legs = [{ x: -246, z: +bp.z.toFixed(1), throttle: 0.4, note: 'out of the slip' }, ...legs]
+      } else {
+        // Already out on the route: carry on from the nearest charted leg.
+        const d = legs.map(l => Math.hypot(l.x - bp.x, l.z - bp.z))
+        const k = d.indexOf(Math.min(...d))
+        if (d[k] > 40) throw new Error(`boat is off the charted route at (${bp.x.toFixed(0)}, ${bp.z.toFixed(0)})`)
+        legs = legs.slice(k)
+      }
+      const water = await paddleLegs(legs, 'port→bees', myGen, startDeaths)
+      if (!water.ok) throw new Error(water.error)
+      checkAbort(myGen)
+      res = await beeDockLandAndWalkUp(myGen)
+    } else if (where === 'bee dock') {
+      res = await beeWalkUpFromDock(myGen)
+    } else {
+      if (insideBeeCabin() && !isBedtime()) await beeCabinExit()
+      res = { ok: true }
+    }
+    if (deathCount !== startDeaths) res = { ok: false, error: 'died on the way' }
+  } catch (e) {
+    res = { ok: false, error: e.name === 'AbortError' ? 'stopped' : e.message }
+  } finally {
+    endTask('voyage')
+  }
+  logEvent('voyage', `to the bees: ${res.ok ? 'arrived' : `stopped: ${res.error}`} at ${posStr(bot.entity.position)}`)
+  if (!res.ok) return { where, ...res }
+  return { where, arrived: true, keeper: startKeepBees() }
+}
+
+// The trip home (Dad, 2026-10-05: "fix the return home as part of the
+// routine"). Return legs as paddled 2026-10-01 and 10-05, 0 corrections.
+const BEE_COVE_TO_PORT_LEGS = [
+  { x: -418.5, z: 298, throttle: 0.4, note: 'off the dock' },
+  { x: -421, z: 319, throttle: 0.4, note: 'out of the cove' },
+  { x: -401, z: 351, throttle: 0.8, note: 'south of the ice sheet' },
+  { x: -272, z: 454, throttle: 0.8, note: 'open ocean' },
+  { x: -239, z: 497, throttle: 0.7, note: 'under the bridge' },
+  { x: -246, z: 518, throttle: 0.7, note: 'bridge south' },
+  { x: -246, z: 524.5, throttle: 0.4, note: 'port approach' },
+  { x: -251.5, z: 524.5, throttle: 0.25, note: 'farm port slip' },
+]
+function nearBeeCove () {
+  const p = bot.entity?.position
+  return !!p && (insideBeeCabin() || nearBeeCross() || onBeeDock() || Math.hypot(p.x + 416, p.z - 285) <= 20)
+}
+async function runBeeVoyageHome ({ force = false } = {}) {
+  const where = beeVoyageWhere()
+  const atCove = where === 'bee cross' || where === 'bee dock' || (where === 'boat' && nearBeeCove())
+  if (!atCove) return { ok: false, where, error: 'I am not at the bees' }
+  if (!force && (!bot.time.isDay || bot.time.timeOfDay >= BEE_VOYAGE_LATEST_START)) {
+    return { ok: false, where, error: 'too late in the day for the water — I will sleep at the cabin and sail at first light' }
+  }
+  if (beeState.active) stopKeepBees('going home')
+  treadWaterEnabled = true
+  const gate = startTask('voyage', 'home from the bees')
+  if (!gate.allowed) return { ok: false, where, error: 'busy', task: gate.current, detail: gate.detail }
+  const myGen = abortGen
+  const startDeaths = deathCount
+  let res
+  try {
+    logEvent('voyage', `home from the bees: starting from the ${where}`)
+    if (where !== 'boat') {
+      if (insideBeeCabin()) await beeCabinExit()
+      checkAbort(myGen)
+      if (!onBeeDock()) await pathToSure({ x: -415, y: 63, z: 280 }, 1, 2, 3, 15000)
+      checkAbort(myGen)
+      // Pathfinder stops short over the stairs: finish onto the stone.
+      if (bot.entity.position.z < 280) {
+        await bot.look(Math.PI, 0, true)
+        await walkUntilAxis({ axis: 'z', target: 280.3, direction: 'gte', maxMs: 3000, maintainYaw: Math.PI })
+      }
+      if (!onBeeDock()) throw new Error(`did not reach the dock (${posStr(bot.entity.position)})`)
+      // Dock centre line (clear of the torch posts at x -415), then south to the end.
+      const px = bot.entity.position.x
+      if (px > -415.5) {
+        await bot.look(Math.PI / 2, 0, true)
+        await walkUntilAxis({ axis: 'x', target: -415.6, direction: 'lte', maxMs: 2000, maintainYaw: Math.PI / 2 })
+      } else if (px < -416.2) {
+        await bot.look(-Math.PI / 2, 0, true)
+        await walkUntilAxis({ axis: 'x', target: -416.0, direction: 'gte', maxMs: 2000, maintainYaw: -Math.PI / 2 })
+      }
+      await bot.look(Math.PI, 0, true)
+      await walkUntilAxis({ axis: 'z', target: 290.2, direction: 'gte', maxMs: 6000, maintainYaw: Math.PI })
+      checkAbort(myGen)
+      // A boat moored on the west side never shows from the hives — look from here.
+      if (!await mountNearestBoat(4, { preferId: lastBoardedBoatId })) throw new Error('no boat at the bee dock')
+    }
+    pilotSync()
+    const water = await paddleLegs(BEE_COVE_TO_PORT_LEGS, 'bees→port', myGen, startDeaths)
+    if (!water.ok) throw new Error(water.error)
+    checkAbort(myGen)
+    const off = await disembark({ to: FARM_PORT_LANDING })
+    // On 2026-10-05 the boat drifted north past the z 522 pier and she
+    // dropped in: the boardwalk is due west, swim to it (tread-water holds her up).
+    const onBank = () => { const p = bot.entity.position; return p.x <= -253.5 && p.y >= 62.8 }
+    if (!onBank()) {
+      await bot.look(Math.PI / 2, 0, true)
+      await walkUntilAxis({ axis: 'x', target: -254.2, direction: 'lte', maxMs: 6000, maintainYaw: Math.PI / 2 })
+    }
+    if (!onBank()) await pathToSure(FARM_PORT_LANDING, 0, 1.5, 3, 8000)
+    if (!onBank()) throw new Error(`reached the port but did not land (${posStr(bot.entity.position)}, ${off.error || 'landing walk stopped short'})`)
+    checkAbort(myGen)
+    await pathTo(HARVEST_WAYPOINTS.field_center, 1, 30000).catch(() => false)
+    res = deathCount !== startDeaths ? { ok: false, error: 'died on the way' } : { ok: true }
+  } catch (e) {
+    res = { ok: false, error: e.name === 'AbortError' ? 'stopped' : e.message }
+  } finally {
+    endTask('voyage')
+  }
+  logEvent('voyage', `home from the bees: ${res.ok ? 'home' : `stopped: ${res.error}`} at ${posStr(bot.entity.position)}`)
+  return { where, ...res }
 }
 
 async function pathToSure (pt, range = 0, tol = 1.5, tries = 6, waitMs = 15000) {
@@ -3708,6 +3957,12 @@ async function tryIdleWander () {
   }
 
   if (atCabin) return
+
+  // Dusk (11500–12500): runGoOutsideOnce refuses to open the door after 11500
+  // and says a "too late" line, so an outdoor pick from inside would answer a
+  // question nobody asked (Muse, 2026-10-03). Stay in until auto-sleep.
+  const tod = bot.time?.timeOfDay ?? 0
+  if (insideHouse() && tod >= 11500) return
 
   let action = randomIdleWanderTarget()
   try {
@@ -4829,6 +5084,14 @@ const BENCH_RING_SLOTS = [0, 1, 2, 3, 5, 6, 7, 8]
 const BENCH_OUTPUT_SLOT = 28
 const BENCH_PLAYER_INV_START = 29 // bench has 29 own slots (0-28)
 const VANILLA_TABLE_SLOTS = 46
+// Dad asked for crafting to narrate in chat so players can watch the new
+// table (2026-10-03, after Muse's puzzling "cookware" run). Turn off once trusted.
+const CRAFT_DEBUG_CHAT = true
+function craftDebug (msg) {
+  logEvent('craft', msg)
+  if (CRAFT_DEBUG_CHAT) bot.chat(`[craft] ${msg}`)
+}
+const itemTag = (it) => it ? `${it.name}${it.name === 'unknown' ? `#${it.type}:${it.metadata}` : ''} x${it.count}` : 'nothing'
 
 function benchLayout (win) {
   if (win.slots.length === VANILLA_TABLE_SLOTS) {
@@ -4876,7 +5139,7 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
     logEvent('craft', `not enough ${ingredient}: ${onHand} on hand, keeping ${keepCount}`)
     return { crafted: 0 }
   }
-  logEvent('craft', `crafting up to ${craftable} plant balls from ${onHand} ${ingredient} (keeping ${keepCount})`)
+  craftDebug(`start: up to ${craftable} plant balls from ${onHand} ${ingredient} (keeping ${keepCount})`)
 
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
@@ -4888,16 +5151,17 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
   let crafted = 0
   let win = null
   let layout = null
+  let firstOutput = null
   for (let i = 0; i < craftable; i++) {
     // ── Phase 1: place 8 ingredients in the ring ──
     if (!win) {
       try { win = await openBench() } catch (e) {
-        logEvent('craft', `bench open fail: ${e.message}`)
+        craftDebug(`stop: table did not open (${e.message})`)
         break
       }
       await sleep(250)
       layout = benchLayout(win)
-      if (i === 0) logEvent('craft', `using ${layout.vanilla ? 'vanilla crafting table' : 'project bench'} (${win.slots.length} slots)`)
+      if (i === 0) craftDebug(`using ${layout.vanilla ? 'vanilla crafting table' : 'project bench'} (${win.slots.length} slots), ring ${layout.ring.join(',')}, output slot ${layout.output}`)
     }
 
     // First clear any leftovers from a prior crash/desync
@@ -4908,7 +5172,7 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
     const seedStack = win.items().find(it => it.name === ingredient && it.slot >= layout.invStart && it.count >= 8)
     if (!seedStack) {
       win.close(); win = null
-      logEvent('craft', `no ${ingredient} stack >= 8 in bench window`)
+      craftDebug(`stop: no ${ingredient} stack of 8+ in the table window`)
       break
     }
 
@@ -4924,7 +5188,7 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
       await bot.clickWindow(seedStack.slot, 0, 0)
       await sleep(120)
     } catch (e) {
-      logEvent('craft', `ring placement error: ${e.message}`)
+      craftDebug(`stop: ring placement error (${e.message})`)
       await benchSafeCursorDump(win, layout)
       win.close(); win = null
       break
@@ -4937,15 +5201,19 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
       win.close(); win = null
       await sleep(600)
       try { win = await openBench() } catch (e) {
-        logEvent('craft', `bench reopen fail: ${e.message}`)
+        craftDebug(`stop: table did not reopen (${e.message})`)
         break
       }
       await sleep(250)
     }
 
     const output = win.slots[layout.output]
+    if (output && (!firstOutput || output.type !== firstOutput.type || output.metadata !== firstOutput.metadata)) {
+      craftDebug(`ball ${i + 1}: output slot ${layout.output} shows ${itemTag(output)}${firstOutput ? ' (different from ball 1!)' : ''}`)
+      if (!firstOutput) firstOutput = output
+    }
     if (!output) {
-      logEvent('craft', `no output at slot ${layout.output} (ball #${i + 1})`)
+      craftDebug(`stop: output slot ${layout.output} empty (ball ${i + 1})`)
       // Clear the grid so ingredients don't stay on the bench
       await benchClearGrid(win, layout)
       win.close(); win = null
@@ -4957,7 +5225,7 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
       await bot.clickWindow(layout.output, 0, 1)
       await sleep(200)
     } catch (e) {
-      logEvent('craft', `take output error: ${e.message}`)
+      craftDebug(`stop: could not take output (${e.message})`)
       await benchSafeCursorDump(win, layout)
       win.close(); win = null
       break
@@ -4974,7 +5242,7 @@ async function craftPlantBalls ({ ingredient = 'wheat_seeds', keepCount = 16, ma
   }
   if (win) win.close()
 
-  logEvent('craft', `crafted ${crafted} plant balls, ${ingredient} remaining: ${countOnHand(ingredient)}`)
+  craftDebug(`done: crafted ${crafted} plant balls, ${ingredient} remaining: ${countOnHand(ingredient)}`)
   return { crafted }
 }
 
@@ -4982,6 +5250,7 @@ async function benchClearGrid (win, layout) {
   for (let s = layout.gridFirst; s <= layout.gridLast; s++) {
     const item = win.slots[s]
     if (!item || item.count === 0) continue
+    craftDebug(`clearing grid slot ${s}: ${itemTag(item)}`)
     try {
       await bot.clickWindow(s, 0, 1) // shift-click to inventory
       await sleep(150)
@@ -8103,16 +8372,17 @@ async function runGoInsideOnce () {
   // 2b. Align z to 572.5 — center of door opening. Wall (planks) at z=571,
   // door at z=572. Bot bbox is ±0.3, so the hard collision edge is z=572.0.
   // Use z=572.45 as the lower trigger — gives 0.15 block clearance from the plank.
+  // Sneak-walked like the exit lineup: at full walk speed the +z nudge
+  // coasted ~0.3 past its target (done 572.57 → pre-walk 572.82) and every
+  // such entry clipped the south door frame on try 1 (2026-10-03, ×4).
   const curZ = bot.entity.position.z
   if (curZ > 572.7) {
     logEvent('go-inside', `z-align: ${curZ.toFixed(2)} > 572.7, nudging -z`)
-    await faceYaw(0) // face north (-z) to decrease z toward 572.5
-    await walkUntilAxis({ axis: 'z', target: 572.5, direction: 'lte', maxMs: 3000 })
+    await exitAlignStep('z', EXIT_DOOR_Z, 'lte')
     logEvent('go-inside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
   } else if (curZ < 572.45) {
     logEvent('go-inside', `z-align: ${curZ.toFixed(2)} < 572.45, nudging +z`)
-    await faceYaw(Math.PI) // face south (+z) to increase z toward 572.5
-    await walkUntilAxis({ axis: 'z', target: 572.5, direction: 'gte', maxMs: 3000 })
+    await exitAlignStep('z', EXIT_DOOR_Z, 'gte')
     logEvent('go-inside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
   }
 
@@ -8124,6 +8394,19 @@ async function runGoInsideOnce () {
     throw new Error(`yaw didn't converge to east (got ${yawResult.yaw.toFixed(2)} rad)`)
   }
   logEvent('go-inside', `yaw locked east at ${yawResult.yaw.toFixed(3)} rad`)
+
+  // 3b. Settle and re-check before committing to the doorway (mirrors go-outside 3b).
+  await sleep(300)
+  for (let fix = 0; fix < 2; fix++) {
+    const zNow = bot.entity.position.z
+    if (Math.abs(zNow - EXIT_DOOR_Z) <= EXIT_Z_TOL) break
+    const south = zNow > EXIT_DOOR_Z
+    logEvent('go-inside', `z drifted to ${zNow.toFixed(3)} after yaw lock — re-aligning ${south ? '-z' : '+z'}`)
+    await exitAlignStep('z', EXIT_DOOR_Z, south ? 'lte' : 'gte')
+    const again = await faceYaw(TARGET_YAW)
+    if (!again.ok) throw new Error(`yaw didn't converge to east after z re-align (got ${again.yaw.toFixed(2)} rad)`)
+    await sleep(300)
+  }
   const preWalkPosIn = bot.entity?.position
   if (preWalkPosIn) logEvent('go-inside', `pre-walk pos=(${preWalkPosIn.x.toFixed(3)}, ${preWalkPosIn.y.toFixed(3)}, ${preWalkPosIn.z.toFixed(3)}) z-offset-from-door-center=${(preWalkPosIn.z - 572.5).toFixed(3)}`)
 
@@ -10133,6 +10416,43 @@ const CHAT_HANDLERS = [
     },
   },
   {
+    // "Roz, take a break from the bees" / "stop tending the bees". Before
+    // tend_bees: "take a break from tending the bees" matches both.
+    name: 'stop_bees',
+    pattern: /\b(?:(?:take\s+a\s+)?break\s+from|stop|quit|pause)\b[^.!?]{0,20}\bbees\b/i,
+    handler: () => {
+      const r = stopKeepBees('chat')
+      bot.chat(r.wasActive ? 'Resting from the bees. The hives can keep themselves a while.' : 'I am not tending the bees just now.')
+    },
+  },
+  {
+    // "Roz, tend the bees" / "go keep the bees" / "look after the bees"
+    // (Dad, 2026-10-05). Works from the farm (boat from the port), a boat on
+    // the cove route, the bee dock, or the cross itself — see runBeeVoyage.
+    name: 'tend_bees',
+    pattern: /\b(?:tend|keep|look\s+after|care\s+for|go\s+to|back\s+to)\b[^.!?]{0,20}\bbees\b/i,
+    handler: (user) => {
+      if (beeState.active) { bot.chat('I am already tending the bees.'); return }
+      if (taskBusy()) { bot.chat(`I am in the middle of ${activeTask.name} — tell me to stop first.`); return }
+      const where = beeVoyageWhere()
+      if (where === 'unknown') { bot.chat('I do not know the way to the bees from here. Bring me to the farm or the cove first.'); return }
+      abortGen++
+      followTarget = null; followEntity = null; followChainPos = 0
+      sustainPause('bee_voyage')
+      bot.chat(where === 'bee cross' ? 'Tending the bees.'
+        : where === 'bee dock' ? 'Up the stairs to the bees.'
+        : 'Off to the bees — by boat from the port, about three minutes.')
+      runBeeVoyage()
+        .then((r) => {
+          if (r.arrived && r.keeper?.ok) { if (where !== 'bee cross') bot.chat('At the bee cross. Tending the hives now.') }
+          else if (r.arrived) bot.chat(`I am at the cross, but the keeper would not start — ${r.keeper?.error}.`)
+          else bot.chat(`I did not get to the bees — ${r.error}.`)
+        })
+        .catch(e => logEvent('voyage', `chat bee voyage failed: ${e.message}`))
+        .finally(() => sustainResume('bee_voyage ended'))
+    },
+  },
+  {
     // "Roz, go to the igloo" / "walk to the igloo" / "head over to the igloo".
     // Reflex tier on purpose: this commits the bot to a ~90s unattended walk,
     // so it must not depend on inference being up. Requires a movement verb so
@@ -10165,6 +10485,24 @@ const CHAT_HANDLERS = [
       if (taskBusy()) { bot.chat(`I am in the middle of ${activeTask.name} — tell me to stop first.`); return }
       const away = distanceFromHome()
       if (away <= HOME_RADIUS) { bot.chat('I am already home.'); return }
+      if (nearBeeCove()) {
+        // From the bees home is by boat (Dad, 2026-10-05).
+        abortGen++
+        followTarget = null; followEntity = null; followChainPos = 0
+        sustainPause('bee_voyage')
+        bot.chat('Coming home from the bees — by boat to the port, about three minutes.')
+        runBeeVoyageHome()
+          .then((r) => bot.chat(r.ok ? 'Home again, standing in the wheat field.' : `I did not get home — ${r.error}.`))
+          .catch(e => logEvent('voyage', `chat bee voyage home failed: ${e.message}`))
+          .finally(() => sustainResume('bee_voyage ended'))
+        return
+      }
+      // The igloo road is the only walking road home. On 2026-10-05 "come back
+      // to the farm" at the bee cross started it from its nearest leg 330
+      // blocks away, straight across the sea — off the road, refuse.
+      const p0 = bot.entity.position
+      const offRoad = Math.min(...ROUTES.farm_to_igloo.legs.map(l => Math.hypot(p0.x - l.x, p0.z - l.z)))
+      if (offRoad > 40) { bot.chat(`I know no walking road home from here — the nearest is ${offRoad.toFixed(0)} blocks off.`); return }
       abortGen++
       followTarget = null; followEntity = null; followChainPos = 0
       sustainPause('walk_route')
@@ -10526,6 +10864,16 @@ const CHAT_INTENTS = {
   bake_bread: { hint: 'bake bread (mixes dough first if needed)', run: () => runBake('both') },
   mix_dough: { hint: 'mix wheat into dough and bake into bread', run: () => runBake('both') },
   stash_wheat: { hint: 'deposit carried wheat into the hopper', run: () => runStashWheat() },
+  // Before 2026-10-03 the un-jam ran only from fire duty / idle wander, so a
+  // bot asked "unclog the hopper" could only talk about it (Muse, that day).
+  unjam_hopper: {
+    hint: 'unclog / unjam / clear the hopper or bio-fuel intake (plant balls sitting stuck) — feeds RAW potatoes one at a time until the balls drain',
+    run: async () => {
+      if (countOnHand('potato') < 1) { bot.chat('I have no raw potatoes to clear the hopper with.'); return }
+      const ok = await clearJammedHopper()
+      bot.chat(ok ? 'Hopper cleared — the plant balls are draining.' : 'Hopper is still jammed after two passes. Someone should look at the machine.')
+    },
+  },
   stash_unknown: { hint: 'stash unknown/modded items with no name', run: () => runStashUnknown() },
   stash_junk: {
     hint: 'stash junk items (rotten flesh, bones, etc.) into the kitchen chest; args.items optional array to deposit only specific items',
@@ -11459,6 +11807,28 @@ bot.on('messagestr', (msg) => {
 
 // ── Tier-1 reflexes ───────────────────────────────────────────────────────
 
+// Tread water: whenever the bot is in water and not in a boat, hold jump every
+// tick so it floats at the surface instead of sinking. Roz drowned at the bee
+// cove (2026-10-03, death 3) because jump was only held in timed bursts from
+// separate ctl calls — between bursts she sank ~8 blocks and ran out of air.
+// Re-asserted each tick, so a pathfinder or ctl release can't open a gap; we
+// only let go of jump ourselves once she is out of the water.
+let treadWaterEnabled = true
+let treadingWater = false
+bot.on('physicsTick', () => {
+  const e = bot.entity
+  const wet = !!(treadWaterEnabled && e && e.isInWater && !bot.vehicle)
+  if (wet) {
+    if (!treadingWater) logEvent('tread-water', `in water at ${posStr(e.position)} — treading (air ${bot.oxygenLevel ?? '?'}/20)`)
+    treadingWater = true
+    bot.setControlState('jump', true)
+  } else if (treadingWater) {
+    treadingWater = false
+    bot.setControlState('jump', false)
+    if (e) logEvent('tread-water', `out of the water at ${posStr(e.position)}`)
+  }
+})
+
 // Anti-stack: if standing still and another entity is in the same block, nudge away.
 let lastAntiStackCheck = 0
 bot.on('physicsTick', () => {
@@ -11898,7 +12268,14 @@ function rippleStats () {
 // its trait is zero.
 function pickLineEntry (pool, vars = {}) {
   const stats = rippleStats()
-  const render = (text) => String(text).replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '')
+  // Callers pass values like 'the pond', so a template's own "The {activity}"
+  // would read "The the pond" / "The a short walk" — collapse it; and capitalize a line that opens
+  // with a placeholder ("{activity}. Right." → "The pond. Right.").
+  const render = (text) => {
+    let s = String(text).replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '').replace(/\b(the) (the|a|an)\b/gi, (_, t, a) => t[0] === 'T' ? a.charAt(0).toUpperCase() + a.slice(1) : a)
+    if (/^\{\w+\}/.test(String(text))) s = s.charAt(0).toUpperCase() + s.slice(1)
+    return s
+  }
   let weighted = pool.map(p => {
     const entry = (typeof p === 'string') ? { text: p, weight: null } : p
     const w = (typeof entry.weight === 'function') ? entry.weight(stats) : 1
@@ -12349,6 +12726,11 @@ function handleCommand (cmd) {
       }
       return { ok: true }
     }
+    case 'tread_water': {
+      // args: { enabled?: bool } — query or toggle the always-on tread-water reflex
+      if (typeof args.enabled === 'boolean') treadWaterEnabled = args.enabled
+      return { ok: true, enabled: treadWaterEnabled, treading: treadingWater, inWater: !!bot.entity?.isInWater, air: bot.oxygenLevel ?? null }
+    }
     case 'stop': {
       abortGen++
       stopKeepBees('stop')
@@ -12676,6 +13058,16 @@ function handleCommand (cmd) {
     case 'keep_bees': {
       // Start the bee keeper (see runKeepBees). Refused away from the bee cross.
       return startKeepBees({ intervalMs: args.interval_ms })
+    }
+    case 'bee_voyage': {
+      // "Tend the bees" from wherever she is: farm → boat → bee dock → cross,
+      // then the keeper. args: { force?: true to sail after BEE_VOYAGE_LATEST_START }
+      return runBeeVoyage({ force: !!args.force })
+    }
+    case 'bee_voyage_home': {
+      // Bees → farm: stop the keeper, dock → boat → port → wheat field.
+      // args: { force?: true to sail after BEE_VOYAGE_LATEST_START }
+      return runBeeVoyageHome({ force: !!args.force })
     }
     case 'keep_bees_stop': {
       return stopKeepBees(args.reason || 'ctl')
@@ -13113,6 +13505,13 @@ function handleCommand (cmd) {
       runStashWheat().catch(e => logEvent('stash-wheat-error', e.message))
       return { ok: true, started: true }
     }
+    case 'unjam_hopper': {
+      if (countOnHand('potato') < 1) return { ok: false, error: 'no raw potatoes on hand' }
+      clearJammedHopper()
+        .then(ok => logEvent('sustain-hopper', `unjam_hopper (ctl): ${ok ? 'cleared' : 'still jammed'}`))
+        .catch(e => logEvent('sustain-hopper', `unjam_hopper (ctl) error: ${e.message}`))
+      return { ok: true, started: true }
+    }
     case 'harvest_right_click': {
       const half = (args && args.half) || 'all'
       const keepSeeds = !!(args && args.keepSeeds)
@@ -13304,7 +13703,11 @@ function handleCommand (cmd) {
           const mounted = !!bot.vehicle
           if (mounted && bot.entity?.position) {
             const gap = bot.entity.position.distanceTo(target.position)
-            if (gap > 4) {
+            // The server's passenger list is the truth: a mount from ~4.3 blocks
+            // is real but our position lags, so trust set_passengers over the gap
+            // (2026-10-03 — a real mount was cleared, stranding Roz seated).
+            const listed = Array.isArray(target.passengers) && target.passengers.includes(bot.entity)
+            if (gap > 4 && !listed) {
               logEvent('ride-boat', `phantom mount — bot is ${gap.toFixed(1)} blocks from boat ${target.id}, clearing vehicle ref`)
               bot.vehicle = null
               return { ok: false, error: `mount appeared to succeed but bot is ${gap.toFixed(1)} blocks from boat — likely a phantom mount` }
