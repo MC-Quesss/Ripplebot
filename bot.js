@@ -3388,6 +3388,24 @@ async function runBeeRoundInner () {
 // keeper already breaks off at dusk, sleeps in the bee cabin and walks out at
 // dawn. Legs and landing are the solo runs of 2026-09-30/10-01/10-03, every
 // water leg 0 corrections (journal/places/boat-route-bee-cove.md).
+// Chat trace (Dad, 2026-10-05): other bots' logs live on other machines, so
+// chat is the only window into a voyage. Every step says itself in chat as
+// "[voyage] …". VOYAGE_CHAT_TRACE=0 in .env silences it (bot.log keeps it).
+const VOYAGE_CHAT_TRACE = process.env.VOYAGE_CHAT_TRACE !== '0'
+let voyageTraceActive = false
+function voyageNote (msg) {
+  logEvent('voyage', msg)
+  if (VOYAGE_CHAT_TRACE) { try { bot.chat(`[voyage] ${msg}`) } catch (_) {} }
+}
+function voyageLegNote (i, n, leg, r) {
+  const p = r.pos ? `(${(+r.pos.x).toFixed(0)}, ${(+r.pos.z).toFixed(0)})` : '?'
+  voyageNote(`leg ${i + 1}/${n} ${leg.note}: ${r.result} at ${p}, ${r.corrections ?? '?'} corrections`)
+}
+function voyagePosStr () {
+  const p = bot.entity?.position
+  return p ? `(${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)})` : '(?)'
+}
+
 const PORT_TO_BEE_COVE_LEGS = [
   { x: -246, z: 518, throttle: 0.7, note: 'up the river' },
   { x: -239, z: 497, throttle: 0.7, note: 'under the bridge' },
@@ -3427,6 +3445,7 @@ function beeVoyageWhere () {
 async function beeDockLandAndWalkUp (myGen) {
   const r = await boatSeek([BEE_DOCK_PUSH], { throttle: 0.2, range: 1, label: 'bee dock: up the west side' })
   const bp = r.pos || bot.entity.position
+  voyageNote(`dock push: ${r.result} at (${(+bp.x).toFixed(1)}, ${(+bp.z).toFixed(1)}), ${r.corrections ?? '?'} corrections`)
   if (!(bp.x >= -419.6 && bp.x <= -417.4 && bp.z >= 283 && bp.z <= 291.5)) {
     return { ok: false, error: `boat stopped at (${(+bp.x).toFixed(1)}, ${(+bp.z).toFixed(1)}), not beside the dock (${r.result}) — staying aboard` }
   }
@@ -3435,10 +3454,12 @@ async function beeDockLandAndWalkUp (myGen) {
   await bot.look(-Math.PI / 2, 0, true)
   const off = await disembark({ land: false })
   if (!off.ok) return { ok: false, error: off.error || 'could not get out of the boat' }
+  voyageNote(`out of the boat at ${voyagePosStr()}, stepping east`)
   const onPlanks = () => { const p = bot.entity.position; return p.x >= BEE_DOCK_PLANKS_X - 0.3 && p.y >= 62.8 && !bot.entity.isInWater }
   for (let i = 0; i < 3 && !onPlanks(); i++) {
     // First pass: the dry step. Later passes: treading at the surface, swim east and climb on.
     await walkUntilAxis({ axis: 'x', target: BEE_DOCK_PLANKS_X, direction: 'gte', maxMs: i ? 6000 : 2500, maintainYaw: -Math.PI / 2 })
+    voyageNote(`step ${i + 1}: ${onPlanks() ? 'on the planks' : 'not on the planks yet'} at ${voyagePosStr()}${bot.entity.isInWater ? ', in water, treading' : ''}`)
     if (!onPlanks()) await sleep(300)
   }
   if (!onPlanks()) return { ok: false, error: `did not get onto the dock (${posStr(bot.entity.position)}) — treading water` }
@@ -3454,8 +3475,10 @@ async function beeWalkUpFromDock (myGen) {
     await walkUntilAxis({ axis: 'z', target: BEE_SHORE_POINT_Z, direction: 'lte', maxMs: 8000, maintainYaw: 0 })
   }
   checkAbort(myGen)
+  voyageNote(`on the shore at ${voyagePosStr()}, climbing the stairs`)
   if (!await pathToSure(BEE_SAND_ABOVE_STAIRS, 1, 2, 3, 10000)) return { ok: false, error: `stuck below the stairs at ${posStr(bot.entity.position)}` }
   checkAbort(myGen)
+  voyageNote(`on the sand at ${voyagePosStr()}, walking to the cross`)
   if (!await pathToSure(BEE_CROSS_ARRIVAL, 1, 2, 4, 15000)) return { ok: false, error: `stuck on the way up to the cross at ${posStr(bot.entity.position)}` }
   return { ok: true }
 }
@@ -3475,12 +3498,15 @@ async function runBeeVoyage ({ force = false } = {}) {
   const startDeaths = deathCount
   let res
   try {
-    logEvent('voyage', `to the bees: starting from the ${where}`)
+    voyageTraceActive = true
+    voyageNote(`to the bees: starting from the ${where} at ${voyagePosStr()}`)
     if (where === 'farm') {
       if (insideHouse()) await runGoOutside('the boat')
       checkAbort(myGen)
       if (!await pathToSure(FARM_PORT_LANDING, 1, 2)) throw new Error('could not reach the farm port')
+      voyageNote(`at the port ${voyagePosStr()}, boarding`)
       if (!await mountNearestBoat(10)) throw new Error('no boat at the farm port')
+      voyageNote(`boarded boat ${bot.vehicle?.id ?? '?'}`)
     }
     if (where === 'farm' || where === 'boat') {
       pilotSync()
@@ -3496,7 +3522,8 @@ async function runBeeVoyage ({ force = false } = {}) {
         if (d[k] > 40) throw new Error(`boat is off the charted route at (${bp.x.toFixed(0)}, ${bp.z.toFixed(0)})`)
         legs = legs.slice(k)
       }
-      const water = await paddleLegs(legs, 'port→bees', myGen, startDeaths)
+      voyageNote(`${legs.length} legs to the cove`)
+      const water = await paddleLegs(legs, 'port→bees', myGen, startDeaths, voyageLegNote)
       if (!water.ok) throw new Error(water.error)
       checkAbort(myGen)
       res = await beeDockLandAndWalkUp(myGen)
@@ -3511,10 +3538,12 @@ async function runBeeVoyage ({ force = false } = {}) {
     res = { ok: false, error: e.name === 'AbortError' ? 'stopped' : e.message }
   } finally {
     endTask('voyage')
+    voyageTraceActive = false
   }
-  logEvent('voyage', `to the bees: ${res.ok ? 'arrived' : `stopped: ${res.error}`} at ${posStr(bot.entity.position)}`)
-  if (!res.ok) return { where, ...res }
-  return { where, arrived: true, keeper: startKeepBees() }
+  if (!res.ok) { voyageNote(`to the bees: stopped at ${voyagePosStr()}: ${res.error}`); return { where, ...res } }
+  const keeper = startKeepBees()
+  voyageNote(`to the bees: arrived at ${voyagePosStr()}, keeper ${keeper.ok ? 'started' : `refused: ${keeper.error}`}`)
+  return { where, arrived: true, keeper }
 }
 
 // The trip home (Dad, 2026-10-05: "fix the return home as part of the
@@ -3548,7 +3577,8 @@ async function runBeeVoyageHome ({ force = false } = {}) {
   const startDeaths = deathCount
   let res
   try {
-    logEvent('voyage', `home from the bees: starting from the ${where}`)
+    voyageTraceActive = true
+    voyageNote(`home from the bees: starting from the ${where} at ${voyagePosStr()}`)
     if (where !== 'boat') {
       if (insideBeeCabin()) await beeCabinExit()
       checkAbort(myGen)
@@ -3560,6 +3590,7 @@ async function runBeeVoyageHome ({ force = false } = {}) {
         await walkUntilAxis({ axis: 'z', target: 280.3, direction: 'gte', maxMs: 3000, maintainYaw: Math.PI })
       }
       if (!onBeeDock()) throw new Error(`did not reach the dock (${posStr(bot.entity.position)})`)
+      voyageNote(`on the dock at ${voyagePosStr()}, walking to the end`)
       // Dock centre line (clear of the torch posts at x -415), then south to the end.
       const px = bot.entity.position.x
       if (px > -415.5) {
@@ -3573,13 +3604,16 @@ async function runBeeVoyageHome ({ force = false } = {}) {
       await walkUntilAxis({ axis: 'z', target: 290.2, direction: 'gte', maxMs: 6000, maintainYaw: Math.PI })
       checkAbort(myGen)
       // A boat moored on the west side never shows from the hives — look from here.
+      voyageNote(`dock end at ${voyagePosStr()}, boarding`)
       if (!await mountNearestBoat(4, { preferId: lastBoardedBoatId })) throw new Error('no boat at the bee dock')
+      voyageNote(`boarded boat ${bot.vehicle?.id ?? '?'}`)
     }
     pilotSync()
-    const water = await paddleLegs(BEE_COVE_TO_PORT_LEGS, 'bees→port', myGen, startDeaths)
+    const water = await paddleLegs(BEE_COVE_TO_PORT_LEGS, 'bees→port', myGen, startDeaths, voyageLegNote)
     if (!water.ok) throw new Error(water.error)
     checkAbort(myGen)
     const off = await disembark({ to: FARM_PORT_LANDING })
+    voyageNote(`out of the boat: ${off.landed ? 'landed' : 'not landed'} at ${voyagePosStr()}${bot.entity.isInWater ? ', in water, treading' : ''}`)
     // On 2026-10-05 the boat drifted north past the z 522 pier and she
     // dropped in: the boardwalk is due west, swim to it (tread-water holds her up).
     const onBank = () => { const p = bot.entity.position; return p.x <= -253.5 && p.y >= 62.8 }
@@ -3587,7 +3621,9 @@ async function runBeeVoyageHome ({ force = false } = {}) {
       await bot.look(Math.PI / 2, 0, true)
       await walkUntilAxis({ axis: 'x', target: -254.2, direction: 'lte', maxMs: 6000, maintainYaw: Math.PI / 2 })
     }
+    if (!onBank()) voyageNote(`still off the boardwalk at ${voyagePosStr()}, walking to the landing`)
     if (!onBank()) await pathToSure(FARM_PORT_LANDING, 0, 1.5, 3, 8000)
+    if (onBank()) voyageNote(`on the boardwalk at ${voyagePosStr()}`)
     if (!onBank()) throw new Error(`reached the port but did not land (${posStr(bot.entity.position)}, ${off.error || 'landing walk stopped short'})`)
     checkAbort(myGen)
     await pathTo(HARVEST_WAYPOINTS.field_center, 1, 30000).catch(() => false)
@@ -3596,8 +3632,9 @@ async function runBeeVoyageHome ({ force = false } = {}) {
     res = { ok: false, error: e.name === 'AbortError' ? 'stopped' : e.message }
   } finally {
     endTask('voyage')
+    voyageTraceActive = false
   }
-  logEvent('voyage', `home from the bees: ${res.ok ? 'home' : `stopped: ${res.error}`} at ${posStr(bot.entity.position)}`)
+  voyageNote(`home from the bees: ${res.ok ? 'home' : `stopped: ${res.error}`} at ${voyagePosStr()}`)
   return { where, ...res }
 }
 
@@ -3606,13 +3643,14 @@ async function pathToSure (pt, range = 0, tol = 1.5, tries = 6, waitMs = 15000) 
   for (let i = 0; i < tries && !near(); i++) await pathTo(pt, range, waitMs)
   return near()
 }
-async function paddleLegs (legs, label, myGen, startDeaths) {
+async function paddleLegs (legs, label, myGen, startDeaths, onLeg = null) {
   for (let i = 0; i < legs.length; i++) {
     checkAbort(myGen)
     if (deathCount !== startDeaths) return { ok: false, error: 'died en route' }
     const leg = legs[i]
     const last = i === legs.length - 1
     const r = await boatSeek([{ x: leg.x, z: leg.z }], { throttle: leg.throttle, range: last ? 1 : 1.5, label: `${label} ${i + 1}/${legs.length} ${leg.note}` })
+    if (onLeg) onLeg(i, legs.length, leg, r)
     if (!String(r.result).startsWith('arrived')) return { ok: false, error: `leg ${i + 1} (${leg.note}): ${r.result}`, pos: r.pos }
   }
   return { ok: true }
@@ -11585,6 +11623,9 @@ bot.on('chat', (username, message) => {
     rememberRecentChat(username, message) // own lines still belong in LLM context
     return
   }
+  // Another bot's voyage trace ("[voyage] leg 3/7 …") is for the humans
+  // debugging it — never route it, answer it, or let it spend reply depth.
+  if (/^\[voyage\]/.test(message)) return
   rememberChatPhrase(message)
   rememberRecentChat(username, message)
   trackPlayerChat(username)
@@ -11815,11 +11856,20 @@ bot.on('messagestr', (msg) => {
 // only let go of jump ourselves once she is out of the water.
 let treadWaterEnabled = true
 let treadingWater = false
+let treadChatAt = 0
+function treadVoyageNote (msg) {
+  if (!voyageTraceActive || Date.now() - treadChatAt < 8000) return
+  treadChatAt = Date.now()
+  voyageNote(msg)
+}
 bot.on('physicsTick', () => {
   const e = bot.entity
   const wet = !!(treadWaterEnabled && e && e.isInWater && !bot.vehicle)
   if (wet) {
-    if (!treadingWater) logEvent('tread-water', `in water at ${posStr(e.position)} — treading (air ${bot.oxygenLevel ?? '?'}/20)`)
+    if (!treadingWater) {
+      logEvent('tread-water', `in water at ${posStr(e.position)} — treading (air ${bot.oxygenLevel ?? '?'}/20)`)
+      treadVoyageNote(`in the water at ${voyagePosStr()}, treading (air ${bot.oxygenLevel ?? '?'}/20)`)
+    }
     treadingWater = true
     bot.setControlState('jump', true)
   } else if (treadingWater) {

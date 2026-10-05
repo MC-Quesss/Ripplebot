@@ -172,3 +172,15 @@ Dad asked for a general skill like "keep the fire going", so any bot can get its
 5. Walk to the wheat field centre.
 
 The walk-home reflex no longer takes the igloo road from more than 40 blocks off it. That road started from the bee cross on 2026-10-05, 330 blocks away across the sea.
+
+**Chat trace (Dad, 2026-10-05):** the other bots' logs live on other machines, so both voyages report each step in chat as `[voyage] …`:
+- start (where from)
+- boarding (boat id)
+- every leg (result, position, corrections)
+- the dock push
+- each step onto the planks
+- any treading water (at most one line every 8 s)
+- the shore and sand
+- the arrival and whether the keeper started, or the stop reason
+
+All bots ignore `[voyage]` lines in chat routing. `VOYAGE_CHAT_TRACE=0` in .env silences the trace; bot.log keeps it either way.
