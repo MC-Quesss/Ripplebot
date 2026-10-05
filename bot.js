@@ -3388,10 +3388,11 @@ async function runBeeRoundInner () {
 // keeper already breaks off at dusk, sleeps in the bee cabin and walks out at
 // dawn. Legs and landing are the solo runs of 2026-09-30/10-01/10-03, every
 // water leg 0 corrections (journal/places/boat-route-bee-cove.md).
-// Chat trace (Dad, 2026-10-05): other bots' logs live on other machines, so
-// chat is the only window into a voyage. Every step says itself in chat as
-// "[voyage] …". VOYAGE_CHAT_TRACE=0 in .env silences it (bot.log keeps it).
-const VOYAGE_CHAT_TRACE = process.env.VOYAGE_CHAT_TRACE !== '0'
+// Voyage trace: every step goes to bot.log as [voyage]. Other bots' logs live
+// on other machines, so for a debugging session VOYAGE_CHAT_TRACE=1 in .env
+// also says each step in chat as "[voyage] …" (Dad, 2026-10-05; off by
+// default since the first round trip worked).
+const VOYAGE_CHAT_TRACE = process.env.VOYAGE_CHAT_TRACE === '1'
 let voyageTraceActive = false
 function voyageNote (msg) {
   logEvent('voyage', msg)
@@ -3422,6 +3423,7 @@ const PORT_TO_BEE_COVE_LEGS = [
 // the farm port on 2026-10-05 (Dad: treading water matters on every docking).
 const BEE_DOCK_PUSH = { x: -418.4, z: 285.5 }
 const BEE_DOCK_PLANKS_X = -416.0
+const BEE_DOCK_CLEAR_Z = 288.6 // where the 10-03 landing came ashore (the old z 289 post line)
 const BEE_SHORE_POINT_Z = 280.6 // stone at the head of the dock
 const BEE_SAND_ABOVE_STAIRS = { x: -416, y: 64, z: 274 } // up the citrus stairs
 const BEE_CROSS_ARRIVAL = { x: -401, y: 68, z: 258 } // east apiary stand, inside the bee-cabin sleep radius
@@ -3461,19 +3463,39 @@ async function beeDockLandAndWalkUp (myGen) {
   const off = await disembark({ land: false })
   if (!off.ok) return { ok: false, error: off.error || 'could not get out of the boat' }
   voyageNote(`out of the boat at ${voyagePosStr()}, stepping east`)
-  const onPlanks = () => { const p = bot.entity.position; return p.x >= BEE_DOCK_PLANKS_X - 0.3 && p.y >= 62.8 && !bot.entity.isInWater }
-  for (let i = 0; i < 3 && !onPlanks(); i++) {
-    // First pass: the dry step. Later passes: treading at the surface, swim east and climb on.
-    await walkUntilAxis({ axis: 'x', target: BEE_DOCK_PLANKS_X, direction: 'gte', maxMs: i ? 6000 : 2500, maintainYaw: -Math.PI / 2 })
-    voyageNote(`step ${i + 1}: ${onPlanks() ? 'on the planks' : 'not on the planks yet'} at ${voyagePosStr()}${bot.entity.isInWater ? ', in water, treading' : ''}`)
-    if (!onPlanks()) await sleep(300)
-  }
-  if (!onPlanks()) return { ok: false, error: `did not get onto the dock (${posStr(bot.entity.position)}) — treading water` }
+  const onPlanks = await beeDockClimb()
+  if (!onPlanks) return { ok: false, error: `did not get onto the dock (${posStr(bot.entity.position)}) — treading water` }
   checkAbort(myGen)
   await walkUntilAxis({ axis: 'z', target: BEE_SHORE_POINT_Z, direction: 'lte', maxMs: 6000, maintainYaw: 0 })
   return beeWalkUpFromDock(myGen)
 }
+// From the boat top or from the water beside the dock's west edge: north of
+// the torch post, then east onto the planks. True once standing on them.
+async function beeDockClimb () {
+  const onPlanks = () => { const p = bot.entity.position; return p.x >= BEE_DOCK_PLANKS_X - 0.3 && p.y >= 62.8 && !bot.entity.isInWater }
+  for (let i = 0; i < 4 && !onPlanks(); i++) {
+    // A torch post at (-417, 63, 289) blocked Muse's step east (2026-10-05);
+    // Dad took the west-side posts down the same day. The 10-03 landing came
+    // ashore at z 288.4 — still step off there.
+    const pz = bot.entity.position.z
+    if (pz > BEE_DOCK_CLEAR_Z) {
+      await bot.look(0, 0, true)
+      await walkUntilAxis({ axis: 'z', target: BEE_DOCK_CLEAR_Z - 0.2, direction: 'lte', maxMs: 2500, maintainYaw: 0 })
+    }
+    // Then east onto the planks: a dry step, or a swim-and-climb while treading.
+    await walkUntilAxis({ axis: 'x', target: BEE_DOCK_PLANKS_X, direction: 'gte', maxMs: i ? 6000 : 2500, maintainYaw: -Math.PI / 2 })
+    voyageNote(`step ${i + 1}: ${onPlanks() ? 'on the planks' : 'not on the planks yet'} at ${voyagePosStr()}${bot.entity.isInWater ? ', in water, treading' : ''}`)
+    if (!onPlanks()) await sleep(300)
+  }
+  return onPlanks()
+}
 async function beeWalkUpFromDock (myGen) {
+  // In the water beside the dock (a slipped landing): climb on first.
+  if (bot.entity.isInWater || bot.entity.position.y < 62.8) {
+    treadWaterEnabled = true
+    voyageNote(`in the water by the dock at ${voyagePosStr()}, climbing on`)
+    if (!await beeDockClimb()) return { ok: false, error: `did not get onto the dock (${posStr(bot.entity.position)}) — treading water` }
+  }
   const p = bot.entity.position
   if (p.z > BEE_SHORE_POINT_Z + 0.5) {
     // Still out on the planks: the centre line x -415.8 clears the torch posts.
@@ -3621,10 +3643,20 @@ async function runBeeVoyageHome ({ force = false } = {}) {
     voyageNote(`out of the boat: ${off.landed ? 'landed' : 'not landed'} at ${voyagePosStr()}${bot.entity.isInWater ? ', in water, treading' : ''}`)
     // On 2026-10-05 the boat drifted north past the z 522 pier and she
     // dropped in: the boardwalk is due west, swim to it (tread-water holds her up).
-    const onBank = () => { const p = bot.entity.position; return p.x <= -253.5 && p.y >= 62.8 }
-    if (!onBank()) {
+    const onBank = () => { const p = bot.entity.position; return p.x <= -253.5 && p.y >= 62.8 && !bot.entity.isInWater }
+    // Muse, 2026-10-05: left standing on the boat top in the slip, and a
+    // plain walk west did not carry it off. Jump while walking west, the way
+    // the cabin lip is crossed: off the boat onto the boardwalk, or into the
+    // water and (treading) up onto it, as Roz did that morning.
+    for (let i = 0; i < 3 && !onBank(); i++) {
       await bot.look(Math.PI / 2, 0, true)
-      await walkUntilAxis({ axis: 'x', target: -254.2, direction: 'lte', maxMs: 6000, maintainYaw: Math.PI / 2 })
+      bot.setControlState('jump', true)
+      try {
+        await walkUntilAxis({ axis: 'x', target: -254.2, direction: 'lte', maxMs: 4000, maintainYaw: Math.PI / 2 })
+      } finally {
+        if (!treadingWater) bot.setControlState('jump', false)
+      }
+      voyageNote(`landing walk ${i + 1}: ${onBank() ? 'on the boardwalk' : 'not there yet'} at ${voyagePosStr()}${bot.entity.isInWater ? ', in water, treading' : ''}`)
     }
     if (!onBank()) voyageNote(`still off the boardwalk at ${voyagePosStr()}, walking to the landing`)
     if (!onBank()) await pathToSure(FARM_PORT_LANDING, 0, 1.5, 3, 8000)
@@ -11632,7 +11664,8 @@ bot.on('chat', (username, message) => {
   }
   // Another bot's voyage trace ("[voyage] leg 3/7 …") is for the humans
   // debugging it — never route it, answer it, or let it spend reply depth.
-  if (/^\[voyage\]/.test(message)) return
+  // It still goes to bot.log, so a helm operator can follow another bot's voyage.
+  if (/^\[voyage\]/.test(message)) { logEvent('chat', `<${username}> ${message}`); return }
   rememberChatPhrase(message)
   rememberRecentChat(username, message)
   trackPlayerChat(username)

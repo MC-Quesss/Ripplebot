@@ -174,3 +174,26 @@ Shore point by pathfinder (down the citrus stairs) → `walk_until` x ≤ -415.6
 the return legs at 0.4 / 0.8 / 0.7 / 0.4 / 0.25, every leg 0 corrections. At the port, `exit_boat` to (-254, 63, 524) dropped her into the water north of the
 z 522 pier at (-251.5, 520.5). **The tread-water reflex kept her at the surface (air 20/20)**, then `look` west + `walk_until` x ≤ -254.2 brought her onto the boardwalk in 0.25 s.
 **Lesson (Dad): treading water matters on every docking, successful ones included.** Both bee voyages switch the reflex on at the start, and each landing finishes with a swim-and-climb toward the known dry edge.
+
+## Muse's first "tend the bees" run, 2026-10-05: all water legs to the cove, the landing step met the torch post
+
+Muse paddled the farm port → bee cove route on its own and reached the dock. It dismounted beside the **z 289 torch post on the dock's west edge, (-417, 63, 289)**.
+The post fills z 289–290, so stepping east from there walks into it, and Muse ended up treading water at about (-417, 63, 289).
+What worked on 2026-10-03 came ashore at z 288.4, just north of the post. **The landing now goes north to z ≤ 288.4 first (`BEE_DOCK_CLEAR_Z`), then east onto the planks**, on every try.
+**The finish:** Dad said "tend the bees" again with Muse still by the dock. It took the bee-dock branch, walked up the citrus stairs to the cross, and was **at the cross 9 s later with the keeper started**.
+So the whole trip works: farm house → port → boat → cove → dock → stairs → cross → keeper.
+The code now also climbs on from the water in that branch (`beeDockClimb`: north of the post, then east), so a slipped landing finishes in one command.
+**Dad removed the torch posts on the dock's west side (2026-10-05)** after Muse caught on one. The landing still steps off at z 288.4, where the landing that worked came ashore.
+
+## Muse's first "come home" run, 2026-10-05: bee cove → farm port
+
+Dad said "Muse, you can head home now". Muse took the bee-voyage home branch: cabin → dock → boat → every return leg → the farm port slip.
+At the slip it was left **standing on the boat top** at about (-251, 63, 524). The plain walk west didn't carry it off, and the routine stopped ("landing walk stopped short").
+With a nudge from Dad it walked on and reached the farm.
+**The landing now jumps while walking west** to x ≤ -254.2 (three tries), the same way the bee-cabin lip is crossed. That lands it on the boardwalk, or in the water, where it treads and climbs on.
+
+## Roz's first "tend the bees" run, 2026-10-05: farm house → cross in about 3 min 15 s, every water leg 0 corrections
+
+`bee_voyage` from inside the farm house: port at 14 s, boat 1187004, 7 legs (0 corrections each), and the dock push grounded at (-418.5, 290.6).
+She dismounted, slipped into the water, and **the tread-water reflex held her up**. Step 3 east climbed her onto the planks at (-415.9, 63, 290.3).
+Then the shore, the stairs, the sand and the cross, and the keeper started. At bedtime the keeper walked her into the bee cabin to sleep.

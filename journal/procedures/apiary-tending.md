@@ -183,4 +183,4 @@ The walk-home reflex no longer takes the igloo road from more than 40 blocks off
 - the shore and sand
 - the arrival and whether the keeper started, or the stop reason
 
-All bots ignore `[voyage]` lines in chat routing. `VOYAGE_CHAT_TRACE=0` in .env silences the trace; bot.log keeps it either way.
+All bots ignore `[voyage]` lines in chat routing. **Since the first round trip worked, the chat trace is off by default.** Set `VOYAGE_CHAT_TRACE=1` in .env to turn it back on for a debugging session. bot.log always keeps it.
