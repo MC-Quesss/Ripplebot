@@ -11,6 +11,102 @@ Reverse-chronological. Raw observations land here first; canonical facts get pro
 
 ## Recent sessions
 
+### 2026-10-07 (evening) — Helm: potatoes to the bees, cabin potato patch, birch charcoal (days 54838–54841)
+
+- Dad's client crashed 3× on login. The cause was one corrupted BOP wooden boat (entity 17760946) at (-334, 62, 246) near the cove.
+  Its hit timer held a decimal where the code expects a whole number. Dad `/kill`ed it and logins worked again. His Immersive Petroleum
+  motorboat was a different entity and was never the problem.
+- Roz harvested 187 raw potatoes at the farm and kept them, then sailed `bee_voyage` at first light (7 legs, clean landing).
+  She planted Dad's new 18-tile patch by the cabin: see [[../places/bee-cabin]].
+- Dad built two furnaces in the cabin. Roz cut two birches by hand and replanted them, then bootstrapped charcoal and baked 8 potatoes.
+  The procedure is in [[../places/bee-cabin]]. **New rule: only birch goes in the furnaces.**
+- Code: `furnace_put` gained `slot:"fuel"` and `metadata` (needed a restart). Uncommitted.
+- Open: automate the cabin furnace loop (a rung in the bee food ladder). The keeper was paused for the tree work and has not been restarted.
+
+### 2026-10-07 (evening) — Helm mode: cloud review of the bee food ladder (day 54835)
+
+- Launched in helm mode at the farm house (HP 20, food 20, deaths 0). It was night on spawn; auto-sleep put her in the primary bed, and with 1 of 2 asleep the night skipped.
+- A cloud agent reviewed the uncommitted bee changes (food ladder, drone dump, hive-window resync). Each finding was checked against the code, then fixed:
+  - **Kitchen restock had no task lock.** `runBeeVoyageHome` ends its own `voyage` task, so food safety and idle wander could run during the walk to the kitchen chest. The step now holds a `bee-food` task.
+  - **A rejected hive click skipped the inventory resync.** The resync now also runs on the error path, and only for real hive windows (9 or 12 tile slots).
+  - **Output drone stacks that would overflow the pack stack are left in place.** Hive outputs probably refuse a put-back, so the overflow would have stayed on the cursor.
+  - **stop / stand down now cancel a food run** that is waiting for first light (`cancelBeeFoodRun`).
+  - **The return leg logged a bogus failure** when the keeper was already running.
+  - **`dump_drones` refuses** when she is inside the bee cabin or a food run is busy.
+- Open (untested): the whole food ladder still needs a live hive season. Optional cleanups not done yet: the old full-drone-slot reset still drops drones at the hive; a full pack reads as an empty chest; check that type 1085 is not walkable terrain elsewhere.
+
+### 2026-10-07 (early) — Helm mode: hive season #7, the empty pantry and the price of morning (days 54755–54773)
+
+- **Correction:** there *was* food at the bee cabin. The bottom double chest at (-403, 66, 238) holds about 128 baked potatoes ([[../places/bee-cabin|bee cabin]]). The operator never checked the place note, and the whole crisis below could have ended with one chest withdrawal. Quesss pointed it out on return. Lesson: read the local place note for supplies before escalating or sailing.
+- **No food in her pack.** Around 03:30Z her carried food ran out. The keeper's after-round `eatSomething()` failed every round from food 14 (04:03) on. Hunger fell to 3 by 05:02 and to 0 by the time she reached the kitchen.
+- **The night skip costs 1 HP.** An `entityHurt` fires about 100 ms after the server's "Good Morning" broadcast:
+  - 28 of 30 wakes this season;
+  - 19 of 22 wakes at the farm on 2026-10-02.
+  - With food ≥18, regeneration hid it (every hit read "HP now 20/20"). With an empty pantry it showed as −1 HP per night, 20 → 6 over 14 nights.
+  - One skip at 06:16Z came with no server-sleep broadcast and no hit. The next announced skip hit again. So the damage looks tied to the server's (modded) sleep announcer, not to the skip itself.
+  - The skip still hit her on nights when Private's sleep skipped the night and her own bed press was refused. Staying out of bed does not avoid it.
+- **Went home at HP 6, early in the day.** I chose HP 6 over the planned HP 5 because both would sail at dawn; waiting only cost a heart.
+  - The boat had drifted about 7 blocks south of the bee dock end, outside `mountNearestBoat`'s radius of 4. She swam to it (tread-water) and boarded with `activate_entity`. Then `bee_voyage_home` paddled all 8 legs with 0 corrections.
+  - At the farm slip she dismounted but did not land. Her client then froze: `look` and `walk_until` had no effect, and the position never changed. A restart fixed it, and a jump-walk west put her on the boardwalk.
+  - Food-safety took her to the kitchen chest, and she ate to food 20 / HP 20. She now carries about 70 baked potatoes and 16 bread.
+- **Fix candidates (not applied):**
+  - Have the keeper refuse to start, or warn, without food in the pack.
+  - Widen `mountNearestBoat` at the bee dock, or check for a drifted boat.
+  - Find out why the client froze after the failed landing.
+
+### 2026-10-06 (afternoon) — Helm mode: hive season #6 begins, the 16-minute law revised (days 54678–54706)
+
+- Launched in helm in the [[../places/bee-cabin|bee cabin]] (-405.5, 66, 239.5): HP 20, food 20, 0 deaths, day 54678 tick 11955. Quesss was online. Auto-sleep handled every bedtime (28 nights by day 54706) with no operator help.
+- Asked to tend the bees at 14:39Z; `tend_bees` voyage (about 5 blocks) then the keeper, 45+ rounds. Two drone dumps behind the cabin (17:23, 18:27). No errors, damage or deaths.
+- Quesss left at 15:44Z (day 54688): **hive season #6** starts at that day. Alone, the night skips with no server broadcast. A Roz day is about **10.7 real minutes**, so most evenings the keeper's second round is cut short by bedtime.
+- **Apiary queen lifespan revised:** at most 15.8 min (58 brackets, TPS 19.97), not ~16.4–16.5. Details in the update at [[../procedures/apiary-tending]]. Bee-house queens lived about 33–64 min. The west bee house queen from round 32 lived ~64 min, the longest this session.
+- **Season #6 closed:** Quesss returned at 00:19Z on 2026-10-07 (day 54736) after **48 nights**, with 48 cabin sleeps, 175 princesses placed, 8 drone dumps, 0 damage and 0 deaths, over keeper rounds 1–102.
+- **Post-skip auto-sleep race (seen 5×):** the night skips and `isSleeping` drops, but `bot.time` still reads night for about a second. A 5-s auto-sleep poll that lands in that window re-runs `beeCabinSleep()` in daylight, gets "You can only sleep at night" twice, and logs "no bee cabin bed resulted in sleep". Harmless. Proposed fix: `tryAutoSleep` skips for about 10 s after the `wake` event. Not applied; waiting on the user.
+- **Bee-house cohort prediction, tested:** four bee-house queens were crowned together in round 50 (19:20Z). Predicted to die together at 20:00–20:15Z. Timing ✅ 4/4 inside the window. "Together" ❌: they split into pairs about 11 min apart, south and east by 20:02 (~42 min), north and middle by 20:13 (42–53 min). A cohort crowned the same minute keeps roughly the same timing but scatters across its natural ~20-min lifespan spread.
+- **Drone dumps run on a steady rhythm:** 16:19:15 → 17:23:24 → 18:27:21 → 19:31:10 → 20:34:57 → 21:38:56 → 22:42:44 → 23:46:31, seven intervals of 64:09, 63:57, 63:49, 63:47, 63:59, 63:48 and 63:47, all within 22 s of each other. (The 16:19 dump was missed during live narration and found in the season tally.) That held even when bedtime held a full pack overnight, and through a slow ~48-min stretch at 0.83 drones/min (a revised forecast built on that stretch missed; the long-run prediction landed within 16 s). That is about one spare drone per minute, from steady queen turnover. The interval is regular, but its closeness to 64 is luck.
+- **Is the west bee house special? No evidence.** Across 52 bee-house lives in 5 houses, every house's typical life ran 32–53 min. The west house had both of the two 53–64-min lives, but also a 21–32 (the south house had one too). With 2 long lives landing at random, the chance of both being in the same house is 1 in 5. Not significant.
+- `[apiary]` tend lines log the queen state *before* tending, so `queen=EMPTY` there is a hive that was just refilled, not a failure.
+
+### 2026-10-05 (evening) — Helm mode: a queenless morning at the bee cross (day 54590–54591)
+
+- Start: logged in at the bee cross (-401.5, 67.9, 253.4), HP 20, food 20, deaths 0, day 54590 tick 12904 (dusk). Musebot online.
+- Asked to tend the bees, so `keep_bees` was started at the cross (300 s rounds). The night skipped during round 1, and by its end it was day 54591 tick 1194.
+- **Round 1: 8 of 9 hives were queenless.** All four [[../procedures/apiary-tending|apiaries]] and four of the five bee houses had lost their queens. In each, the keeper moved a wintry princess from the outputs into slot 1. The east bee house (-398, 69, 256) still had a living queen (4970) and needed nothing. That reading also shows the queen-slot check can tell a queen from an empty slot.
+- The west apiary (-409, 69, 256) also had an empty drone slot and got wintry drones. Every other hive sent 4 extra drones to the pack slot.
+- **Round 2 (5 min later): 9 of 9 queened.** All eight princesses from round 1 had become queens (4970). The odd one out flipped: the east bee house queen, the only survivor in round 1, had died in the meantime and got a princess. So the round-1 fix is verified, and the "lifespans line up" idea held: she outlived the rest by only a few minutes.
+- **Round 4 (22:43 UTC): all four apiary queens dead again; every bee-house queen still alive.** The apiary queens went in 22:27:04–16 and were alive at 22:38, so they lived about 11–16 real minutes. The bee-house queens went in only 4–20 s later and were still alive at 22:44, past 16 min. So **apiary queens seem to die faster than bee-house queens**, not just at the same time. That fits the Forestry idea that each housing changes lifespan, but it is not confirmed. Round 5 (22:49:36): all queens alive. The bee-house queens are now past 22 min, against at most 16 for the apiary queens, so the difference is not just timing. **Round 7 (23:00) repeated it:** all four apiary queens from 22:43 were dead (alive at 22:55), again 11.5–16.5 min. All five bee-house queens were still alive at about 33 min. **Apiary queen: about 12–16 real minutes, confirmed twice.** *Correction, 00:44 on 2026-10-06, from 7 batches:* the window is not wide. Every batch was alive at about 11.4 min and dead by about 16.5. Batch 7 (placed 00:22:22) was still alive at 16.47 min and dead by 21.9. Batch 3 was dead at 16.43. So **an apiary queen lives a nearly fixed ~16.4–16.5 min**, give or take a hive work cycle (~30 s). The keeper's 5-min rounds sit right on that edge, so a batch dies either just before a round or just after it. A bee-house queen lasts more than twice that, bee-house lifespan measured in round 9 (23:11): the south and west bee-house queens (placed 22:27:20/28) were dead, after about 39–44 min. The north and middle ones (placed only 5–8 s later) were still alive, so the lifespan varies by a few minutes. **Bee-house queen: about 40+ real minutes, about 3× an apiary queen.** Also seen: once a princess mates, the apiary drone slot sits empty for the queen's whole life (mating used the drone, and live queens put no drones in the outputs). The keeper refills drones only from the outputs, never from the pack's drone slot. That is fine while dying queens leave drones, but it is a gap if one doesn't. **Round 10 (23:16) tested it:** the south, east and north apiary queens died with empty drone slots, and each left wintry drones in the outputs. The keeper refilled queen and drone together. So the loop closes on its own; the pack fallback is only insurance. The north and middle bee houses died at 44–49 min, so the bee-house range is about 39–49 min. The odd one out: the east bee house queen (placed 22:32:53) lived **60–66 min** and died between 23:33 and 23:38. So bee-house lifespans spread widely, about 39–66 min. A plausible reason is that each princess inherits her own lifespan gene; unconfirmed. Second bee-house generation (to 00:22 on 2026-10-06): 38–44, 38–44, 49–55, 55–60 and 39–44 min. The long-lived east queen's daughter lived only 39–44, so a long life does not run in the hive. By round 22 the keeper had run 115 minutes, with seven apiary turnovers, two clean drone dumps and no errors. A third apiary batch (placed 23:16) died at 11–16 min again, so the apiary figure is solid. So keeping the bees means a princess swap in every apiary about every third keeper round. The night skip probably doesn't count toward their age, since skipping the night is not extra ticks. Each queen death leaves the next princess, so supply has kept up.
+- **Round 150 (13:34 on 2026-10-06, ~15 h 7 min, day 54675):** still no errors, damage or deaths; 14 drone dumps (about one an hour). Apiary queens are still on the ~16-min clock and bee-house queens mostly at 37–53 min. The drone dump is skipped when bedtime cuts a round short; it runs at the end of the next completed round.
+- **Overnight run (to 07:06 on 2026-10-06):** the keeper ran 90 rounds over 8 h 40 min with no errors, no deaths and no damage. It made 8 clean drone dumps behind the cabin, about one an hour. Apiary queens kept a near-fixed ~16 min clock throughout, and bee-house queens ranged about 27–66 min. Every dusk the keeper broke off and Roz walked to the bee-cabin bed by herself; the operator never had to step in. Quesss left at 05:13 and Muse at 05:29, so Roz sleeping alone skipped each night, with no 'Good Morning' broadcast when only one player is online.
+- Open: the queens all died during the same stretch while Roz was offline. Lifespans line up because they were all placed close together. Expect their daughters to expire together too.
+
+### 2026-10-05 (afternoon) — Helm mode: keeping the bees from the cabin bed (days 54554–54555)
+
+- Launched in helm at the [[../places/bee-cabin|bee cabin]] (-405, 66, 239): HP 20, food 20, 0 deaths, tick 19330. Roz was put straight into the cabin bed on login. No players online.
+- `keep_bees` started at once. Round 1 seemed to walk her out at night, but **the night had already skipped**: the `time` read at 19330 came just before the skip. Roz was the only sleeper, so 1/1 = 100%. By the end of the round it was day 54555, tick 1156. Lesson: re-read `time` before calling something a night walk.
+- Round 1: **all nine hives queened** (type 4970), including the south and west bee houses that went empty on 2026-10-04. Every drone slot was empty and no outputs held a wintry drone. This fits the known rhythm (a new queen uses up the drones), so nothing needs to be done.
+- First live run with the drone-as-trash `tossTrash()` (uncommitted bot.js change): no `[trash]` line, so there were no drones on hand to toss.
+- **Anomaly:** the inventory lists a **wintry queen (4970) in Roz's hand** (slot 36, hotbar 0) right after round 1. This is probably the known phantom-item effect after hive windows. Not acted on; re-read after a restart.
+- The phantom queen explained: the hand slots match the **last bee house window** (bee house slot 36 = queen, 38 = first output). After round 3 the "honeycomb" count in slot 38 rose to 5 along with the middle bee house. It is a display echo, not real items.
+- Round 2 (15:09Z): all queens alive. Bedtime alarm at tick 12576. Auto-sleep walked her from the cross into the cabin bed by 15:14:00Z without help. The night skipped (she was the only sleeper).
+- Round 3 (15:14:36Z, dawn, day 54556): walked out through the door cleanly. **All four apiary queens had died together** and were each refilled with their own princess and drones. All five bee houses were still queened. That is about 11 real minutes after round 1 saw them alive, inside the known ~20-min group-death rhythm. No drones landed in her pack, so `tossTrash` still had nothing to toss.
+- Food-safety ate once from the pack at food 19 (helm, at the cabin). Harmless.
+- Rounds 4–7 (15:20–15:36Z): apiary queens died together again at round 6 (~16 real min of life). Drones were still in the slot, so only princesses moved. Bee houses died one or two at a time (west; then south + north). The cabin nights all went by themselves.
+- **Round 8 (15:42Z): the first live firing of the drone toss, aimed at a phantom.** It ran right after the middle bee house was refilled. It logged `toss fail drones (try 1): Server rejected transaction for clicking on slot 37, on window with id 0`. Try 2 logged nothing, so by then the model held ≤1 drone. **Slot 37 is the bee house's drone slot**, and the "drone on hand" was the window echo. After that the inventory re-synced: potato, bread and baked potato moved from slots 27/34/35 to **36/43/44**, a +9 shift. Until then mineflayer had been counting the pack with the hive window's numbering (pack starts at 0) instead of the player window's (pack starts at 9).
+- **Risk this exposes (not yet harmful):** `tossTrash` clicks player-window slots using that misaligned model. If a phantom drone sits on a slot where a real item lives, the routine picks up the real stack, puts one back and **drops the rest on the ground**. The code's own comment says to re-read the inventory before trusting it after hive windows. Possible fixes: run the drone toss only after a fresh inventory re-sync (e.g. close and reopen the player window, or wait for a `window_items` for window 0), or check the clicked slot's item type in the server reply before dropping. Waiting for Dad.
+- Round 9 (15:47Z): apiary queens refilled again, and the phantom drone toss failed the same way on slot 37.
+- **Dad corrected the model:** slots 1 and 2 are the breeding pair, and every other slot is an output holding drones **or** combs. His rule: extra drones go to one pack slot and are dropped when it reaches 64; combs stay. I rebuilt it inside `tendApiary` (see [[../procedures/apiary-tending]]), reverted the drone toss, and restarted Roz at 15:49Z.
+- **New rule, round 1 (15:49Z):** each apiary gave up **8 extra wintry drones**. All 32 stacked into one pack stack (hive-window slot 26). They stack, so the drones share NBT. No bee house had extra drones, only combs (9 in the middle house), which were left alone. At this rate the stack fills and drops after one more apiary pass.
+- Rounds 2–9 under the new rule: apiaries died together every ~16 min, and bee houses one to three at a time. Bee-house leftovers went to the pack too.
+- **The stack never dropped, so I looked.** A fresh hive window (server truth) showed 52 drones on **hotbar slot 29** and 16 in the pack slot. My first guess (non-stacking bee-house drones, swapped back into a hive) was **disproved by a dry run**: that house held only combs. The actual cause had three parts:
+  1. The Forge window adoption makes `bot.closeWindow` copy hive windows back into the inventory misaligned.
+  2. Eating, acting on that model, moved the real drone stack onto the hotbar.
+  3. Mineflayer's local click sim won't merge NBT drone stacks, so "is it full?" read a wrong count.
+  Fixed with server-truth counts, an unconditional put-back click, and a resync after close. Details in [[../procedures/apiary-tending]].
+- **Then the drop itself turned out to be pointless:** Roz re-collects the dropped stack in about 2 s. The fresh login showed 64 + 4 back in her pack. The keeper now **holds at 64**, and the discard spot is Dad's call.
+- **Dad: dump them behind the cabin, like the poison potatoes** (throw where the work ends and walk away). I scanned a top-down block map around the cabin and found that the **window glass (1306) and a column behind it (1085) read as walk-through to the pathfinder**. Both are now in `SOLID_MODDED_TYPES`. Built `dumpDronesBehindCabin`: east lane → behind the back wall → throw north → straight back, on fixed `walk_until` legs. First run (17:07Z) worked: 64 drones landed at (-403.9, 66, 229.1) and stayed there. It now runs at the end of any round with a full drone stack. See [[../places/bee-cabin]].
+- Bedtime landed during the restarts, with the keeper off. Auto-sleep said "operator decides", so I walked her to the door and it took her in. Four restarts in all, each announced in chat.
+- Related: [[../procedures/apiary-tending]]
+
 ### 2026-10-02 (evening) — Helm mode: a stuck Muse, a long night, a crossed craft (days 54206–54207)
 
 - Launched in helm at the farm house (full HP/food, 0 deaths). Muse and Namamom online; Quesss joined at night.
@@ -108,6 +204,11 @@ Reverse-chronological. Raw observations land here first; canonical facts get pro
 
 Checked against `bot.js` on 2026-09-29; each is still open unless marked.
 
+- **TODO (Dad, 2026-10-07): food made at the bee cabin.** Plant a small potato crop by the [[../places/bee-cabin|bee cabin]] and give Roz a furnace there, so she can bake her own potatoes instead of sailing home when the cabin chest runs out. Once both exist, the keeper's food ladder (pack → cabin chest → food run home and back, `beeRestockFood`/`tryBeeFoodRun`) gets a new rung before the food run: harvest the cabin crop and bake it in the cabin furnace.
+- **Bee keeper food ladder: written 2026-10-07, not yet run live.** When the pack drops below 8 food, she restocks 32 from the cabin chest (-403, 66, 238). If the chest and the pack are both empty, she sails home, takes 64 from the kitchen chest and sails back, and the keeper restarts. Known weak spots on that run:
+  - A drifted boat out of `mountNearestBoat`'s 4-block reach stops the trip home.
+  - The farm-slip landing can freeze the client; that needed a restart on 10-07.
+
 - **Diary copies itself.** `tryWriteDiary` hands the model its last 700 characters labelled "for continuity", and on quiet nights it re-emits them. First measured 07-27 at 53% duplicated entries. August got worse: **316 distinct sentences in 1,384 lines**, with one line repeated 79×; see [[../bots/roz]]. The September Claude-voice entries didn't repeat. Fix direction: shrink or drop `ownTail`, or tell the model "don't repeat these sentences".
 - **Diary fires once per *in-game* day**: ~10.6 real minutes, up to 91 entries per real day. In `claude-super` that's the most expensive recurring call, and it's exempt from the cost gate. Suggested: gate on real elapsed time.
 - **Music impressions repeat word for word.** `markRecordHeard` saves duplicates; see `roz.music.json` Chirp ×3. Cheap fix: skip saving a note that already exists.
@@ -128,6 +229,7 @@ Promoted from the compacted sessions. Each one cost a bug to learn.
 ### Method
 
 - **A signal that reads the same for healthy and broken is camouflage, not monitoring.** The diary logged "LLM unavailable or passed" for 15 days while every Claude voice call returned HTTP 400 (`temperature` deprecated); 85 errors, 0 successes. Log the *cause*. `callVoice` logs only on failure, so the diary-write lines are the positive evidence.
+- **The world runs on ticks; only the bot runs on the wall clock.** World processes (smelting, hopper transfer, crop growth, bee aging, the day cycle) are fixed in game ticks, and they only match minutes at a steady 20 TPS. The apiary queen's "16.4 min" from 2026-10-05 measured ≤15.8 min on 2026-10-06 at 19.97 TPS. Time world processes with `time.age` (ticks) and say minutes only for the bot's own timers (polls, rounds, timeouts) or as loose narration ("a ~10-minute day").
 - **Check the instrument before doubting the reading.** A `tail -8` cut a harvest out of view and made a true diary claim look invented.
 - **Averaging a bimodal trace is wrong.** Two igloo lanes 19 blocks apart looked like noise at n=2; splitting the difference would have routed over a hill nobody climbed. Read the distribution, not the maximum ("13-block slope" was really a plateau at y=69).
 - **A sampling window can hide life.** The wheat-field "infrastructure" grid was [[../creatures/fertilizer-worm|fertilizer worms]] moving slower than the 1.5-block/7 s threshold.

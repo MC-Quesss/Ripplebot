@@ -61,6 +61,54 @@ queen/drone/outputs by id and species, and **only then** acts:
 - drone slot empty → move wintry drones (4971) into it;
 - drone stack at 64 → pick it up, put 1 back, drop the rest outside the window
   (Quesss asked for the extras to be discarded into the world, like the poison potatoes). Untested live.
+- **Extra drones → one pack slot, dropped when full (Dad, 2026-10-05):** slots 1 and 2 are the
+  breeding pair (princess/queen + drone). Every other slot is an output and can hold
+  **drones or combs**. After the pair is refilled, `tendApiary` moves any remaining **wintry
+  drones** from the outputs into one pack slot, `BEE_DRONE_PACK_SLOT` (hive-window slot 26 =
+  player-window slot 35, the last main-pack slot). When that stack reaches 64, it is dropped.
+  **Combs and other species are never touched.** If that pack slot holds something else, it
+  leaves the drones and logs a note. Drones that don't stack (a swap) or overflow go back
+  to their output slot.
+  - **Dropping in place does not work (2026-10-05):** a full stack dropped with a click outside the
+    window lands next to Roz, and she **picks it straight back up** about 2 s later. So the keeper
+    **holds at 64** while a round is running; when the stack is full, extra drones stay in the outputs.
+  - **Full stacks go behind the bee cabin (Dad, 2026-10-05):** it works like the poison potatoes:
+    throw the stack where the work ends, then walk away at once. At the end of a round, if
+    the drone slot holds 64, `dumpDronesBehindCabin` runs these legs:
+    1. Path to the lane start (-399.5, 66, 245.5), east of the front door.
+    2. North on a fixed leg up the clear 2-wide **east lane** (x -400/-399) to z 232.5.
+    3. West to (-403.5, 232.5).
+    4. Face north, `tossStack`.
+    5. Walk straight back east, then south to the lane start.
+    These are fixed `walk_until` legs, never the pathfinder: the cabin's windows are no way
+    through. Ctl `dump_drones` runs it by hand.
+    **Verified 2026-10-05:** all four legs OK (~9 s). The stack landed at (-403.9, 66, 229.1),
+    3 blocks past the throw spot, and stayed there.
+  - Stray drone stacks anywhere else in the pack are folded into the drone slot on each visit.
+  - **Counts come from the window as it opened**, not from mineflayer's copy after clicks.
+    Mineflayer will not merge drone stacks locally (their NBT), while the server does, so after
+    a merge the local copy shows a swap. The first version checked "full?" on that copy and
+    never dropped. After each merge it always clicks the source slot again, which puts any
+    overflow back; on an empty cursor that click does nothing.
+  - **Inventory model fix:** our Forge window adoption tells mineflayer the hive comes first, so
+    `bot.closeWindow` copies the window back into the inventory with the wrong offset. The
+    results were phantom queens and combs on the hotbar, and real items under wrong slot numbers.
+    In one case eating "the baked potato in slot 35" actually moved the drone stack to the hotbar.
+    `resyncPackFromHiveWindow` now rewrites player slots 9–44 from the window's own pack slots
+    **after** the close. If any clicks happened, it re-opens the hive once first, so the copy
+    comes from the server. Verified live: the model matched the server after both kinds of visit.
+  - *Why it works inside the hive window:* the first version (same day) treated pack drones as
+    trash and tossed them with `tossTrash()` after each round. That aimed at a **phantom**: the
+    hive window lists the pack first (0–35), so after a hive window mineflayer's own inventory is
+    off by 9. It "saw" the last bee house's slot-2 drones as pack slot 37 and clicked there
+    (server rejected it, twice). A misaligned click could have picked up and dropped real food.
+    Now every drone move is done in the open hive window, whose slot numbers are right.
+    Drones are no longer trash, and stash-all skips them.
+- **Phantom pack items:** after hive rounds, mineflayer's inventory can list drones and a
+  princess that the server does not have. A fresh login on 2026-10-05 showed none of them.
+  Re-read the inventory before trusting it for chest moves. A `deposit_slot` run into the bee
+  cabin double chest that day reported `ok` for every stack, yet the stacks ended up on the
+  floor in front of Roz. Do not use `deposit_slot` there until that is understood.
 
 Stand within about 3 blocks, on the ground beside the arm. A princess from the bot's
 **own pack** needs a manual move: `activate_block`, then `click_slot` on her
@@ -117,6 +165,15 @@ apiary queens die together about every 20 minutes of real time; the bee houses
 die one or two at a time, a round or so apart. A new queen uses up the drones,
 so the drone slot needs refilling a round later. The 64-drone reset never
 fired.
+
+**Update 2026-10-06: apiary queen lifespan re-measured.** 58 alive/dead brackets were taken from
+`[apiary] tend` lines over keeper rounds 1–45 (14:39–18:53Z). A princess placed at time *t* was
+alive at most *t* + 11.14 min and dead by *t* + **15.79** min at the earliest. So the lifespan
+is **between 11.1 and 15.8 real minutes**, and the session log's "nearly fixed ~16.4–16.5 min"
+from 2026-10-05 does not hold today. Server TPS measured **19.97** (1200 ticks in 60.09 s). The
+lifespan is probably fixed in ticks, and a laggier server on 10-05 (~19.2 TPS) would explain the
+gap, but that was not measured. Time apiary queens in **ticks** (`time.age`), not minutes. Bee
+houses: 33–64 min this session. See [[../observations/_log]].
 
 ## Later
 

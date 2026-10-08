@@ -437,7 +437,10 @@ function pickAvoidingRecentPhrase (items, toPhrase = x => x) {
 // 622 = apiary, 623 = bee house (Dad's bee cross on spruce planks by the lighthouse,
 // centre (-404, 68, 256); Dad named them 2026-09-29). 1095 = modded fir. Roz
 // suffocated at (-404, 68/69, 261) with fir at her feet and an apiary at her head.
-const SOLID_MODDED_TYPES = new Set([3995, 1458, 1059, 1069, 1079, 622, 623, 1095])
+// 1306 = the bee cabin's window glass, 1085 = the tall column just behind it at
+// (-403, 66–69, 233) (2026-10-05: read as walk-through, so the pathfinder could
+// have routed through the windows; the door is the only way in or out).
+const SOLID_MODDED_TYPES = new Set([3995, 1458, 1059, 1069, 1079, 622, 623, 1095, 1306, 1085])
 // Modded slabs — walk on them like oak slabs (half-block collision; metadata
 // bit 8 = top half, as in vanilla). 1744 = modded-tree plank slabs, the
 // Bleu de Paris gangplank (Dad, 2026-09-28).
@@ -1170,6 +1173,7 @@ function startAutoSleep () {
     tryAutoSleep()
     tryMorningExclamation()
     tryFoodSafety()
+    tryBeeFoodRun()
     tryCollectBake()
     tryRestockSupplies()
     tryMorningPlantBalls()
@@ -1711,9 +1715,26 @@ function memoryStatus () {
   }
 }
 
+// Server tick rate between memory logs: world age (ticks) over wall-clock time.
+// World processes (smelting, hoppers, bee aging) run on ticks, so a lifespan
+// measured in minutes only means something next to the TPS it was measured at
+// (2026-10-06: apiary queens timed ≤15.8 min at 19.97 TPS vs ~16.4 the day before,
+// with no TPS on record). Night skips change timeOfDay, not age, so they don't skew it.
+let tpsSample = null
+function measureTps () {
+  const age = Number(bot.time?.age)
+  const now = Date.now()
+  if (!Number.isFinite(age) || age <= 0) return null
+  const prev = tpsSample
+  tpsSample = { age, at: now }
+  if (!prev || now - prev.at < 5000 || age < prev.age) return null
+  return (age - prev.age) / ((now - prev.at) / 1000)
+}
+
 function logMemoryStatus (reason = 'periodic') {
   const s = memoryStatus()
-  logEvent('memory', `${reason} heap=${s.heap_used_mb}/${s.heap_total_mb}MB rss=${s.rss_mb}MB ext=${s.external_mb}MB worldCols=${s.world_columns} entities=${s.entities} windows=${s.real_window_ids} chatPhrases=${s.recent_chat_phrases} wildlife=${s.unknown_entity_tracks}/${s.wildlife_commented}`)
+  const tps = measureTps()
+  logEvent('memory', `${reason} heap=${s.heap_used_mb}/${s.heap_total_mb}MB rss=${s.rss_mb}MB ext=${s.external_mb}MB worldCols=${s.world_columns} entities=${s.entities} windows=${s.real_window_ids} chatPhrases=${s.recent_chat_phrases} wildlife=${s.unknown_entity_tracks}/${s.wildlife_commented} tps=${tps == null ? 'n/a' : tps.toFixed(2)}`)
   if (s.heap_used_mb >= MEMORY_WARN_HEAP_MB) {
     logEvent('memory-warn', `heap above ${MEMORY_WARN_HEAP_MB}MB; consider restarting this bot process before V8 reaches its heap limit`)
   }
@@ -2119,6 +2140,15 @@ async function clearHand () {
 }
 
 const TRASH_ITEMS = new Set(['poisonous_potato'])
+const isTrash = (it) => !!it && TRASH_ITEMS.has(it.name)
+// Forestry drones report name 'unknown'; tell them by item type. Extra drones
+// are not trash: the bee keeper gathers them into one pack slot and drops the
+// stack only when it fills (see tendApiary).
+const BEE_DRONE_TYPE = 4971
+// Where the extra drones live, as a hive-window slot: hive windows list the
+// pack first (0–26 main, 27–35 hotbar), so 26 is the last main-pack slot
+// (player-window slot 35), clear of the hotbar food.
+const BEE_DRONE_PACK_SLOT = 26
 
 // Items with their own deposit/craft routines — everything else that's not
 // 'unknown' and not trash is "junk" and can be stashed via stash_junk.
@@ -2127,9 +2157,9 @@ const ROUTINE_ITEMS = new Set([
   'shears', 'iron_ingot', 'iron_ore',
 ])
 async function tossTrash () {
-  const trash = bot.inventory.items().filter(i => TRASH_ITEMS.has(i.name))
+  const trash = bot.inventory.items().filter(isTrash)
   if (!trash.length) return
-  for (const it of bot.inventory.items().filter(i => TRASH_ITEMS.has(i.name))) {
+  for (const it of bot.inventory.items().filter(isTrash)) {
     try {
       await bot.tossStack(it)
       logEvent('trash', `tossed ${it.count}× ${it.name} in place`)
@@ -3219,23 +3249,51 @@ function nearBeeCross () {
   return !!p && Math.hypot(p.x - BEE_CROSS.x, p.z - BEE_CROSS.z) <= BEE_CROSS_RADIUS
 }
 
+// Hive windows list the pack FIRST (slots 0–35, hive after), but the Forge
+// window adoption tells mineflayer the container comes first, so while one is
+// open mineflayer mirrors hive slots into bot.inventory shifted by 9 − (tile − 9):
+// phantom queens/combs on the hotbar and real items under the wrong numbers.
+// Code acting on that model clicked the wrong real slots (eat moved the drone
+// stack to the hotbar, 2026-10-05). The window's own pack slots are the
+// server's truth, so copy them back into player-window slots 9–44. Call it
+// AFTER bot.closeWindow, which itself copies the window back misaligned.
+function resyncPackFromHiveWindow (win) {
+  try {
+    for (let i = 0; i < 36; i++) {
+      const it = win.slots[i]
+      bot.inventory.updateSlot(i + 9, it ? Object.assign(Object.create(Object.getPrototypeOf(it)), it) : null)
+    }
+  } catch (e) { logEvent('apiary', `inventory resync failed: ${e.message}`) }
+}
+
 // Open one hive and replace a dead queen / missing drones. Works on apiaries
 // (48-slot window) and bee houses (45); tells them apart by window size.
 async function tendApiary (x, y, z, dryRun = false) {
   const b = bot.blockAt(new Vec3(x, y, z))
   if (!b) return { ok: false, error: 'no block' }
-  const PRINCESS = 4972, DRONE = 4971
+  const PRINCESS = 4972, DRONE = BEE_DRONE_TYPE
   const isWintry = (it) => !!(it && it.nbt && JSON.stringify(it.nbt).includes('forestry.speciesWintry'))
   const desc = (it) => it ? { type: it.type, count: it.count, wintry: isWintry(it) } : null
-  return (async () => {
+  const openHive = async () => {
     const opened = new Promise((resolve, reject) => {
       const t = setTimeout(() => { bot.removeListener('windowOpen', onOpen); reject(new Error('no window opened')) }, 2500)
       const onOpen = (w) => { clearTimeout(t); resolve(w) }
       bot.once('windowOpen', onOpen)
     })
     await bot.activateBlock(b)
-    const win = await opened
+    const w = await opened
     await sleep(400)
+    return w
+  }
+  let clicked = false
+  let firstWin = null
+  const isHiveWindow = (w) => w && (w.slots.length - 36 === 12 || w.slots.length - 36 === 9)
+  return (async () => {
+    const win = firstWin = await openHive()
+    // What the server sent on open is the truth. After a click, mineflayer's
+    // local copy can disagree with the server (it would not merge drone
+    // stacks the server merged, 2026-10-05), so counts come from here.
+    const snap = win.slots.map(it => it ? { type: it.type, count: it.count, wintry: isWintry(it) } : null)
     try {
       // Apiary: 12 tile slots (queen, drone, 3 frames, 7 outputs).
       // Bee house: 9 tile slots (queen, drone, 7 outputs), no frames.
@@ -3249,9 +3307,12 @@ async function tendApiary (x, y, z, dryRun = false) {
       const before = { queen: desc(win.slots[QUEEN]), drone: desc(win.slots[DRONES]),
         outputs: outputs.map(s => ({ slot: s - base, ...desc(win.slots[s]) })).filter(o => o.type) }
       const actions = []
+      const used = new Set() // output slots already emptied by a move
       const move = async (from, to, label) => {
         actions.push({ move: label, from: from - base, to: to - base })
+        used.add(from)
         if (dryRun) return
+        clicked = true
         await bot.clickWindow(from, 0, 0) // pick up the stack
         await sleep(150)
         await bot.clickWindow(to, 0, 0) // place it
@@ -3274,6 +3335,7 @@ async function tendApiary (x, y, z, dryRun = false) {
       if (dr && dr.count >= 64) {
         actions.push({ reset: 'drone stack full: keep 1, toss the rest', count: dr.count })
         if (!dryRun) {
+          clicked = true
           await bot.clickWindow(DRONES, 0, 0) // pick up the whole stack
           await sleep(150)
           await bot.clickWindow(DRONES, 1, 0) // right-click: put one back
@@ -3282,6 +3344,40 @@ async function tendApiary (x, y, z, dryRun = false) {
           await sleep(150)
         }
       }
+      // Extra wintry drones in the outputs go to one pack slot; when that
+      // stack fills, it is dropped (Dad, 2026-10-05). Combs and other species
+      // stay put. Done inside the hive window, whose slot numbers are right
+      // (see resyncPackFromHiveWindow for the inventory model's).
+      // Stray drone stacks elsewhere in the pack (e.g. moved by an old
+      // misaligned click) are folded into the drone slot too.
+      const PACK = BEE_DRONE_PACK_SLOT
+      const strays = [...Array(36).keys()].filter(i => i !== PACK)
+      let packCount = snap[PACK] && snap[PACK].type === DRONE ? snap[PACK].count : 0
+      for (const s of [...outputs, ...strays]) {
+        const it = snap[s]
+        if (used.has(s) || !it || it.type !== DRONE || !it.wintry) continue
+        if (snap[PACK] && snap[PACK].type !== DRONE) { actions.push({ note: `drone pack slot holds type ${snap[PACK].type}; extra drones left in the outputs` }); break }
+        // Full stack: dropping it here does not work, she picks it straight
+        // back up (2026-10-05). Hold at 64; the round ends with a trip behind
+        // the cabin to throw it out (dumpDronesBehindCabin).
+        if (packCount >= 64) { actions.push({ note: 'drone pack stack full (64); extra drones left in place' }); break }
+        // Hive outputs most likely refuse a put-back, so an output stack is
+        // only lifted when it fits whole; the rest waits for the next round.
+        if (s >= base && it.count > 64 - packCount) { actions.push({ note: `${it.count} extra drones would overflow the pack stack (${packCount}); left in place` }); continue }
+        packCount += Math.min(it.count, 64 - packCount)
+        actions.push({ move: s >= base ? `${it.count} extra drones -> pack` : `${it.count} stray pack drones (slot ${s}) -> drone slot`, from: s - base, to: PACK })
+        if (dryRun) continue
+        clicked = true
+        await bot.clickWindow(s, 0, 0) // pick up the stack
+        await sleep(150)
+        await bot.clickWindow(PACK, 0, 0) // merge into the pack stack
+        await sleep(150)
+        // Overflow past 64 stays on the cursor: put it back where it came
+        // from. Always clicked (the local cursor can't be trusted); with an
+        // empty cursor and an empty slot the server does nothing.
+        await bot.clickWindow(s, 0, 0)
+        await sleep(150)
+      }
       await sleep(300)
       const after = { queen: desc(win.slots[QUEEN]), drone: desc(win.slots[DRONES]) }
       logEvent('apiary', `tend ${kind} (${b.position.x}, ${b.position.y}, ${b.position.z})${dryRun ? ' [dry run]' : ''}: queen=${before.queen ? before.queen.type : 'EMPTY'} drone=${before.drone ? before.drone.type : 'EMPTY'} actions=${actions.length}`)
@@ -3289,14 +3385,68 @@ async function tendApiary (x, y, z, dryRun = false) {
     } finally {
       bot.closeWindow(win)
     }
-  })().catch(e => ({ ok: false, error: e.message }))
+  })().catch(e => ({ ok: false, error: e.message })).then(async (r) => {
+    // Re-sync the pack from a window whose contents came from the server:
+    // this one if nothing was clicked, else a fresh re-open. Runs on the error
+    // path too: a rejected click leaves the model just as misaligned.
+    try {
+      if (!isHiveWindow(firstWin)) return r
+      if (!clicked) { resyncPackFromHiveWindow(firstWin); return r }
+      await sleep(300)
+      const fresh = await openHive()
+      bot.closeWindow(fresh) // closeWindow copies the window back misaligned; resync after it
+      resyncPackFromHiveWindow(fresh)
+    } catch (e) { logEvent('apiary', `inventory resync failed: ${e.message}`) }
+    return r
+  })
+}
+
+// Full drone stacks go behind the bee cabin (Dad, 2026-10-05). Dropped at the
+// hives she picked them straight back up, so like the poison potatoes they are
+// thrown where the work ends and she walks away at once. The cabin's windows
+// are not a way through: she goes round the east side on fixed legs (scanned
+// clear 2026-10-05: the 2-wide lane x -400/-399 from the front, z 245, to open
+// ground behind the back wall, z 236), throws north at (-403.5, 232.5), and
+// comes back the same way. Not by pathfinder: it once saw the windows as air.
+const BEE_DUMP = { laneX: -399.5, frontZ: 245.5, backZ: 232.5, dumpX: -403.5 }
+async function dumpDronesBehindCabin () {
+  const full = bot.inventory.slots[BEE_DRONE_PACK_SLOT + 9] // hive-window 26 = player-window 35
+  if (!full || full.type !== BEE_DRONE_TYPE || full.count < 64) return { ok: true, skipped: 'drone stack not full' }
+  const startDeaths = deathCount
+  const leg = async (axis, target, direction, yaw, label) => {
+    await bot.look(yaw, 0, true)
+    const r = await walkUntilAxis({ axis, target, direction, maxMs: 6000, maintainYaw: yaw, bailOnDamage: true })
+    if (!r.reached || r.died || deathCount > startDeaths) throw new Error(`${label} leg stopped at (${r.x}, ${r.y}, ${r.z})`)
+  }
+  try {
+    // Open ground between the cross and the cabin front, east of the door.
+    await pathTo({ x: BEE_DUMP.laneX, y: 66, z: BEE_DUMP.frontZ }, 0, 12000)
+    const p = bot.entity.position
+    if (Math.abs(p.x - BEE_DUMP.laneX) > 0.6 || Math.abs(p.z - BEE_DUMP.frontZ) > 1) throw new Error(`did not reach the lane start (${posStr(p)})`)
+    await leg('z', BEE_DUMP.backZ, 'lte', 0, 'north up the east lane')
+    await leg('x', BEE_DUMP.dumpX, 'lte', Math.PI / 2, 'west behind the cabin')
+    await bot.look(0, 0, true) // throw north, away from the wall and the way back
+    await sleep(250)
+    const it = bot.inventory.slots[BEE_DRONE_PACK_SLOT + 9]
+    if (!it || it.type !== BEE_DRONE_TYPE) throw new Error('drone stack gone from its slot')
+    const n = it.count
+    await bot.tossStack(it)
+    logEvent('bees', `threw ${n} drones behind the bee cabin`)
+    // Walk off at once, before the pickup delay runs out.
+    await leg('x', BEE_DUMP.laneX, 'gte', -Math.PI / 2, 'back east behind the cabin')
+    await leg('z', BEE_DUMP.frontZ, 'gte', Math.PI, 'south down the east lane')
+    return { ok: true, dumped: n }
+  } catch (e) {
+    logEvent('bees', `drone dump stopped: ${e.message}`)
+    return { ok: false, error: e.message }
+  }
 }
 
 const beeState = { active: false, gen: 0, timer: null, rounds: 0, moves: 0, startedAt: null, lastRoundAt: null, lastError: null, inRound: false }
 
 function keepBeesStatus () {
   const { timer, ...rest } = beeState
-  return { ...rest, nearBeeCross: nearBeeCross() }
+  return { ...rest, nearBeeCross: nearBeeCross(), packFood: beePackFood(), foodRun: beeFoodRun.phase, chores: beeChores.lastNote }
 }
 
 function stopKeepBees (reason) {
@@ -3371,6 +3521,7 @@ async function runBeeRoundInner () {
   }
   beeState.lastRoundAt = Date.now()
   logEvent('bees', `round ${beeState.rounds} done${moves.length ? ': ' + moves.join('; ') : ' (all queens alive)'}`)
+  if (beeState.active && beeState.gen === gen && !isBedtime() && (bot.health ?? 0) >= BEE_MIN_HP) await dumpDronesBehindCabin()
   // Auto-eat stays quiet while hive windows cycle, and the first click after a
   // round is often rejected (the hive windows scramble the slot model), so feed
   // her here and retry once.
@@ -3380,6 +3531,569 @@ async function runBeeRoundInner () {
       try { await eatSomething() } catch (e) { logEvent('bees', `eat failed at food=${bot.food}: ${e.message}`) }
     }
   }
+  // Keep the pack stocked from the cabin's own chest (see beeRestockFood).
+  if (beeState.active && beeState.gen === gen && !isBedtime() && beePackFood() < BEE_PACK_FOOD_MIN) await beeRestockFood()
+  // Then the cabin feeds itself: birch, the potato patch, the furnaces.
+  if (beeState.active && beeState.gen === gen && !isBedtime() && (bot.health ?? 0) >= BEE_MIN_HP) {
+    try { await runBeeCabinChores() } catch (e) {
+      if (e instanceof AbortError) { stopKeepBees('stop command'); return }
+      logEvent('bee-chores', `error: ${e.message}`)
+    }
+  }
+}
+
+// ── Bee keeper food (Dad, 2026-10-07) ──
+// Season 7 her pack ran dry at the cabin and she lost a heart every morning
+// (the night skip hurts; only a full stomach heals it back) until she sailed
+// home at HP 6 — past 128 baked potatoes in the bee cabin's own chest the whole
+// time. Order now: eat from the pack; when the pack runs low, restock from the
+// bee cabin chest; only when that chest is empty too, sail home, restock from
+// the kitchen chest, and sail back to the bees (the keeper restarts on arrival).
+const BEE_CABIN_FOOD_CHEST = { x: -403, y: 66, z: 238 } // bottom double chest, Quesss keeps it stocked
+const BEE_PACK_FOOD_MIN = 8    // restock below this many food items in the pack
+const BEE_PACK_FOOD_TAKE = 32  // take from the cabin chest
+const BEE_HOME_FOOD_TAKE = 64  // take from the kitchen chest on a food run
+const BEE_CHEST_RECHECK_MS = 30 * 60 * 1000 // an empty cabin chest is not re-walked every round
+const beeFood = { chestEmptyAt: 0 }
+const beeFoodRun = { phase: 'idle', busy: false, errors: 0, since: 0 } // idle | home | restock | return
+
+function beeFoodNames () {
+  // Baked potatoes first, then bread, then anything cooked. Raw potatoes do not count.
+  return ['baked_potato', 'bread', ...EDIBLE_FOODS.filter(n => !['baked_potato', 'bread', 'potato'].includes(n))]
+}
+function beePackFood () {
+  const names = new Set(beeFoodNames())
+  return bot.inventory.items().filter(i => names.has(i.name)).reduce((n, i) => n + i.count, 0)
+}
+async function withdrawFoodFromWindow (win, max) {
+  const containerSize = win.slots.length - 36
+  let pulled = 0
+  const names = []
+  for (const name of beeFoodNames()) {
+    for (let s = 0; s < containerSize && pulled < max; s++) {
+      const it = win.slots[s]
+      if (!it || it.name !== name || it.count <= 0) continue
+      const take = Math.min(it.count, max - pulled)
+      try { await win.withdraw(it.type, it.metadata, take) } catch (_) { break }
+      pulled += take
+      if (!names.includes(name)) names.push(name)
+    }
+    if (pulled >= max) break
+  }
+  return { pulled, names }
+}
+async function eatToFull () {
+  for (let i = 0; i < 4 && (bot.food ?? 20) < 20; i++) {
+    try { await eatSomething(); await sleep(500) } catch (_) { break }
+  }
+}
+async function restockFromBeeCabinChest () {
+  if (!insideBeeCabin()) {
+    if (!nearBeeCabinDoor()) await pathToSure({ x: -403, y: 66, z: 245 }, 0, 1.5, 3, 10000).catch(() => false)
+    if (!nearBeeCabinDoor()) return { ok: false, pulled: 0, error: `could not reach the cabin door (${posStr(bot.entity.position)})` }
+    await beeCabinEnter()
+    if (!insideBeeCabin()) return { ok: false, pulled: 0, error: `could not get into the cabin (${posStr(bot.entity.position)})` }
+  }
+  // Inside the door; the chest is two blocks north. The next round walks her out.
+  await pathTo({ x: -403, y: 66, z: 240 }, 0, 6000).catch(() => false)
+  const b = bot.blockAt(new Vec3(BEE_CABIN_FOOD_CHEST.x, BEE_CABIN_FOOD_CHEST.y, BEE_CABIN_FOOD_CHEST.z))
+  if (!b || !/chest/.test(b.name)) return { ok: false, pulled: 0, error: `no chest at ${posStr(BEE_CABIN_FOOD_CHEST)} (found "${b?.name}")` }
+  const win = await bot.openContainer(b)
+  let r
+  try { r = await withdrawFoodFromWindow(win, BEE_PACK_FOOD_TAKE) } finally { bot.closeWindow(win) }
+  return { ok: r.pulled > 0, ...r }
+}
+async function beeRestockFood () {
+  const had = beePackFood()
+  if (had > 0 && beeFood.chestEmptyAt && Date.now() - beeFood.chestEmptyAt < BEE_CHEST_RECHECK_MS) return
+  let r
+  try { r = await restockFromBeeCabinChest() } catch (e) { r = { ok: false, pulled: 0, error: e.message } }
+  if (r.pulled > 0) {
+    beeFood.chestEmptyAt = 0
+    logEvent('bees', `took ${r.pulled} ${r.names.join('/')} from the bee cabin chest (pack had ${had})`)
+    await eatToFull()
+    return
+  }
+  if (!r.error) beeFood.chestEmptyAt = Date.now()
+  logEvent('bees', `bee cabin chest: ${r.error || 'no food left'} (pack has ${had})`)
+  // Raw potatoes are emergency food (Dad, 2026-10-07): eatSomething falls back
+  // to them, and the chores bake them, so she only sails home with none left.
+  if (!r.error && had === 0) {
+    const raw = countItem('potato')
+    if (raw > 0) logEvent('bees', `no cooked food — living on ${raw} raw potatoes while the south furnace bakes`)
+    else scheduleBeeFoodRun('pack and bee cabin chest both empty')
+  }
+}
+
+// The food run is a small state machine stepped by the 5 s timer, so each leg
+// waits for its own conditions: daylight to sail, the bed at night, the task
+// lock. A failed voyage stops the run and leaves her where she is (operator decides).
+// stop / stand down: a food run waiting for first light must not sail anyway.
+function cancelBeeFoodRun (reason) {
+  if (beeFoodRun.phase === 'idle') return
+  logEvent('bees', `food run cancelled at phase ${beeFoodRun.phase} (${reason})`)
+  beeFoodRun.phase = 'idle'
+}
+function scheduleBeeFoodRun (why) {
+  if (beeFoodRun.phase !== 'idle') return
+  beeFoodRun.phase = 'home'
+  beeFoodRun.errors = 0
+  beeFoodRun.since = Date.now()
+  logEvent('bees', `food run: ${why} — sailing home for food, then back to the bees`)
+  try { bot.chat('My pack and the cabin chest are both empty. I will sail home for food and come back to the bees.') } catch (_) {}
+}
+async function tryBeeFoodRun () {
+  if (beeFoodRun.phase === 'idle' || beeFoodRun.busy) return
+  if (!bot.entity || bot.isSleeping || isBedtime() || taskBusy() || beeState.inRound || foodSafetyBusy) return
+  beeFoodRun.busy = true
+  try {
+    if (beeFoodRun.phase === 'home') {
+      if (beeVoyageTooLate('boat')) return // sails at first light
+      const r = await runBeeVoyageHome()
+      if (!r.ok) { logEvent('bees', `food run: voyage home stopped (${r.error}) — operator decides`); beeFoodRun.phase = 'idle'; return }
+      beeFoodRun.phase = 'restock'
+    }
+    if (beeFoodRun.phase === 'restock') {
+      // The voyage ends its own task on landing; hold one here so food safety
+      // and idle wander don't share the walk to the kitchen chest.
+      const gate = startTask('bee-food', 'kitchen restock')
+      if (!gate.allowed) return
+      try {
+        const win = await openChest()
+        let r
+        try { r = await withdrawFoodFromWindow(win, BEE_HOME_FOOD_TAKE) } finally { bot.closeWindow(win) }
+        if (!r.pulled) {
+          logEvent('bees', 'food run: no food in the kitchen chest either — staying home')
+          try { bot.chat('The kitchen chest has no food either. I will stay at the farm.') } catch (_) {}
+          beeFoodRun.phase = 'idle'
+          return
+        }
+        logEvent('bees', `food run: took ${r.pulled} ${r.names.join('/')} from the kitchen chest`)
+        await eatToFull()
+        beeFoodRun.phase = 'return'
+      } finally { endTask('bee-food') }
+    }
+    if (beeFoodRun.phase === 'return') {
+      if (beeVoyageTooLate('farm')) return // sails back at first light
+      const r = await runBeeVoyage()
+      beeFoodRun.phase = 'idle'
+      logEvent('bees', r.arrived || r.already ? 'food run: back at the bees, keeper running' : `food run: voyage back stopped (${r.error}) — operator decides`)
+    }
+  } catch (e) {
+    beeFoodRun.errors++
+    logEvent('bees', `food run (${beeFoodRun.phase}) error ${beeFoodRun.errors}/3: ${e.message}`)
+    if (e.name === 'AbortError' || beeFoodRun.errors >= 3) beeFoodRun.phase = 'idle'
+  } finally {
+    beeFoodRun.busy = false
+  }
+}
+
+// ── Bee cabin chores: birch → charcoal → baked potatoes (Dad, 2026-10-07) ──
+// Run by the keeper after each round, so the cabin feeds itself. Every step
+// was proven by hand the same day (journal/places/bee-cabin.md):
+//  - Birch: two trees by the cove, felled top-down once regrown, then the
+//    saplings swept and the stumps replanted. ONLY birch (log metadata 2) goes
+//    in the furnaces, and only birch is ever dug: the cabin walls are spruce logs.
+//  - North furnace = charcoal: birch logs in. Half of each charcoal batch stays
+//    as its own fuel and half feeds the south furnace; past a stack, the chest.
+//  - South furnace = potatoes: raw potatoes beyond a seed reserve go in, baked
+//    potatoes come out. Baked is the food; raw is for emergencies only.
+//  - Potato patch beside the cabin: right-click harvest (the server replants).
+//  - Saplings: a full stack in the pack → half into Roz's chest. A full stack in
+//    the chest → north furnace fuel, after its charcoal moves to the south furnace.
+const BEE_BIRCH_TREES = [ // trunk on soil at y 64; stand = where every log is in reach
+  { trunk: { x: -425, z: 267 }, soilY: 64, stand: { x: -426, y: 65, z: 266 }, plantStand: { x: -426, y: 65, z: 268 } },
+  { trunk: { x: -436, z: 263 }, soilY: 64, stand: { x: -435, y: 65, z: 262 }, plantStand: { x: -435, y: 65, z: 264 } },
+]
+const BIRCH_META = 2
+const CHARCOAL_META = 1
+const BIRCH_READY_LOGS = 5            // a regrown birch has 5–7
+const BEE_NORTH_FURNACE = { x: -407, y: 66, z: 239 } // charcoal
+const BEE_SOUTH_FURNACE = { x: -407, y: 66, z: 240 } // potatoes
+const BEE_FURNACE_STAND = { x: -405, y: 66, z: 240 } // both furnaces and the chest in reach
+const BEE_POTATO_PATCH = { xMin: -399, xMax: -397, zMin: 236, zMax: 241, cropY: 66 } // on modded farmland (type 1062)
+const BEE_PATCH_RIPE_SHARE = 0.85     // same trigger as the farm fields
+const BEE_SEED_POTATOES = 32          // raw potatoes kept back for replanting
+const BEE_PACK_BAKED_MAX = 128        // more than this goes into Roz's chest
+const BEE_CHORES_OUTDOOR_LATEST = 11000 // birch + patch take ~2 min; done well before dusk
+const BEE_FURNACE_VISIT_MS = 10 * 60 * 1000
+const BEE_CHEST_BAKED_ENOUGH = 64      // with this many baked in Roz's chest, the patch is left to grow (Dad)
+const beeChores = { busy: false, chestBaked: null, lastFurnaceAt: 0, birchHarvests: 0, logsCut: 0, patchHarvests: 0, lastNote: null, lastError: null }
+
+function countItem (name, meta = null) {
+  return bot.inventory.items().filter(i => i.name === name && (meta == null || i.metadata === meta)).reduce((n, i) => n + i.count, 0)
+}
+function packItem (name, meta = null) {
+  return bot.inventory.items().find(i => i.name === name && (meta == null || i.metadata === meta))
+}
+function isBirchLog (b) { return !!b && b.name === 'log' && (b.metadata & 3) === BIRCH_META }
+// The trunk's birch logs, bottom up, starting on the soil. Empty = sapling or nothing.
+function birchLogYs (t) {
+  const ys = []
+  for (let y = t.soilY + 1; y <= t.soilY + 12; y++) {
+    if (!isBirchLog(bot.blockAt(new Vec3(t.trunk.x, y, t.trunk.z)))) break
+    ys.push(y)
+  }
+  return ys
+}
+function birchStatus () {
+  return BEE_BIRCH_TREES.map(t => {
+    const above = bot.blockAt(new Vec3(t.trunk.x, t.soilY + 1, t.trunk.z))
+    return { trunk: t.trunk, logs: birchLogYs(t).length, sapling: above?.name === 'sapling' }
+  })
+}
+// Every birch log anywhere in the trunk column (a log left behind by a dig the
+// server ignored floats above the new sapling; live 2026-10-07 at y 68).
+function birchColumnYs (t) {
+  const ys = []
+  for (let y = t.soilY + 1; y <= t.soilY + 12; y++) if (isBirchLog(bot.blockAt(new Vec3(t.trunk.x, y, t.trunk.z)))) ys.push(y)
+  return ys
+}
+// Top-down, and every dig checked: the server can ignore one while the client
+// says done, which leaves a log standing, keeps the leaves alive, and the logs
+// cut above it land on the leaves out of reach (4 of 5 lost, 2026-10-07).
+// The tops (Dad, 2026-10-07): always start at the very top and work down. The
+// server allows a dig when (eyeY − (y+0.5))² + h² < 36, eyes 1.5 above the feet.
+// From the ground stand (feet y 65, diagonal, h ≈ 1.4) that reaches y 71, a full
+// 7-log birch. A taller trunk: she steps up onto the base log FIRST (feet y 66,
+// straight under, reaches y 72 and down to y 66), cuts top-down from there,
+// steps back down, and the base log comes last.
+// Live 2026-10-07: y 71 failed from the ground stand on the first try, so the
+// computed edge is not dependable; 7-log trunks (top y 71) step up too.
+const BIRCH_GROUND_REACH_TOP = 70
+async function cutBirchLogs (t, ys, label) {
+  let cut = 0
+  for (const y of ys) {
+    const at = new Vec3(t.trunk.x, y, t.trunk.z)
+    const b = bot.blockAt(at)
+    if (!isBirchLog(b)) continue // birch only, re-checked on every block
+    // Retry this block before moving down: the top comes first, always (Dad).
+    let gone = false
+    for (let tryNo = 1; tryNo <= 3 && !gone; tryNo++) {
+      const cur = bot.blockAt(at)
+      if (!isBirchLog(cur)) { gone = true; break }
+      try { await bot.dig(cur) } catch (e) { logEvent('bee-chores', `birch log at y ${y} not cut (${label}, try ${tryNo}): ${e.message}`) }
+      await sleep(250)
+      gone = !isBirchLog(bot.blockAt(at))
+    }
+    if (gone) cut++
+    else { logEvent('bee-chores', `birch log at y ${y} still standing after 3 tries (${label}) — stopping here, top first`); break }
+  }
+  return cut
+}
+async function fellBirch (t) {
+  const baseY = t.soilY + 1
+  const column = () => birchColumnYs(t).reverse() // top first
+  const top = birchColumnYs(t).slice(-1)[0]
+  if (top == null) return 0
+  let cut = 0
+  const baseIsLog = isBirchLog(bot.blockAt(new Vec3(t.trunk.x, baseY, t.trunk.z)))
+  if (top > BIRCH_GROUND_REACH_TOP && baseIsLog) {
+    if (await pathTo({ x: t.trunk.x, y: baseY + 1, z: t.trunk.z }, 0, 12000)) {
+      for (let pass = 0; pass < 2; pass++) cut += await cutBirchLogs(t, column().filter(y => y > baseY), `from the base, pass ${pass + 1}`)
+    } else logEvent('bee-chores', `could not step up onto the birch base at ${t.trunk.x},${t.trunk.z} — cutting from the ground`)
+  }
+  if (!(await pathTo(t.stand, 0, 15000))) return cut
+  for (let pass = 0; pass < 3 && birchColumnYs(t).length; pass++) cut += await cutBirchLogs(t, column(), `ground pass ${pass + 1}`)
+  const left = birchColumnYs(t)
+  if (left.length) logEvent('bee-chores', `birch at ${t.trunk.x},${t.trunk.z}: ${left.length} log(s) left standing at y ${left.join(',')}`)
+  return cut
+}
+async function sweepBirchDrops () {
+  for (let pass = 0; pass < 2; pass++) {
+    const items = Object.values(bot.entities).filter(e => e.name === 'item' && e.position &&
+      Math.abs(e.position.y - 65) <= 6 &&
+      BEE_BIRCH_TREES.some(t => Math.hypot(e.position.x - t.trunk.x, e.position.z - t.trunk.z) <= 14))
+    if (!items.length) return
+    for (const e of items) {
+      if (e.isValid === false) continue
+      await pathTo({ x: Math.floor(e.position.x), y: Math.floor(e.position.y), z: Math.floor(e.position.z) }, 0, 8000)
+    }
+  }
+}
+async function replantBirch (t) {
+  const soil = bot.blockAt(new Vec3(t.trunk.x, t.soilY, t.trunk.z))
+  const above = bot.blockAt(new Vec3(t.trunk.x, t.soilY + 1, t.trunk.z))
+  if (!soil || !above || above.name !== 'air') return false
+  const sap = packItem('sapling', BIRCH_META)
+  if (!sap) { logEvent('bee-chores', `no birch sapling to replant ${posStr({ ...t.trunk, y: t.soilY + 1 })}`); return false }
+  await pathTo(t.plantStand, 0, 12000)
+  await bot.equip(sap, 'hand')
+  try { await bot.placeBlock(soil, new Vec3(0, 1, 0)) } catch (_) { /* the block update can lag; check below */ }
+  await sleep(300)
+  return bot.blockAt(new Vec3(t.trunk.x, t.soilY + 1, t.trunk.z))?.name === 'sapling'
+}
+async function birchChores () {
+  // Ready = a regrown trunk, or logs left floating over a sapling from a bad pass.
+  const ready = BEE_BIRCH_TREES.filter(t => birchLogYs(t).length >= BIRCH_READY_LOGS ||
+    (birchColumnYs(t).length > 0 && !birchLogYs(t).length))
+  const bare = BEE_BIRCH_TREES.filter(t => bot.blockAt(new Vec3(t.trunk.x, t.soilY + 1, t.trunk.z))?.name === 'air')
+  if (!ready.length && !bare.length) return null
+  const logsBefore = countItem('log', BIRCH_META)
+  let cut = 0
+  for (const t of ready) cut += await fellBirch(t)
+  if (cut) { await sleep(1500); await sweepBirchDrops() } // leaves go, drops fall
+  await sleep(300)
+  const gained = countItem('log', BIRCH_META) - logsBefore
+  if (cut && gained < cut) logEvent('bee-chores', `birch: cut ${cut} but picked up ${gained} — ${cut - gained} not collected`)
+  let planted = 0
+  for (const t of BEE_BIRCH_TREES) if (await replantBirch(t)) planted++
+  if (cut) { beeChores.birchHarvests++; beeChores.logsCut += cut }
+  await clearHand().catch(() => {})
+  return `birch: ${cut} logs cut (${gained} collected) from ${ready.length} tree${ready.length === 1 ? '' : 's'}, ${planted} replanted, ${countItem('sapling', BIRCH_META)} saplings in the pack`
+}
+
+function patchTiles () {
+  const tiles = []
+  for (let x = BEE_POTATO_PATCH.xMin; x <= BEE_POTATO_PATCH.xMax; x++) {
+    for (let z = BEE_POTATO_PATCH.zMin; z <= BEE_POTATO_PATCH.zMax; z++) tiles.push({ x, y: BEE_POTATO_PATCH.cropY, z })
+  }
+  return tiles
+}
+function patchStatus () {
+  let crops = 0, ripe = 0, empty = 0
+  for (const p of patchTiles()) {
+    const b = bot.blockAt(new Vec3(p.x, p.y, p.z))
+    if (b?.name === 'potatoes') { crops++; if (b.metadata === 7) ripe++ } else if (b?.name === 'air') empty++
+  }
+  return { crops, ripe, empty }
+}
+async function potatoPatchChores () {
+  const s = patchStatus()
+  // No need to dig more while the chest is well stocked (Dad, 2026-10-07).
+  const stocked = beeChores.chestBaked != null && beeChores.chestBaked >= BEE_CHEST_BAKED_ENOUGH
+  const harvest = !stocked && s.ripe > 0 && s.ripe >= Math.ceil(s.crops * BEE_PATCH_RIPE_SHARE)
+  if (!harvest && !s.empty) return null
+  const before = countItem('potato')
+  let picked = 0
+  if (harvest) {
+    for (const p of patchTiles()) {
+      const b = bot.blockAt(new Vec3(p.x, p.y, p.z))
+      if (b?.name !== 'potatoes' || b.metadata !== 7) continue
+      await pathTo(p, 1, 6000)
+      try { await bot.activateBlock(b); picked++ } catch (e) { logEvent('bee-chores', `patch ${p.x},${p.z}: ${e.message}`) }
+    }
+    for (const p of patchTiles()) await pathTo(p, 0, 4000) // drops can land a block away
+    beeChores.patchHarvests++
+  }
+  // Fill any bare tile from the pack (right-click replants, so these are rare).
+  let sown = 0
+  for (const p of patchTiles()) {
+    const crop = bot.blockAt(new Vec3(p.x, p.y, p.z))
+    const soil = bot.blockAt(new Vec3(p.x, p.y - 1, p.z))
+    if (crop?.name !== 'air' || !soil || soil.type !== 1062) continue
+    const seed = packItem('potato')
+    if (!seed) break
+    await pathTo(p, 1, 6000)
+    await bot.equip(seed, 'hand')
+    try { await bot.placeBlock(soil, new Vec3(0, 1, 0)) } catch (_) {}
+    await sleep(200)
+    if (bot.blockAt(new Vec3(p.x, p.y, p.z))?.name === 'potatoes') sown++
+  }
+  await clearHand().catch(() => {})
+  return `potato patch: ${picked} harvested (+${countItem('potato') - before} raw), ${sown} sown`
+}
+
+async function ensureInsideBeeCabin () {
+  if (insideBeeCabin()) return true
+  if (!nearBeeCabinDoor()) await pathToSure({ x: -403, y: 66, z: 245 }, 0, 1.5, 3, 10000).catch(() => false)
+  if (!nearBeeCabinDoor()) return false
+  await beeCabinEnter()
+  return insideBeeCabin()
+}
+// "Server rejected transaction" is benign here as at the hopper: the item
+// usually moves anyway (live 2026-10-07 the chores stopped on one with the
+// potatoes already in). Log it, let the pack catch up, carry on.
+async function chestMove (label, fn) {
+  try { await fn(); return true } catch (e) {
+    if (!/rejected transaction/i.test(e.message)) throw e
+    logEvent('bee-chores', `${label}: server rejected the click — carrying on`)
+    await sleep(400)
+    return false
+  }
+}
+async function withFurnace (pos, fn) {
+  const b = bot.blockAt(new Vec3(pos.x, pos.y, pos.z))
+  if (!b || !/furnace/.test(b.name)) throw new Error(`no furnace at ${posStr(pos)} (found "${b?.name}")`)
+  const f = await bot.openFurnace(b)
+  try { return await fn(f) } finally { try { f.close() } catch (_) {} }
+}
+async function withCabinChest (fn) {
+  const b = bot.blockAt(new Vec3(BEE_CABIN_FOOD_CHEST.x, BEE_CABIN_FOOD_CHEST.y, BEE_CABIN_FOOD_CHEST.z))
+  if (!b || !/chest/.test(b.name)) throw new Error(`no chest at ${posStr(BEE_CABIN_FOOD_CHEST)}`)
+  const win = await bot.openContainer(b)
+  try { return await fn(win) } finally { bot.closeWindow(win) }
+}
+function chestCount (win, name, meta) {
+  const size = win.slots.length - 36
+  let n = 0
+  for (let s = 0; s < size; s++) { const it = win.slots[s]; if (it && it.name === name && (meta == null || it.metadata === meta)) n += it.count }
+  return n
+}
+// Room in a furnace's fuel slot for charcoal (0 when it holds something else).
+function charcoalRoom (fuel) {
+  if (!fuel) return 64
+  return fuel.name === 'coal' && fuel.metadata === CHARCOAL_META ? 64 - fuel.count : 0
+}
+async function putCharcoalFuel (f, want) {
+  const c = packItem('coal', CHARCOAL_META)
+  const n = Math.min(want, charcoalRoom(f.fuelItem()), countItem('coal', CHARCOAL_META))
+  if (!c || n <= 0) return 0
+  await chestMove('putFuel', () => f.putFuel(c.type, CHARCOAL_META, n))
+  return n
+}
+async function furnaceChores () {
+  const notes = []
+  // North: birch in, charcoal out.
+  await withFurnace(BEE_NORTH_FURNACE, async f => {
+    const logs = packItem('log', BIRCH_META)
+    const inp = f.inputItem()
+    if (logs && (!inp || isBirchLog(inp))) {
+      const n = Math.min(countItem('log', BIRCH_META), 64 - (inp?.count || 0))
+      if (n > 0) { await chestMove('putInput', () => f.putInput(logs.type, BIRCH_META, n)); notes.push(`${n} birch in`) }
+    }
+    const out = f.outputItem()
+    if (out && out.name === 'coal') { const got = out.count; await chestMove('takeOutput', () => f.takeOutput()); notes.push(`${got} charcoal out`) }
+  })
+  // Half the charcoal goes back in as this furnace's own fuel for the next
+  // batch (Dad). Reopened: the taken charcoal only shows in the pack once the
+  // window has closed (live 2026-10-07: kept 1 of 24, then 0 of 6). Saplings,
+  // once they are its fuel, leave no room and everything goes south.
+  await sleep(300)
+  const half = Math.ceil(countItem('coal', CHARCOAL_META) / 2)
+  if (half > 0) {
+    await withFurnace(BEE_NORTH_FURNACE, async f => {
+      const kept = await putCharcoalFuel(f, half)
+      if (kept) notes.push(`${kept} charcoal kept north`)
+    })
+  }
+  // South: charcoal in, baked out, raw potatoes in up to what the fuel can cook.
+  await withFurnace(BEE_SOUTH_FURNACE, async f => {
+    const fed = await putCharcoalFuel(f, 64)
+    if (fed) notes.push(`${fed} charcoal south`)
+    const out = f.outputItem()
+    if (out && out.name === 'baked_potato') { const got = out.count; await chestMove('takeOutput', () => f.takeOutput()); notes.push(`${got} baked out`) }
+    const inp = f.inputItem()
+    const fuel = f.fuelItem()
+    const fuelCount = fuel && fuel.name === 'coal' ? fuel.count : 0
+    const canCook = fuelCount * 8 + ((f.fuel || 0) > 0 ? 8 : 0) - (inp?.count || 0)
+    const spare = countItem('potato') - BEE_SEED_POTATOES
+    const raw = packItem('potato')
+    if (raw && (!inp || inp.name === 'potato')) {
+      const n = Math.min(spare, 64 - (inp?.count || 0), canCook)
+      if (n > 0) { await chestMove('putInput', () => f.putInput(raw.type, 0, n)); notes.push(`${n} raw potatoes in`) }
+    }
+  })
+  // Roz's chest: overflow charcoal and baked potatoes, the sapling stock.
+  await sleep(400) // let the pack catch up with the furnace moves
+  const surplusBaked = countItem('baked_potato') - BEE_PACK_BAKED_MAX
+  const charcoalLeft = countItem('coal', CHARCOAL_META)
+  const saplings = countItem('sapling', BIRCH_META)
+  let chestSaplings = 0
+  await withCabinChest(async win => {
+    if (charcoalLeft > 0) { await chestMove('deposit', () => win.deposit(packItem('coal', CHARCOAL_META).type, CHARCOAL_META, charcoalLeft)); notes.push(`${charcoalLeft} charcoal to the chest`) }
+    if (surplusBaked > 0) { await chestMove('deposit', () => win.deposit(packItem('baked_potato').type, 0, surplusBaked)); notes.push(`${surplusBaked} baked to the chest`) }
+    if (saplings >= 64) { await chestMove('deposit', () => win.deposit(packItem('sapling', BIRCH_META).type, BIRCH_META, 32)); notes.push('32 saplings to the chest') }
+    chestSaplings = chestCount(win, 'sapling', BIRCH_META)
+    beeChores.chestBaked = chestCount(win, 'baked_potato', 0)
+    if (chestSaplings >= 64) await chestMove('withdraw', () => win.withdraw(packItem('sapling', BIRCH_META)?.type ?? 6, BIRCH_META, 64))
+  })
+  // A full stack of saplings in the chest becomes north-furnace fuel; its
+  // charcoal moves to the south furnace first, past a stack to the chest (Dad).
+  if (chestSaplings >= 64) {
+    let moved = 0
+    await withFurnace(BEE_NORTH_FURNACE, async f => {
+      const fuel = f.fuelItem()
+      if (fuel && fuel.name === 'coal') { moved = fuel.count; await chestMove('takeFuel', () => f.takeFuel()) }
+    })
+    if (moved) {
+      await withFurnace(BEE_SOUTH_FURNACE, async f => { await putCharcoalFuel(f, 64) })
+      const left = countItem('coal', CHARCOAL_META)
+      if (left > 0) await withCabinChest(async win => { await chestMove('deposit', () => win.deposit(packItem('coal', CHARCOAL_META).type, CHARCOAL_META, left)) })
+    }
+    await withFurnace(BEE_NORTH_FURNACE, async f => {
+      const sap = packItem('sapling', BIRCH_META)
+      const fuel = f.fuelItem()
+      if (!sap || (fuel && fuel.name !== 'sapling')) return
+      const n = Math.min(64 - (fuel?.count || 0), countItem('sapling', BIRCH_META))
+      if (n > 0) { await chestMove('putFuel', () => f.putFuel(sap.type, BIRCH_META, n)); notes.push(`${n} saplings fuel the north furnace (${moved} charcoal moved south)`) }
+    })
+  }
+  // Keep the north furnace's own reserve, whatever the clicks did: a rejected
+  // putFuel once left it 1 charcoal while 8 ended up south (live 2026-10-07).
+  // Below 8 there, with plenty south, move charcoal back north.
+  await sleep(300)
+  let northFuel = 0, southFuel = 0, northSaplings = false
+  await withFurnace(BEE_NORTH_FURNACE, async f => {
+    const fu = f.fuelItem()
+    northSaplings = !!fu && fu.name === 'sapling'
+    northFuel = fu && fu.name === 'coal' ? fu.count : 0
+  })
+  await withFurnace(BEE_SOUTH_FURNACE, async f => { const fu = f.fuelItem(); southFuel = fu && fu.name === 'coal' ? fu.count : 0 })
+  if (!northSaplings && northFuel < 8 && southFuel > 16) {
+    await withFurnace(BEE_SOUTH_FURNACE, async f => { await chestMove('takeFuel', () => f.takeFuel()) })
+    await sleep(300)
+    const pack = countItem('coal', CHARCOAL_META)
+    const want = Math.min(16 - northFuel, pack)
+    let moved = 0
+    await withFurnace(BEE_NORTH_FURNACE, async f => { moved = await putCharcoalFuel(f, want) })
+    await sleep(300)
+    await withFurnace(BEE_SOUTH_FURNACE, async f => { await putCharcoalFuel(f, 64) })
+    await sleep(300)
+    const left = countItem('coal', CHARCOAL_META)
+    if (left > 0) await withCabinChest(async win => { await chestMove('deposit', () => win.deposit(packItem('coal', CHARCOAL_META).type, CHARCOAL_META, left)) })
+    notes.push(`north reserve topped up from the south (${northFuel} → ~${northFuel + moved})`)
+  }
+  beeChores.lastFurnaceAt = Date.now()
+  return notes.length ? `furnaces: ${notes.join(', ')}` : 'furnaces: nothing to do'
+}
+
+// One pass of cabin chores. Outdoors only in good daylight with no hostiles at
+// her level; the furnaces when there is wood to load, a full sapling stack, or
+// the last visit is 10 min old. Leaves her inside; the next round walks her out.
+async function runBeeCabinChores ({ force = false } = {}) {
+  if (beeChores.busy) return { ok: false, error: 'chores already running' }
+  if (!nearBeeCross()) return { ok: false, error: 'not at the bee cross' }
+  if (bot.isSleeping || isBedtime()) return { ok: false, error: 'bedtime' }
+  beeChores.busy = true
+  const notes = []
+  try {
+    const t = bot.time?.timeOfDay ?? 0
+    const outdoorOk = t < BEE_CHORES_OUTDOOR_LATEST && hostilesNearby(16).length === 0 && (bot.health ?? 0) >= BEE_MIN_HP
+    if (outdoorOk) {
+      if (insideBeeCabin()) await beeCabinExit()
+      if (!insideBeeCabin()) {
+        const b = await birchChores(); if (b) notes.push(b)
+        if (!isBedtime()) { const p = await potatoPatchChores(); if (p) notes.push(p) }
+      }
+    }
+    const due = force || countItem('log', BIRCH_META) > 0 || countItem('sapling', BIRCH_META) >= 64 ||
+      Date.now() - beeChores.lastFurnaceAt >= BEE_FURNACE_VISIT_MS
+    if (due && !isBedtime()) {
+      if (await ensureInsideBeeCabin()) {
+        await pathTo(BEE_FURNACE_STAND, 0, 6000)
+        notes.push(await furnaceChores())
+      } else notes.push(`furnaces skipped: could not get into the cabin (${posStr(bot.entity.position)})`)
+    }
+    beeChores.lastNote = notes.join('; ') || 'nothing to do'
+    beeChores.lastError = null
+    logEvent('bee-chores', beeChores.lastNote)
+    return { ok: true, note: beeChores.lastNote }
+  } catch (e) {
+    if (e instanceof AbortError) throw e
+    beeChores.lastError = e.message
+    logEvent('bee-chores', `stopped: ${e.message}`)
+    return { ok: false, error: e.message }
+  } finally {
+    beeChores.busy = false
+    await clearHand().catch(() => {})
+  }
+}
+function beeChoresStatus () {
+  const { busy, ...rest } = beeChores
+  return { busy, ...rest, birch: birchStatus(), patch: patchStatus(), pack: {
+    baked: countItem('baked_potato'), raw: countItem('potato'), charcoal: countItem('coal', CHARCOAL_META),
+    saplings: countItem('sapling', BIRCH_META), birchLogs: countItem('log', BIRCH_META) } }
 }
 
 // ── Bee voyage: "tend the bees" (Dad, 2026-10-05) ──
@@ -9898,7 +10612,8 @@ async function runStashAll () {
     for (let i = invStart; i < win.slots.length; i++) {
       const it = win.slots[i]
       if (!it) continue
-      if (TRASH_ITEMS.has(it.name)) continue // skip trash; tossed when outside
+      if (isTrash(it)) continue // skip trash; tossed when outside
+      if (it.type === BEE_DRONE_TYPE) continue // the bee keeper's drone slot; it manages its own stack
       if (it.name === 'wheat' || it.name === 'wheat_seeds') continue // already routed to hopper above
 
       const keepLimit = STASH_ALL_KEEP[it.name] ?? 0
@@ -10612,6 +11327,7 @@ const CHAT_HANDLERS = [
     handler: (_user) => {
       abortGen++
       stopKeepBees('stop (chat)')
+      cancelBeeFoodRun('stop (chat)')
       bot.pathfinder.setGoal(null)
       clearControlStates()
       const wasSustaining = sustainState.active
@@ -10638,6 +11354,7 @@ const CHAT_HANDLERS = [
     handler: (user) => {
       abortGen++
       stopKeepBees('stand down (chat)')
+      cancelBeeFoodRun('stand down (chat)')
       bot.pathfinder.setGoal(null)
       clearControlStates()
       if (followTarget) { followTarget = null; followEntity = null; followChainPos = 0 }
@@ -12824,6 +13541,7 @@ function handleCommand (cmd) {
     case 'stop': {
       abortGen++
       stopKeepBees('stop')
+      cancelBeeFoodRun('stop')
       if (activeTask.name) {
         logEvent('task', `force-stopped: ${activeTask.name}`)
         activeTask.name = null
@@ -13159,11 +13877,27 @@ function handleCommand (cmd) {
       // args: { force?: true to sail after BEE_VOYAGE_LATEST_START }
       return runBeeVoyageHome({ force: !!args.force })
     }
+    case 'bee_chores': {
+      // Run one pass of the bee cabin chores now (birch, potato patch, furnaces).
+      // args: { force?: true to visit the furnaces even if not due }
+      if (taskBusy()) return { ok: false, error: `busy with ${activeTask.name}` }
+      if (beeState.inRound) return { ok: false, error: 'a keeper round is running' }
+      return runBeeCabinChores({ force: !!args.force })
+    }
+    case 'bee_chores_status': {
+      return { ok: true, ...beeChoresStatus() }
+    }
     case 'keep_bees_stop': {
       return stopKeepBees(args.reason || 'ctl')
     }
     case 'keep_bees_status': {
       return { ok: true, ...keepBeesStatus() }
+    }
+    case 'dump_drones': {
+      if (taskBusy() || beeState.inRound || beeFoodRun.busy) return { ok: false, error: 'busy' }
+      if (!nearBeeCross()) return { ok: false, error: 'not at the bee cross' }
+      if (insideBeeCabin()) return { ok: false, error: 'inside the bee cabin' }
+      return dumpDronesBehindCabin()
     }
     case 'furnace_state': {
       // Open a furnace and report what's in each slot. Slots: 0=input,
@@ -13181,19 +13915,23 @@ function handleCommand (cmd) {
     }
     case 'furnace_put': {
       // Put items from bot inventory into the furnace input slot. Works for
-      // vanilla items (potato, beef, iron ore, etc.). args: { x,y,z, name, count }
+      // vanilla items (potato, beef, iron ore, etc.).
+      // args: { x,y,z, name, count, slot?: 'input'|'fuel', metadata? }
       const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
       if (!b) return { ok: false, error: 'no block' }
       const wantName = String(args.name)
       const wantCount = Number(args.count)
-      const it = bot.inventory.items().find(i => i.name === wantName)
+      const wantMeta = args.metadata != null ? Number(args.metadata) : null
+      const it = bot.inventory.items().find(i => i.name === wantName && (wantMeta == null || i.metadata === wantMeta))
       if (!it) return { ok: false, error: `no ${wantName} in inventory` }
       const n = Math.min(wantCount, it.count)
+      const toFuel = args.slot === 'fuel'
       return bot.openFurnace(b).then(async f => {
         try {
-          await f.putInput(it.type, null, n)
+          if (toFuel) await f.putFuel(it.type, it.metadata, n)
+          else await f.putInput(it.type, it.metadata, n)
           f.close()
-          return { ok: true, put: n, name: wantName }
+          return { ok: true, put: n, name: wantName, slot: toFuel ? 'fuel' : 'input' }
         } catch (e) {
           f.close()
           return { ok: false, error: e.message }
@@ -13202,13 +13940,16 @@ function handleCommand (cmd) {
     }
     case 'furnace_take': {
       // Take the output of the furnace into the bot's inventory.
+      // args: { x,y,z, slot?: 'output'|'fuel' } — 'fuel' pulls the fuel stack
+      // (e.g. charcoal moved to the potato furnace before saplings go in).
       const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
       if (!b) return { ok: false, error: 'no block' }
+      const fromFuel = args.slot === 'fuel'
       return bot.openFurnace(b).then(async f => {
-        const out = f.outputItem()
-        if (!out) { f.close(); return { ok: false, error: 'output slot empty' } }
+        const out = fromFuel ? f.fuelItem() : f.outputItem()
+        if (!out) { f.close(); return { ok: false, error: `${fromFuel ? 'fuel' : 'output'} slot empty` } }
         try {
-          const got = await f.takeOutput()
+          const got = fromFuel ? await f.takeFuel() : await f.takeOutput()
           f.close()
           return { ok: true, name: got?.name, count: got?.count }
         } catch (e) {
@@ -13324,7 +14065,7 @@ function handleCommand (cmd) {
         .catch(e => ({ ok: false, error: e.message }))
     }
     case 'toss_trash': {
-      const trash = bot.inventory.items().filter(i => TRASH_ITEMS.has(i.name))
+      const trash = bot.inventory.items().filter(isTrash)
       if (!trash.length) return { ok: true, tossed: [] }
       return tossTrash().then(() => ({
         ok: true,

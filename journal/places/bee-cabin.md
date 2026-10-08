@@ -65,6 +65,16 @@ There's a second pair at (-403/-402, 67, 237). Type 3855 hangs at (-403, 67, 240
 decorative (see [[rooftop-garden]] for the type-3855 puzzle).
 An ocelot was wandering outside on the first visit.
 
+**Update 2026-10-05:** type 1306 was **not** in `SOLID_MODDED_TYPES`, so the pathfinder read the windows
+as walk-through. It's in now, together with **1085**, a tall column just behind the cabin at (-403, 66–69, 233).
+
+## Behind the cabin: the drone dump (scanned 2026-10-05)
+
+Open, flat ground north of the back wall (z 236), on silty grass (type 1058) at y 65 with snow. There are two ways round the outside of the
+cabin. The **east lane** (x -400/-399, z 233–245, snow on 1058) is clear and 2 wide. The west side is ragged. The extra-drone
+dump goes **east lane → (-403.5, 232.5) → throw north** on fixed legs (see [[../procedures/apiary-tending]]).
+Thrown stacks land about z 229. The keeper never walks there, so they aren't picked back up.
+
 ## Night count while Dad is away (started 2026-10-01)
 
 Dad signed off for a few days on **2026-10-01 at 02:47 UTC, world day 54031** (afternoon, tick 9024),
@@ -80,3 +90,65 @@ and asked Roz to tell him on his return how many nights had passed for her. To a
 She was **0.4 west of the door's centre line (x -402.5)**, so her shoulder caught the west jamb. Fix in bot.js (needs a restart):
 `beeCabinEnter` now walks onto x ≈ -402.5 before turning north. Until she's restarted, line her up by hand (`look` east, `walk_until` x ≥ -402.6).
 Also: auto-sleep walks her to the door **only while keep_bees is running**. Idle at the cross, the operator has to bring her to the door.
+
+## Potato patch (planted 2026-10-07, world day 54839)
+
+Dad tilled a **3 × 6 patch, 18 tiles: x -399..-397, z 236..241, y 65**, just east of the cabin. Roz planted it with
+raw potatoes she harvested at the farm and sailed over. This is the first step of the cabin food TODO in [[../procedures/apiary-tending]].
+- The farmland is **modded, type 1062, metadata 14** (probably Biomes O' Plenty silty farmland: moisture 6 plus the silty variant bit).
+  Its name is empty, so **`find_blocks` for "farmland" misses it**. Probe it with `block_at`. The crops on it do report as vanilla `potatoes`.
+- How: stand on the grass column at (-399.5, 66, 238.5), `equip` potato, then `place_block` on the top face of each tile at y 65.
+  All 18 were confirmed by a `find_blocks potatoes` scan.
+- **Two furnaces, built by Dad the same morning:** (-407, 66, 239) and (-407, 66, 240), on the west wall beside the bed, facing east (metadata 5).
+  Plain `open_container` refuses them ("containerToOpen is neither a block nor an entity"); baking has to go through the bake routine's furnace path.
+- Still to do: "harvest + bake at the cabin" as a rung in the food ladder (the bake code is hard-wired to the farm kitchen).
+- **Rule (Dad, 2026-10-07): only birch goes in the furnaces.** Birch is `log` metadata 2. Birch trunks near the cove:
+  (-425, 65–70, 267), (-436, 65–71, 263), (-409, 68–73, 261), (-451, 65–70, 276), (-455, 66–72, 266).
+  **The cabin walls are spruce logs (metadata 1, around x -407/-408, z 240–243). Never dig spruce here.**
+  The trees with oak trunks around the cove are BOP trees: vanilla oak logs with modded leaves.
+
+## Cabin furnaces: birch → charcoal → baked potatoes (verified 2026-10-07, world day 54840–54841)
+
+**North (-407, 66, 239) = charcoal. South (-407, 66, 240) = potatoes.** Dad's assignment. Facing the furnaces (west), the
+south one is on the left.
+- **Bootstrap from 13 birch logs:** 2 logs as fuel plus 11 as input made 3 charcoal (1 log of fuel cooks 1.5 items).
+  Then 1 charcoal as fuel cooked the other 8 logs into 8 charcoal. **Total: 11 charcoal from 13 logs.**
+- **Steady state:** 1 charcoal + 8 birch logs → 8 charcoal (net +7). 1 charcoal + 8 raw potatoes → 8 baked. Both were
+  verified exactly, with each batch about 80 s.
+- **Commands** (`furnace_put` gained `slot:"fuel"` and `metadata` on 2026-10-07):
+  `furnace_put {x,y,z,name:"log",metadata:2,count,slot:"fuel"|omit}`, `furnace_put {...name:"coal",metadata:1,slot:"fuel"}`,
+  `furnace_take {x,y,z}`, `furnace_state {x,y,z}`. Stand at (-405, 66, 240) inside the cabin; both are in reach.
+- Charcoal reports as `coal` metadata 1.
+- **Birch source:** two trees at (-425, 267) and (-436, 263), cut down and replanted with saplings the same day (the first was on dirt,
+  the second on modded type 1059). Both stumps are within 14 blocks of each other. The leaves decayed in under a minute and gave
+  4 saplings. Dad asked Roz to always carry spare saplings (3 in her pack), in case a future harvest drops none.
+- **Leaves vanish almost at once** once the last log is cut, especially when cutting top to bottom (Dad, 2026-10-07). Probably a fast-leaf-decay mod. Sweep for saplings right away, not after a minute.
+- **Regrowth is fast:** both trees were fully regrown (7 logs each) within about 40 real minutes, with Roz staying nearby so their chunks stayed loaded. Check the stumps with `find_blocks log` filtered to metadata 2 at (-425, 267) and (-436, 263). Second harvest, day 54844: 14 logs, 5 new saplings (8 in pack).
+- Ground-reach chopping: standing beside the trunk, `dig` reached all 6–7 logs (up to y 71) with no climbing. That's ~3 s per log by hand.
+- **Roz's chest = (-403, 66, 238)**, the baked-potato chest. Dad emptied it for her on 2026-10-07.
+  **Sapling rules (Dad):** a full pack stack (64) of birch saplings → put 32 in this chest. When the chest holds 64 → that stack goes into the
+  north furnace as fuel (0.5 item each, so 64 saplings cook 32 logs). If charcoal is already in the north fuel slot, **move it to the south (potato) furnace's fuel slot first** (Dad), using `furnace_take {x,y,z,slot:"fuel"}`. Anything over one stack (64) in the south fuel slot goes in Roz's chest. Then load the saplings.
+
+## Automatic cabin chores (bot.js `runBeeCabinChores`, 2026-10-07)
+
+Dad asked for the birch/charcoal/potato routine to run on its own. It runs after every keeper round:
+1. **Outdoors** (tick < 11000, no hostiles at her level, HP ≥ 16): fell any birch with ≥ 5 logs (top-down, birch re-checked per block),
+   sweep drops within 14 of the stumps, replant bare stumps. Then the **potato patch**: right-click harvest once ≥ 85% are ripe (the server replants), walk
+   the tiles for drops, and sow any bare tile from the pack.
+2. **Furnaces** (when she has birch logs, 64+ saplings, or 10 min have passed): logs into the north furnace and its charcoal out. Half the charcoal goes
+   back in as north fuel and the rest becomes south fuel, with any overflow going to Roz's chest. Baked potatoes come out of the south furnace, and raw potatoes
+   beyond a **32 seed reserve** go in, up to what its fuel can cook. More than 128 baked in the pack → the extra goes to the chest. The sapling rules (see above) run here too.
+3. Food order: baked → bread → … → **raw potatoes only as an emergency** (Dad). A food run home is scheduled only when she has no cooked food AND no raw potatoes.
+- ctl: `bee_chores {force?}` runs one pass now; `bee_chores_status` shows the stumps, the patch and pack counts. `keep_bees_status.chores` = the last result.
+- Live lessons (first passes, 2026-10-07): (a) charcoal taken from a furnace shows in the pack **only after the window closes**, so the half
+  kept north is put in on a reopen; (b) "Server rejected transaction" on furnace/chest clicks is benign, and the item usually moves, so `chestMove` logs it and carries on.
+  A stale inventory read right after a rejection showed 14 raw potatoes when there were 59. Re-read before believing a count.
+  (c) **A dig can "succeed" without breaking the block.** The client says done, but the server ignored it. One birch log was left floating at y 68 over the new
+  sapling, the leaves stayed alive, and 4 of 5 logs landed on them out of reach. Now each dig is re-checked (block must be gone, up to 3 passes), the whole
+  trunk column is cleared (floating logs count as "ready"), and the result reports cut vs collected. The next pass cut 7 and collected 6.
+  (d) **Always the very top first, then down (Dad).** Reach rule: a dig works when (eyeY − (y+0.5))² + h² < 36, with the eyes 1.5 above the feet. From the ground stand
+  that's up to y 71, a full 7-log birch. If a trunk is taller, she steps up onto the base log *first* (reaches y 72), cuts top-down, steps off, and cuts the base last.
+- **Patch rests while the chest is stocked (Dad, 2026-10-07):** no potato harvest while Roz's chest holds 64+ baked potatoes (the count is read on each furnace visit). Bare tiles still get sown.
+  (e) Live, the same day: **y 71 failed from the ground on the first try**, so the computed reach edge isn't dependable. Any trunk reaching y 71 (every full 7-log birch) now
+  gets the step-up onto the base log, and each log is retried up to 3 times *before* she moves lower. If one still won't come down she stops (the tree stays whole, no floating logs)
+  and the next round tries again.
