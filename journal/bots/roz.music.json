@@ -1,14 +1,18 @@
 {
   "record_cat": {
-    "timesHeard": 28,
-    "lastHeardDay": 54752,
-    "lastHeardAt": "2026-10-07T03:14:14.022Z",
+    "timesHeard": 29,
+    "lastHeardDay": 54968,
+    "lastHeardAt": "2026-10-09T03:06:33.362Z",
     "notes": [
       "The melody feels like a warm blanket, reminding me that even in the deep ocean, we found a place to rest."
     ],
     "memories": [
       {
         "day": 54752,
+        "snap": "dusk; put on by someone else"
+      },
+      {
+        "day": 54968,
         "snap": "dusk; put on by someone else"
       }
     ]
@@ -48,11 +52,17 @@
     ]
   },
   "record_mall": {
-    "timesHeard": 18,
-    "lastHeardDay": 53733,
-    "lastHeardAt": "2026-09-28T03:43:58.844Z",
+    "timesHeard": 19,
+    "lastHeardDay": 54969,
+    "lastHeardAt": "2026-10-09T03:11:35.714Z",
     "notes": [
       "The empty feeling in the song reminds me of the silence after the ocean floor, but the melody fills the space just enough to make the farm feel like a home."
+    ],
+    "memories": [
+      {
+        "day": 54969,
+        "snap": "daytime; put on by someone else"
+      }
     ]
   },
   "record_blocks": {

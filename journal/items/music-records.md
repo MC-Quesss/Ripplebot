@@ -48,6 +48,8 @@ Dad picked six songs, and a resource pack (`oceanside-pack.zip`) swaps them onto
 
 Two of these are in the farm collection: **Mall and Chirp**. `RECORD_INFO` in bot.js still says Mall/197s and Chirp/185s, so a bot playing Mall announces "Mall" and thinks the song ended three minutes early. Update `RECORD_INFO` when the pack goes live.
 
+**Done 2026-10-09:** `RECORD_INFO` now calls them **Tezeta** (377s) and **I Will Follow You into the Dark** (189s). The old label names ("Mall", "Chirp") and a few hints ("nostalgia", "Mulatu", "Death Cab") still find them through an `aliases` list. Dad asked Muse for "the nostalgia one", and Muse, on the old table, only knew it as Mall. Each bot needs a restart to pick up the change.
+
 How it works: each disc's `.ogg` is replaced at its own path (`minecraft:sounds/records/<disc>.ogg`, `biomesoplenty:sounds/records/wanderer.ogg`), the songs are mono so they come from the jukebox, and one-line `en_us.lang` overrides change the tooltips. Turning the pack on reloads every mod's assets, so the game freezes for about a minute. That's normal.
 
 ## Update 2026-08-08 — Far lost, Blocks joins

@@ -18,6 +18,39 @@ and a **bee house (block type 623)**, and there is another bee house on the
 stacked planks in the middle. Both block types are in `SOLID_MODDED_TYPES`: an
 apiary suffocated Roz here once.
 
+**Four trees frame the cross** (Quesss planted them, 2026-10-08): **alders** at the
+north-east and south-west corners, **common larches** at the south-east and
+north-west. Alders carry leaves very close to the ground. Once they grow, watch
+for the keeper stalling between hives on low modded leaves (empty-name blocks
+get zero collision unless listed in `SOLID_MODDED_TYPES`).
+**This happened the same day (2026-10-08):** the south-east larch reads as a
+two-tall **type 383** at (-399, 68–69, 261). It was walk-through, so the
+pathfinder routed the south bee house → east bee house leg straight through it,
+and Roz stuck there ("east bee house: no window opened" three rounds running).
+383 is now in `SOLID_MODDED_TYPES`, and the leg goes around it (verified live).
+As the other three trees grow, any new type that shows up in a "no window opened" or
+a stalled leg likely needs the same treatment.
+
+### Update 2026-10-09: the trees grew, and Roz died at the SE corner
+All four corner trees are now full grown. Saplings and grown trees use different
+block ids, so the 383 entry was not enough. In keeper round 7 the south → east leg
+walked Roz into the **SE trunk (type 388)** at (-399, 68–70, 261). She suffocated
+at 1 HP per 0.5 s with no attacker; the keeper aborted at HP 5 (too late) and she
+respawned in the cabin bed. She lost her whole pack at the death spot.
+Corner probe (`block_at`, same day):
+
+| Corner | Trunk (x, z) | Trunk type | Notes |
+|---|---|---|---|
+| NE | (-399, 251) | 688 | 587 leaves down to y 68 (ground level) |
+| SE | (-399, 261) | 388 | canopy 587 at y 70 |
+| SW | (-409, 261) | 383 | canopy 587 at y 70–71 |
+| NW | (-409, 251) | 388 | 1176 (unknown, one block) at (-410, 68, 251) |
+
+All leaves read **587**. 383, 388, 587 and 688 are now in `SOLID_MODDED_TYPES`.
+The bees pollinate these leaves (Quesss), so treat them as part of the apiary, not
+as scenery to walk through. **Rule:** a planted tree is a block id that changes when
+it grows. Re-probe the corners whenever a leg stalls.
+
 ## Reading an apiary
 
 `open_container` refuses it. Use **`activate_and_read`** on the block. The window

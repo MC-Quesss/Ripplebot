@@ -50,3 +50,11 @@ onPad=true` ~1.2s later — zero snags, zero retries, first attempt every time.
 - `walk_until` now stops on 0.75 blocks of backward travel (`WRONG_WAY`), so a bad heading can't charge into a wall for the full timeout.
 - The retry's reset step (`resetToHouseSide`) used to face **south** when it meant north (yaw π, not 0). Fixed; see [[yaw-convention]].
 - `confirmed: false` for the new code until a live exit is observed.
+
+## Update 2026-10-09: the door line is z 572.4, not 572.5 (applies to entering too)
+
+- **Geometry:** the house door (type 571, facing west, hinge left) folds against the **south** edge of its block when open (z 572.81–573). The plank wall puts the north edge at 572.0. With a body ±0.3 wide, the clear band for the body's center is **z 572.30–572.51**. The old line, 572.5 ± 0.15, sat on the south edge of that band.
+- **Measured live, both edges:** an entry from 572.595 jammed and 572.493 passed (south edge); an entry from 572.283 jammed and 572.303 passed (north edge). Two exits started on the new line snagged the north wall at (-270.7, 572.24) because of the old north threshold nudge, which has now been removed.
+- **Line-up without the crouch (Dad's request):** sneak-walking is gone. Taps cover the distance, but one tap from standing always moves ~0.21, wider than the ±0.09 window, so taps alone hop across it (572.283 ↔ 572.493). The line-up taps to within one tap, then slides the rest (`exitAlignStep`; the bot's client owns its position). Since then every start has been 572.397–572.403.
+- **Results on the final code:** 17 of 19 crossings arrived on the first try, from the boardwalk landing, the wheat field center, the north field and the pads. The 2 timeouts stopped inside the house at x -271.7 and -271.4 with Muse on the inside pad (-267.6, 572.5) and walking to the bench and hopper. That points to a bot in the way, not the door.
+- `confirmed: true` for the new line-up. **Muse and Private still run the old code** and need it pulled before they benefit.

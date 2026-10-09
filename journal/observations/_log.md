@@ -11,6 +11,25 @@ Reverse-chronological. Raw observations land here first; canonical facts get pro
 
 ## Recent sessions
 
+### 2026-10-09 — Helm: hive season #8 ends at 95 nights; the larch grew (days 54956–54964)
+- Relaunched in helm at the bee cabin before dawn on day 54956. Auto-sleep at the cabin bed handled every night without help.
+- Quesss returned at 01:27Z: 95 world nights since he left (day − 54864). Roz was in standby from night 57 to 92. The server kept time while Roz was offline (~711 real minutes ≈ 35 days, which matches the day count).
+- Dad asked for the bees; `tend_bees` started the keeper from the cabin (a short walk, no boat). Rounds 1–6 were clean, with all nine queens restarted on wintry princesses and 64 drones thrown behind the cabin.
+- **Death #1 of the season:** in round 7 the SE corner larch, now grown (trunk 388), was walk-through. Roz suffocated at (-399, 68, 261) and lost her whole pack there. Fixed: 383/388/587/688 are solid now, and all four corner trees were probed. See the update in [[../procedures/apiary-tending]].
+- Standing lesson: a sapling's block id is not the tree's. Ids learned at planting time expire when the tree grows.
+- Dad recovered the dropped pack and found a poison potato in it: the cabin patch harvest never threw them out. Fixed: patch passes now throw poison potatoes behind the cabin on the drone route ([[../places/bee-cabin]]). Restarted to load it; not yet seen live.
+- Dad gave back all the food (128 baked potatoes, 15 bread) and handed Roz a **ball of fur** (unknown item, type 9809), shed by the lighthouse cats: [[../items/ball-of-fur]].
+- **Charcoal blocks** (Dad's request): new chore step crafts loose charcoal into blocks (type 9703) at the cabin table. Practice on regrown birches: first try, all 12 charcoal went to fuel the hungry south furnace, so nothing was crafted; second try, 10 + the chest's 8 = 2 blocks, verified in the chest (44). Unknown item **9762** turned up in the pack during the birch runs; not identified yet. See [[../places/bee-cabin]].
+- **Second corrupt BOP boat:** Namamom's client crashed on login (03:16Z) ticking `biomesoplenty:bop_boat` 2376060 at (-338.7, 62.5, 919.1). It's the same `Integer cannot be cast to Float` bug as the 2026-10-07 cove boat. Kill command: `/kill @e[type=biomesoplenty:bop_boat,x=-339,y=62,z=919,r=3]`. A first try found nothing because the chunk was unloaded, so the boat is presumably still there. The chunk must be loaded for the kill to work; Roz can load it safely, since mineflayer never runs boat physics.
+- **Front door fixed (Dad asked; Muse was jamming on the south side):** the door line moved to z 572.4, the old north nudge on exit was removed, and the line-up uses taps plus a slide with no crouch. Both edges of the clear band (572.30–572.51) were measured live. See [[../procedures/exit-house]].
+- **Disc names:** `RECORD_INFO` now says Tezeta and Death Cab, with aliases. See [[../items/music-records]].
+- **Wheat-ready alert** is quiet while on fire duty (Dad asked; Muse kept offering to harvest while already harvesting).
+
+### 2026-10-07 (night) — Helm: the frames that went missing, and the restart that brought them back (days 54858–54860)
+- Item frames and paintings seemed to vanish across most of the world. The server log (server clock = UTC = local + 4h; Dad's two crashes appear as his own disconnects at 22:06:19 and 23:12:15) showed no kill command, no restart, no rollback and no entity errors. The only world events in the window were the 23:30 UTC backup (zip only) and the Nether loading twice around 00:48 UTC.
+- Roz, standing at the bee cabin, received only 2 item frames from the server, the same count across every reconnect that evening. After Dad restarted the server (02:04 UTC, after about 6 days of uptime with constant "world may have leaked" warnings), the same spot showed 15. The frames were never deleted: the long-running server had stopped telling clients about them.
+- The restart seems to have shifted the clock: tick 7190 at 02:09 UTC became 12550 four minutes later.
+
 ### 2026-10-07 (evening) — Helm: potatoes to the bees, cabin potato patch, birch charcoal (days 54838–54841)
 
 - Dad's client crashed 3× on login. The cause was one corrupted BOP wooden boat (entity 17760946) at (-334, 62, 246) near the cove.
@@ -20,13 +39,13 @@ Reverse-chronological. Raw observations land here first; canonical facts get pro
   She planted Dad's new 18-tile patch by the cabin: see [[../places/bee-cabin]].
 - Dad built two furnaces in the cabin. Roz cut two birches by hand and replanted them, then bootstrapped charcoal and baked 8 potatoes.
   The procedure is in [[../places/bee-cabin]]. **New rule: only birch goes in the furnaces.**
-- Code: `furnace_put` gained `slot:"fuel"` and `metadata` (needed a restart). Uncommitted.
+- Code: `furnace_put` gained `slot:"fuel"` and `metadata` (needed a restart). Committed in `def2f99`.
 - Open: automate the cabin furnace loop (a rung in the bee food ladder). The keeper was paused for the tree work and has not been restarted.
 
 ### 2026-10-07 (evening) — Helm mode: cloud review of the bee food ladder (day 54835)
 
 - Launched in helm mode at the farm house (HP 20, food 20, deaths 0). It was night on spawn; auto-sleep put her in the primary bed, and with 1 of 2 asleep the night skipped.
-- A cloud agent reviewed the uncommitted bee changes (food ladder, drone dump, hive-window resync). Each finding was checked against the code, then fixed:
+- A cloud agent reviewed the bee changes (food ladder, drone dump, hive-window resync; then uncommitted, now in `def2f99`). Each finding was checked against the code, then fixed:
   - **Kitchen restock had no task lock.** `runBeeVoyageHome` ends its own `voyage` task, so food safety and idle wander could run during the walk to the kitchen chest. The step now holds a `bee-food` task.
   - **A rejected hive click skipped the inventory resync.** The resync now also runs on the error path, and only for real hive windows (9 or 12 tile slots).
   - **Output drone stacks that would overflow the pack stack are left in place.** Hive outputs probably refuse a put-back, so the overflow would have stayed on the cursor.
@@ -84,7 +103,7 @@ Reverse-chronological. Raw observations land here first; canonical facts get pro
 - Launched in helm at the [[../places/bee-cabin|bee cabin]] (-405, 66, 239): HP 20, food 20, 0 deaths, tick 19330. Roz was put straight into the cabin bed on login. No players online.
 - `keep_bees` started at once. Round 1 seemed to walk her out at night, but **the night had already skipped**: the `time` read at 19330 came just before the skip. Roz was the only sleeper, so 1/1 = 100%. By the end of the round it was day 54555, tick 1156. Lesson: re-read `time` before calling something a night walk.
 - Round 1: **all nine hives queened** (type 4970), including the south and west bee houses that went empty on 2026-10-04. Every drone slot was empty and no outputs held a wintry drone. This fits the known rhythm (a new queen uses up the drones), so nothing needs to be done.
-- First live run with the drone-as-trash `tossTrash()` (uncommitted bot.js change): no `[trash]` line, so there were no drones on hand to toss.
+- First live run with the drone-as-trash `tossTrash()` (bot.js change, since committed): no `[trash]` line, so there were no drones on hand to toss.
 - **Anomaly:** the inventory lists a **wintry queen (4970) in Roz's hand** (slot 36, hotbar 0) right after round 1. This is probably the known phantom-item effect after hive windows. Not acted on; re-read after a restart.
 - The phantom queen explained: the hand slots match the **last bee house window** (bee house slot 36 = queen, 38 = first output). After round 3 the "honeycomb" count in slot 38 rose to 5 along with the middle bee house. It is a display echo, not real items.
 - Round 2 (15:09Z): all queens alive. Bedtime alarm at tick 12576. Auto-sleep walked her from the cross into the cabin bed by 15:14:00Z without help. The night skipped (she was the only sleeper).
@@ -204,6 +223,8 @@ Reverse-chronological. Raw observations land here first; canonical facts get pro
 
 Checked against `bot.js` on 2026-09-29; each is still open unless marked.
 
+- **Birch drops left behind (watch, 2026-10-08).** Over Season 8's first 26 nights the cabin chores missed 1 log on four passes and **all 5** on one pass (07:37Z: Roz was last seen at about (-427.8, 66, 259.7), roughly 7 blocks south of the (-425, 267) birch, mid-sweep). Her inventory had room. **Cause found (08:02Z, after a second total miss):** snow. minecraft-data gives `snow_layer` `boundingBox: 'block'`, so mineflayer-pathfinder treated every snowed tile (one layer, no real collision) as a full solid block one higher than the ground. From the low sand south of the trunk, the step up to the trunk looked like two blocks, so `sweepBirchDrops` could not path to the drops. **Fix:** `mvts.carpets.add(snow_layer)` in the Movements setup. Verified live: after the restart she pathed from (-424.5, 64, 270.5) to the trunk and picked up the stranded logs. Watch whether partial misses stop. Snow also sits on the bee cabin doorstep.
+- **Server memory leak (watch).** Before the 2026-10-07 restart the server log repeated "world may have leaked" for 8+ world instances every 10 s (about 6 days of uptime), and entities stopped reaching clients. If frames, paintings or mobs go missing again, a server restart is the first thing to try.
 - **TODO (Dad, 2026-10-07): food made at the bee cabin.** Plant a small potato crop by the [[../places/bee-cabin|bee cabin]] and give Roz a furnace there, so she can bake her own potatoes instead of sailing home when the cabin chest runs out. Once both exist, the keeper's food ladder (pack → cabin chest → food run home and back, `beeRestockFood`/`tryBeeFoodRun`) gets a new rung before the food run: harvest the cabin crop and bake it in the cabin furnace.
 - **Bee keeper food ladder: written 2026-10-07, not yet run live.** When the pack drops below 8 food, she restocks 32 from the cabin chest (-403, 66, 238). If the chest and the pack are both empty, she sails home, takes 64 from the kitchen chest and sails back, and the keeper restarts. Known weak spots on that run:
   - A drifted boat out of `mountNearestBoat`'s 4-block reach stops the trip home.
@@ -228,6 +249,7 @@ Promoted from the compacted sessions. Each one cost a bug to learn.
 
 ### Method
 
+- **When things vanish world-wide, ask whether the server still sends them.** On 2026-10-07 a bot standing nearby got 2 item frames before a server restart and 15 after. Before assuming entities were deleted, check what a bot can see (`nearby_entities`); a long-uptime server that leaks memory can stop tracking entities while the world file still holds them.
 - **A signal that reads the same for healthy and broken is camouflage, not monitoring.** The diary logged "LLM unavailable or passed" for 15 days while every Claude voice call returned HTTP 400 (`temperature` deprecated); 85 errors, 0 successes. Log the *cause*. `callVoice` logs only on failure, so the diary-write lines are the positive evidence.
 - **The world runs on ticks; only the bot runs on the wall clock.** World processes (smelting, hopper transfer, crop growth, bee aging, the day cycle) are fixed in game ticks, and they only match minutes at a steady 20 TPS. The apiary queen's "16.4 min" from 2026-10-05 measured ≤15.8 min on 2026-10-06 at 19.97 TPS. Time world processes with `time.age` (ticks) and say minutes only for the bot's own timers (polls, rounds, timeouts) or as loose narration ("a ~10-minute day").
 - **Check the instrument before doubting the reading.** A `tail -8` cut a harvest out of view and made a true diary claim look invented.

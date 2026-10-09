@@ -440,7 +440,16 @@ function pickAvoidingRecentPhrase (items, toPhrase = x => x) {
 // 1306 = the bee cabin's window glass, 1085 = the tall column just behind it at
 // (-403, 66–69, 233) (2026-10-05: read as walk-through, so the pathfinder could
 // have routed through the windows; the door is the only way in or out).
-const SOLID_MODDED_TYPES = new Set([3995, 1458, 1059, 1069, 1079, 622, 623, 1095, 1306, 1085])
+// 383 = two-tall block at the bee cross SE corner (-399, 68–69, 261), where
+// Dad planted a larch 2026-10-08: read as walk-through, so the pathfinder
+// routed the south→east bee-house leg through it and she stuck there every
+// round. Also under the rooftop-garden farmland, so solid there too.
+// 388 = larch log, 587 = larch leaves: by 2026-10-09 that larch had grown into
+// a tree (trunk at (-399, 68–70, 261), canopy at y 70). The new ids read as
+// walk-through, keeper round 7 walked Roz into the trunk, and she suffocated.
+// 688 = the NE corner trunk at (-399, 68–71, 251), whose 587 leaves reach the
+// ground. The SW trunk reads 383 and the NW trunk 388 (all four probed 2026-10-09).
+const SOLID_MODDED_TYPES = new Set([3995, 1458, 1059, 1069, 1079, 622, 623, 1095, 1306, 1085, 383, 388, 587, 688])
 // Modded slabs — walk on them like oak slabs (half-block collision; metadata
 // bit 8 = top half, as in vanilla). 1744 = modded-tree plank slabs, the
 // Bleu de Paris gangplank (Dad, 2026-09-28).
@@ -480,6 +489,12 @@ bot.once('spawn', () => {
   // Make sure spruce door is in the openable set
   const doorIds = Object.values(mcData.blocksByName).filter(b => /door/.test(b.name) && !/iron/.test(b.name)).map(b => b.id)
   doorIds.forEach(id => mvts.openable.add(id))
+  // Snowfall leaves 1-layer snow (no collision) over the bee cove. Its
+  // minecraft-data boundingBox is 'block', so the pathfinder read every
+  // snowed tile as a full block one higher than the ground: the birch drop
+  // sweep could not step up to the trunk and lost whole trees' logs
+  // (2026-10-08). Treat it like carpet — safe to stand in.
+  if (mcData.blocksByName.snow_layer) mvts.carpets.add(mcData.blocksByName.snow_layer.id)
 
   // Modded blocks report empty names on this Forge 1.12.2 server.  Most are
   // decorative (lights, trim, charging pads) with no real server-side collision.
@@ -554,7 +569,7 @@ bot.once('spawn', () => {
     logEvent('auto-eat', 'enabled (start at food<=14)')
   }
   if (NICKNAME) {
-    bot.chat(`/nick ${NICKNAME}`)
+    sendCommand(`/nick ${NICKNAME}`)
     logEvent('nick', `set nickname to ${NICKNAME}`)
   }
   if (PERSONA === 'private') {
@@ -1007,6 +1022,10 @@ async function iglooSleep () {
 // See journal/places/bee-cabin.md.
 const BEE_CABIN_OUTSIDE_DOOR = { x: -402.5, y: 66, z: 244.7 } // "outside the front door"
 const BEE_CABIN_INSIDE_DOOR = { x: -402.7, y: 66, z: 241.0 }  // "inside the front door"
+// Block targets for pathTo around the door (pathTo wants whole blocks):
+const BEE_CABIN_DOORSTEP = { x: -403, y: 66, z: 245 } // outside, on the step south of the lip
+const BEE_CABIN_DOOR_IN = { x: -403, y: 66, z: 240 }  // inside, by the door; chest is two blocks north
+const BEE_CABIN_BEDSIDE = { x: -404, y: 66, z: 239 }  // beside the two beds
 const BEE_CABIN_BEDS = [ // foot blocks; heads at z 237
   { x: -405, y: 66, z: 238 },
   { x: -406, y: 66, z: 238 },
@@ -1022,17 +1041,29 @@ function nearBeeCabinDoor () {
 // Entry, verified 2026-09-30: due north from the outside point, hop the 1-block
 // stone lip at z 242, on to the wool. Pathfinder stalls on the modded steps here.
 async function beeCabinEnter () {
-  // Line up on the door's centre line first: from x -402.9 her shoulder caught
+  // Already up against the lip (z < ~244.2): a standing start there cannot
+  // climb it. Back out south for a run-up first (wedged at z 243.3, 2026-10-08).
+  if ((bot.entity?.position?.z ?? 99999) < BEE_CABIN_OUTSIDE_DOOR.z - 0.5) {
+    await bot.look(Math.PI, 0, true)
+    await walkUntilAxis({ axis: 'z', target: BEE_CABIN_OUTSIDE_DOOR.z + 0.8, direction: 'gte', maxMs: 2000, maintainYaw: Math.PI }).catch(() => false)
+  }
+  // Line up on the door's centre line: from x -402.9 her shoulder caught
   // the west jamb on the lip and the entry stalled (Dad spotted it, 2026-10-04).
-  const px = bot.entity?.position?.x
-  if (px != null && Math.abs(px - BEE_CABIN_OUTSIDE_DOOR.x) > 0.2) {
+  // Checked twice — before the walk to the door and again at it, because the
+  // first leg can drift her ~0.25 sideways (x -402.56 → -402.81, 2026-10-08).
+  const alignOnDoor = async () => {
+    const px = bot.entity?.position?.x
+    if (px == null || Math.abs(px - BEE_CABIN_OUTSIDE_DOOR.x) <= 0.2) return
     const east = px < BEE_CABIN_OUTSIDE_DOOR.x
     const yaw = east ? -Math.PI / 2 : Math.PI / 2
     await bot.look(yaw, 0, true)
     await walkUntilAxis({ axis: 'x', target: BEE_CABIN_OUTSIDE_DOOR.x + (east ? -0.1 : 0.1), direction: east ? 'gte' : 'lte', maxMs: 1500, maintainYaw: yaw }).catch(() => false)
   }
+  await alignOnDoor()
   await bot.look(0, 0, true)
   await walkUntilAxis({ axis: 'z', target: BEE_CABIN_OUTSIDE_DOOR.z, direction: 'lte', maxMs: 2500, maintainYaw: 0 })
+  await alignOnDoor()
+  await bot.look(0, 0, true)
   // Hold jump through the lip: a 300 ms hop before walking stalled at z 243.3
   // on the first live night (2026-09-30); the retry 5 s later made it.
   bot.setControlState('jump', true)
@@ -1045,7 +1076,7 @@ async function beeCabinEnter () {
 // Exit = the entry reversed (verified live 2026-10-01): from inside the door,
 // face due south, down the lip, out to the outside point.
 async function beeCabinExit () {
-  await pathTo({ x: -403, y: 66, z: 240 }, 0, 6000).catch(() => false)
+  await pathTo(BEE_CABIN_DOOR_IN, 0, 6000).catch(() => false)
   await bot.look(Math.PI, 0, true)
   await walkUntilAxis({ axis: 'z', target: BEE_CABIN_OUTSIDE_DOOR.z, direction: 'gte', maxMs: 4000, maintainYaw: Math.PI })
 }
@@ -1057,7 +1088,7 @@ async function beeCabinSleep () {
     // Keeping the bees, she is out at the cross at dusk: walk to the front
     // door herself (Dad, 2026-10-01: the keeper must not just stop at night).
     if (!nearBeeCabinDoor() && beeState.active && nearBeeCross()) {
-      await pathToSure({ x: -403, y: 66, z: 245 }, 0, 1.5, 3, 10000).catch(() => false)
+      await pathToSure(BEE_CABIN_DOORSTEP, 0, 1.5, 3, 10000).catch(() => false)
     }
     if (!nearBeeCabinDoor()) {
       logEvent('bee-cabin', 'not inside and not at the front door — operator decides')
@@ -1066,7 +1097,7 @@ async function beeCabinSleep () {
     await beeCabinEnter()
     if (!insideBeeCabin()) { logEvent('bee-cabin', `entry failed at ${posStr(bot.entity.position)}`); return }
   }
-  await pathTo({ x: -404, y: 66, z: 239 }, 1, 6000).catch(() => false)
+  await pathTo(BEE_CABIN_BEDSIDE, 1, 6000).catch(() => false)
   let found = false
   for (const b of BEE_CABIN_BEDS) {
     const bed = bot.blockAt(new Vec3(b.x, b.y, b.z))
@@ -1119,7 +1150,7 @@ function tryMorningExclamation () {
   wasSleeping = false
   const t = bot.time || {}
   if (t.isDay && (t.timeOfDay ?? 0) < 11500 && !activeTask.name && !sustainState.active) {
-    bot.chat(pickLine(withPersonaSlot(MORNING_EXCLAMATION_LINES, 'morningExclamation')))
+    say(pickLine(withPersonaSlot(MORNING_EXCLAMATION_LINES, 'morningExclamation')))
     logEvent('morning', 'morning exclamation')
   }
 }
@@ -1141,14 +1172,14 @@ function tryStoryRequest () {
   storyRequestBusy = true
   ;(async () => {
     try {
-      bot.chat("Let's head inside, everyone — the sun is going down.")
+      say("Let's head inside, everyone — the sun is going down.")
       logEvent('story-time', 'calling everyone inside for story night')
       if (!insideHouse()) {
         if (inPen()) await runGoOutOfPen()
         try { await runGoInside() } catch (_) {}
       }
       await sleep(60000)
-      bot.chat('Roz, would you tell us a story tonight? Please?')
+      say('Roz, would you tell us a story tonight? Please?')
       logEvent('story-time', 'requested a story from Roz')
     } catch (e) {
       logEvent('story-time', `story request failed: ${e.message}`)
@@ -1227,7 +1258,7 @@ function tryAutoGreet () {
     lastGreetAt = now
     facePlayer(name).then(() => {
       sendEmote('salute')
-      bot.chat(getGreetText())
+      say(getGreetText())
     })
     logEvent('greet', `${name} (d=${d.toFixed(1)})`)
     // Also mark everyone else currently in range as greeted, since the
@@ -1253,7 +1284,7 @@ bot.on('spawn', () => {
     logEvent('spawn', 'on charge pad — nudging to house center')
     setTimeout(() => {
       if (!bot.entity) return
-      pathTo({ x: -268, y: 65, z: 572 }, 0, 8000).catch(e => {
+      pathTo(HOUSE_CENTER, 0, 8000).catch(e => {
         logEvent('spawn', `charge-pad nudge failed: ${e.message}`)
       })
     }, 2000)
@@ -1936,7 +1967,7 @@ function concedePunchline () {
   if (pendingJokeTimer) { clearTimeout(pendingJokeTimer); pendingJokeTimer = null }
   if (!joke) return
   sendEmote('clap')
-  bot.chat(pickAvoidingRecentPhrase(JOKE_CONCEDE_LINES))
+  say(pickAvoidingRecentPhrase(JOKE_CONCEDE_LINES))
 }
 
 function sendEmote (name) {
@@ -1951,11 +1982,11 @@ function deliverPunchline () {
   if (pendingJokeTimer) { clearTimeout(pendingJokeTimer); pendingJokeTimer = null }
   if (!joke) return
   if (joke.mid) {
-    bot.chat(joke.mid)
-    setTimeout(() => { sendEmote('clap'); bot.chat(joke.punchline) }, 2500)
+    say(joke.mid)
+    setTimeout(() => { sendEmote('clap'); say(joke.punchline) }, 2500)
   } else {
     sendEmote('clap')
-    bot.chat(joke.punchline)
+    say(joke.punchline)
   }
 }
 
@@ -2012,6 +2043,28 @@ function taskBusy () {
   return activeTask.name !== null && !activeTask.sleeping
 }
 
+// One entry point for long-running work. Registers the task and captures the
+// abort generation and death count at its start. end() clears *this* task only,
+// so a task that was stopped and replaced can't clear its successor.
+// busyLine: chat line (or fn of the current task name) said when refused.
+const BUSY_LINE = (current) => `Busy with ${current} — one thing at a time.`
+function beginTask (name, detail = null, { busyLine = null } = {}) {
+  const gate = startTask(name, detail)
+  if (!gate.allowed) {
+    if (busyLine) say(typeof busyLine === 'function' ? busyLine(gate.current) : busyLine)
+    return {
+      allowed: false, current: gate.current, detail: gate.detail,
+      busyReply: { ok: false, error: 'busy', task: gate.current, detail: gate.detail },
+    }
+  }
+  const task = {
+    allowed: true, name, myGen: abortGen, startDeaths: deathCount,
+    died: () => deathCount > task.startDeaths,
+    end: () => endTask(name),
+  }
+  return task
+}
+
 function taskStatus () {
   if (!activeTask.name) return { busy: false }
   return {
@@ -2060,7 +2113,7 @@ async function yieldToBedtime (myGen) {
     while (storyTimeActive) await sleep(2000)
   }
   activeTask.sleeping = true
-  if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(BEDTIME_YIELD_LINES, 'bedtimeYield')))
+  if (banalPlatitudesOk()) say(pickLine(withPersonaSlot(BEDTIME_YIELD_LINES, 'bedtimeYield')))
   logEvent('task', `${activeTask.name} yielding to bedtime`)
 
   if (!insideHouse()) {
@@ -2096,7 +2149,7 @@ async function yieldToBedtime (myGen) {
   if (myGen !== undefined) checkAbort(myGen)
 
   activeTask.sleeping = false
-  if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(MORNING_RESUME_LINES, 'morningResume')))
+  if (banalPlatitudesOk()) say(pickLine(withPersonaSlot(MORNING_RESUME_LINES, 'morningResume')))
   logEvent('task', `${activeTask.name} resuming after sleep (inside=${insideHouse()})`)
 
   if (insideHouse()) {
@@ -2166,6 +2219,42 @@ async function tossTrash () {
     } catch (e) {
       logEvent('trash', `toss fail ${it.name}: ${e.message}`)
     }
+  }
+}
+
+// ── Containers: one way to open, use and close ─────────────────────────────
+// Every chest, furnace and hopper visit can go through withContainer(): it
+// checks the block is really there, opens the right kind of window, and always
+// closes it, even when a click throws halfway through. A window left open
+// by an exception used to confuse the next open (stale slots, wrong window id).
+// "Server rejected transaction" is routine on this modded server and the item
+// usually moves anyway; benignClick() logs it and carries on.
+const BENIGN_REJECT = /rejected transaction/i
+function blockAtPos (p) { return bot.blockAt(new Vec3(p.x, p.y, p.z)) }
+// target: a Block, or {x,y,z}. expect: optional regex the block name must match.
+async function openContainerAt (target, { furnace = false, expect = null, label = null } = {}) {
+  const b = target && typeof target.getProperties === 'function' ? target : blockAtPos(target)
+  const where = label || (target && target.position ? posStr(target.position) : posStr(target))
+  if (!b) throw new Error(`container not loaded at ${where}`)
+  if (expect && !expect.test(b.name)) throw new Error(`no ${expect.source} at ${where} (found "${b.name}")`)
+  return furnace ? bot.openFurnace(b) : bot.openContainer(b)
+}
+async function withContainer (target, fn, opts = {}) {
+  const win = await openContainerAt(target, opts)
+  try { return await fn(win) } finally { try { win.close() } catch (_) {} }
+}
+// The container part of a window (everything before the 36 player slots).
+function containerSlots (win) { return win.slots.slice(0, win.slots.length - 36) }
+// Open, copy the container slots, close. For "what is in there?" checks.
+async function peekContainer (target, opts = {}) {
+  return withContainer(target, async (win) => containerSlots(win), opts)
+}
+async function benignClick (tag, label, fn) {
+  try { await fn(); return true } catch (e) {
+    if (!BENIGN_REJECT.test(e.message)) throw e
+    logEvent(tag, `${label}: server rejected the click — carrying on`)
+    await sleep(400)
+    return false
   }
 }
 
@@ -2776,9 +2865,7 @@ async function runIdleWanderToFurnace () {
 
   logEvent('idle-wander', 'checking furnace')
   await pathTo(HARVEST_WAYPOINTS.furnace, 2, 8000)
-  const furnaceBlock = bot.blockAt(new Vec3(
-    HARVEST_WAYPOINTS.furnace.x, HARVEST_WAYPOINTS.furnace.y, HARVEST_WAYPOINTS.furnace.z,
-  ))
+  const furnaceBlock = blockAtPos(HARVEST_WAYPOINTS.furnace)
   if (!furnaceBlock) {
     logEvent('idle-wander', 'furnace block not loaded')
     return
@@ -2815,13 +2902,11 @@ async function runIdleWanderToFurnace () {
     // Jam = plantballs sitting with no potatoes; the cure is clearJammedHopper's
     // one-potato-at-a-time + 20s waits (it takes the lock itself).
     await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-    const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
+    const hopperBlock = blockAtPos(HOPPER)
     if (hopperBlock) {
-      const win = await bot.openContainer(hopperBlock)
-      const slots = win.slots.slice(0, win.slots.length - 36)
+      const slots = await peekContainer(hopperBlock)
       const ballCount = slots.reduce((n, s) => n + (s && s.name === 'unknown' ? s.count : 0), 0)
       const hasPotato = slots.some(s => s && s.name === 'potato')
-      win.close()
       if (ballCount > 0 && !hasPotato) {
         logEvent('idle-wander', `hopper jammed (balls=${ballCount}, no potato) — running un-jam routine`)
         await clearJammedHopper()
@@ -3412,6 +3497,20 @@ const BEE_DUMP = { laneX: -399.5, frontZ: 245.5, backZ: 232.5, dumpX: -403.5 }
 async function dumpDronesBehindCabin () {
   const full = bot.inventory.slots[BEE_DRONE_PACK_SLOT + 9] // hive-window 26 = player-window 35
   if (!full || full.type !== BEE_DRONE_TYPE || full.count < 64) return { ok: true, skipped: 'drone stack not full' }
+  return throwBehindCabin('drones', () => {
+    const it = bot.inventory.slots[BEE_DRONE_PACK_SLOT + 9]
+    if (!it || it.type !== BEE_DRONE_TYPE) throw new Error('drone stack gone from its slot')
+    return [it]
+  })
+}
+// Poison potatoes from the cabin patch go the same way as the drones (Dad,
+// 2026-10-09: the patch harvest had been keeping them).
+async function dumpTrashBehindCabin () {
+  if (!bot.inventory.items().some(isTrash)) return { ok: true, skipped: 'no trash' }
+  return throwBehindCabin('trash', () => bot.inventory.items().filter(isTrash))
+}
+// Walk the east lane to behind the cabin, throw what pick() returns, walk back.
+async function throwBehindCabin (what, pick) {
   const startDeaths = deathCount
   const leg = async (axis, target, direction, yaw, label) => {
     await bot.look(yaw, 0, true)
@@ -3427,17 +3526,15 @@ async function dumpDronesBehindCabin () {
     await leg('x', BEE_DUMP.dumpX, 'lte', Math.PI / 2, 'west behind the cabin')
     await bot.look(0, 0, true) // throw north, away from the wall and the way back
     await sleep(250)
-    const it = bot.inventory.slots[BEE_DRONE_PACK_SLOT + 9]
-    if (!it || it.type !== BEE_DRONE_TYPE) throw new Error('drone stack gone from its slot')
-    const n = it.count
-    await bot.tossStack(it)
-    logEvent('bees', `threw ${n} drones behind the bee cabin`)
+    let n = 0
+    for (const it of pick()) { await bot.tossStack(it); n += it.count }
+    logEvent('bees', `threw ${n} ${what} behind the bee cabin`)
     // Walk off at once, before the pickup delay runs out.
     await leg('x', BEE_DUMP.laneX, 'gte', -Math.PI / 2, 'back east behind the cabin')
     await leg('z', BEE_DUMP.frontZ, 'gte', Math.PI, 'south down the east lane')
     return { ok: true, dumped: n }
   } catch (e) {
-    logEvent('bees', `drone dump stopped: ${e.message}`)
+    logEvent('bees', `${what} dump stopped: ${e.message}`)
     return { ok: false, error: e.message }
   }
 }
@@ -3589,13 +3686,13 @@ async function eatToFull () {
 }
 async function restockFromBeeCabinChest () {
   if (!insideBeeCabin()) {
-    if (!nearBeeCabinDoor()) await pathToSure({ x: -403, y: 66, z: 245 }, 0, 1.5, 3, 10000).catch(() => false)
+    if (!nearBeeCabinDoor()) await pathToSure(BEE_CABIN_DOORSTEP, 0, 1.5, 3, 10000).catch(() => false)
     if (!nearBeeCabinDoor()) return { ok: false, pulled: 0, error: `could not reach the cabin door (${posStr(bot.entity.position)})` }
     await beeCabinEnter()
     if (!insideBeeCabin()) return { ok: false, pulled: 0, error: `could not get into the cabin (${posStr(bot.entity.position)})` }
   }
   // Inside the door; the chest is two blocks north. The next round walks her out.
-  await pathTo({ x: -403, y: 66, z: 240 }, 0, 6000).catch(() => false)
+  await pathTo(BEE_CABIN_DOOR_IN, 0, 6000).catch(() => false)
   const b = bot.blockAt(new Vec3(BEE_CABIN_FOOD_CHEST.x, BEE_CABIN_FOOD_CHEST.y, BEE_CABIN_FOOD_CHEST.z))
   if (!b || !/chest/.test(b.name)) return { ok: false, pulled: 0, error: `no chest at ${posStr(BEE_CABIN_FOOD_CHEST)} (found "${b?.name}")` }
   const win = await bot.openContainer(b)
@@ -3640,7 +3737,7 @@ function scheduleBeeFoodRun (why) {
   beeFoodRun.errors = 0
   beeFoodRun.since = Date.now()
   logEvent('bees', `food run: ${why} — sailing home for food, then back to the bees`)
-  try { bot.chat('My pack and the cabin chest are both empty. I will sail home for food and come back to the bees.') } catch (_) {}
+  try { say('My pack and the cabin chest are both empty. I will sail home for food and come back to the bees.') } catch (_) {}
 }
 async function tryBeeFoodRun () {
   if (beeFoodRun.phase === 'idle' || beeFoodRun.busy) return
@@ -3656,22 +3753,22 @@ async function tryBeeFoodRun () {
     if (beeFoodRun.phase === 'restock') {
       // The voyage ends its own task on landing; hold one here so food safety
       // and idle wander don't share the walk to the kitchen chest.
-      const gate = startTask('bee-food', 'kitchen restock')
-      if (!gate.allowed) return
+      const task = beginTask('bee-food', 'kitchen restock')
+      if (!task.allowed) return
       try {
         const win = await openChest()
         let r
         try { r = await withdrawFoodFromWindow(win, BEE_HOME_FOOD_TAKE) } finally { bot.closeWindow(win) }
         if (!r.pulled) {
           logEvent('bees', 'food run: no food in the kitchen chest either — staying home')
-          try { bot.chat('The kitchen chest has no food either. I will stay at the farm.') } catch (_) {}
+          try { say('The kitchen chest has no food either. I will stay at the farm.') } catch (_) {}
           beeFoodRun.phase = 'idle'
           return
         }
         logEvent('bees', `food run: took ${r.pulled} ${r.names.join('/')} from the kitchen chest`)
         await eatToFull()
         beeFoodRun.phase = 'return'
-      } finally { endTask('bee-food') }
+      } finally { task.end() }
     }
     if (beeFoodRun.phase === 'return') {
       if (beeVoyageTooLate('farm')) return // sails back at first light
@@ -3718,6 +3815,78 @@ const BEE_PACK_BAKED_MAX = 128        // more than this goes into Roz's chest
 const BEE_CHORES_OUTDOOR_LATEST = 11000 // birch + patch take ~2 min; done well before dusk
 const BEE_FURNACE_VISIT_MS = 10 * 60 * 1000
 const BEE_CHEST_BAKED_ENOUGH = 64      // with this many baked in Roz's chest, the patch is left to grow (Dad)
+// Balls of fur (unknown item 9809): the lighthouse cats shed them and Roz picks
+// them up while keeping bees. A full stack goes into her chest (Dad, 2026-10-09).
+// Unknown items get stackSize 1 from prismarine-item, so "a stack" is counted
+// as 64 across the pack instead.
+const BALL_OF_FUR_TYPE = 9809
+function furCount () {
+  return bot.inventory.items().filter(i => i.type === BALL_OF_FUR_TYPE).reduce((n, i) => n + i.count, 0)
+}
+function fullFurStack () { return furCount() >= 64 }
+// Shift-click every pack stack of a modded item type into the open container.
+// win.deposit can't move these: mineflayer asserts the type is in its registry.
+async function quickMoveType (win, type) {
+  let moved = 0
+  for (let s = win.inventoryStart; s < win.inventoryEnd; s++) {
+    const it = win.slots[s]
+    if (!it || it.type !== type) continue
+    await bot.clickWindow(s, 0, 1)
+    moved += it.count
+    await sleep(150)
+  }
+  return moved
+}
+
+// Charcoal blocks (Dad, 2026-10-09): one charcoal on each of the nine grid
+// spaces makes one block, for storage. The block is modded (an unknown item),
+// so its type is learned from the table's output the first time she crafts.
+const BEE_CRAFTING_TABLE = { x: -404, y: 66, z: 238 }
+let charcoalBlockType = null
+async function craftCharcoalBlocks () {
+  const blocks = Math.floor(countItem('coal', CHARCOAL_META) / 9)
+  if (blocks <= 0) return 0
+  const table = blockAtPos(BEE_CRAFTING_TABLE)
+  if (!table || table.name !== 'crafting_table') throw new Error(`no crafting table at ${posStr(BEE_CRAFTING_TABLE)}`)
+  const win = await openBench(table)
+  const layout = benchLayout(win)
+  const charcoalSlot = () => win.slots.find((it, i) => it && i >= layout.invStart && it.name === 'coal' && it.metadata === CHARCOAL_META)
+  let made = 0
+  try {
+    await sleep(250)
+    if (!layout.vanilla) throw new Error(`cabin table opened a ${win.slots.length}-slot window, not a vanilla table`)
+    await benchClearGrid(win, layout)
+    for (let b = 0; b < blocks; b++) {
+      for (let s = layout.gridFirst; s <= layout.gridLast; s++) {
+        if (!win.selectedItem) {
+          const src = charcoalSlot()
+          if (!src) throw new Error('ran out of charcoal mid-grid')
+          await bot.clickWindow(src.slot, 0, 0) // pick up the stack
+          await sleep(120)
+        }
+        await bot.clickWindow(s, 1, 0) // right-click: one charcoal on this space
+        await sleep(120)
+      }
+      await sleep(250)
+      const out = win.slots[layout.output]
+      if (!out) throw new Error('nine charcoal gave no output')
+      if (out.name === 'coal') throw new Error('output is still charcoal')
+      charcoalBlockType = out.type
+      await bot.clickWindow(layout.output, 0, 1) // shift-click the block into the pack
+      await sleep(200)
+      made++
+    }
+  } finally {
+    if (win.selectedItem) {
+      const back = charcoalSlot()
+      if (back) { await bot.clickWindow(back.slot, 0, 0).catch(() => {}); await sleep(120) } else await benchSafeCursorDump(win, layout)
+    }
+    await benchClearGrid(win, layout).catch(() => {})
+    win.close()
+  }
+  logEvent('bee-chores', `crafted ${made} charcoal block${made === 1 ? '' : 's'} (type ${charcoalBlockType})`)
+  return made
+}
 const beeChores = { busy: false, chestBaked: null, lastFurnaceAt: 0, birchHarvests: 0, logsCut: 0, patchHarvests: 0, lastNote: null, lastError: null }
 
 function countItem (name, meta = null) {
@@ -3876,6 +4045,8 @@ async function potatoPatchChores () {
     for (const p of patchTiles()) await pathTo(p, 0, 4000) // drops can land a block away
     beeChores.patchHarvests++
   }
+  const trash = bot.inventory.items().filter(isTrash).reduce((n, i) => n + i.count, 0)
+  if (trash && !(await dumpTrashBehindCabin()).ok) logEvent('bee-chores', `kept ${trash} poison potatoes: dump failed`)
   // Fill any bare tile from the pack (right-click replants, so these are rare).
   let sown = 0
   for (const p of patchTiles()) {
@@ -3896,7 +4067,7 @@ async function potatoPatchChores () {
 
 async function ensureInsideBeeCabin () {
   if (insideBeeCabin()) return true
-  if (!nearBeeCabinDoor()) await pathToSure({ x: -403, y: 66, z: 245 }, 0, 1.5, 3, 10000).catch(() => false)
+  if (!nearBeeCabinDoor()) await pathToSure(BEE_CABIN_DOORSTEP, 0, 1.5, 3, 10000).catch(() => false)
   if (!nearBeeCabinDoor()) return false
   await beeCabinEnter()
   return insideBeeCabin()
@@ -3904,25 +4075,12 @@ async function ensureInsideBeeCabin () {
 // "Server rejected transaction" is benign here as at the hopper: the item
 // usually moves anyway (live 2026-10-07 the chores stopped on one with the
 // potatoes already in). Log it, let the pack catch up, carry on.
-async function chestMove (label, fn) {
-  try { await fn(); return true } catch (e) {
-    if (!/rejected transaction/i.test(e.message)) throw e
-    logEvent('bee-chores', `${label}: server rejected the click — carrying on`)
-    await sleep(400)
-    return false
-  }
+function chestMove (label, fn) { return benignClick('bee-chores', label, fn) }
+function withFurnace (pos, fn) {
+  return withContainer(pos, fn, { furnace: true, expect: /furnace/ })
 }
-async function withFurnace (pos, fn) {
-  const b = bot.blockAt(new Vec3(pos.x, pos.y, pos.z))
-  if (!b || !/furnace/.test(b.name)) throw new Error(`no furnace at ${posStr(pos)} (found "${b?.name}")`)
-  const f = await bot.openFurnace(b)
-  try { return await fn(f) } finally { try { f.close() } catch (_) {} }
-}
-async function withCabinChest (fn) {
-  const b = bot.blockAt(new Vec3(BEE_CABIN_FOOD_CHEST.x, BEE_CABIN_FOOD_CHEST.y, BEE_CABIN_FOOD_CHEST.z))
-  if (!b || !/chest/.test(b.name)) throw new Error(`no chest at ${posStr(BEE_CABIN_FOOD_CHEST)}`)
-  const win = await bot.openContainer(b)
-  try { return await fn(win) } finally { bot.closeWindow(win) }
+function withCabinChest (fn) {
+  return withContainer(BEE_CABIN_FOOD_CHEST, fn, { expect: /chest/ })
 }
 function chestCount (win, name, meta) {
   const size = win.slots.length - 36
@@ -3986,6 +4144,23 @@ async function furnaceChores () {
   })
   // Roz's chest: overflow charcoal and baked potatoes, the sapling stock.
   await sleep(400) // let the pack catch up with the furnace moves
+  // Overflow charcoal is stored as blocks: take the chest's loose charcoal,
+  // craft every nine into a block, and only the remainder goes back loose.
+  if (countItem('coal', CHARCOAL_META) > 0) {
+    await withCabinChest(async win => {
+      const loose = chestCount(win, 'coal', CHARCOAL_META)
+      if (loose > 0) await chestMove('withdraw', () => win.withdraw(packItem('coal', CHARCOAL_META).type, CHARCOAL_META, loose))
+    })
+    await sleep(400)
+    try {
+      const made = await craftCharcoalBlocks()
+      if (made) notes.push(`${made} charcoal block${made === 1 ? '' : 's'} crafted`)
+    } catch (e) {
+      logEvent('bee-chores', `charcoal blocks: ${e.message}`)
+      notes.push(`charcoal blocks failed: ${e.message}`)
+    }
+    await sleep(400)
+  }
   const surplusBaked = countItem('baked_potato') - BEE_PACK_BAKED_MAX
   const charcoalLeft = countItem('coal', CHARCOAL_META)
   const saplings = countItem('sapling', BIRCH_META)
@@ -3994,6 +4169,16 @@ async function furnaceChores () {
     if (charcoalLeft > 0) { await chestMove('deposit', () => win.deposit(packItem('coal', CHARCOAL_META).type, CHARCOAL_META, charcoalLeft)); notes.push(`${charcoalLeft} charcoal to the chest`) }
     if (surplusBaked > 0) { await chestMove('deposit', () => win.deposit(packItem('baked_potato').type, 0, surplusBaked)); notes.push(`${surplusBaked} baked to the chest`) }
     if (saplings >= 64) { await chestMove('deposit', () => win.deposit(packItem('sapling', BIRCH_META).type, BIRCH_META, 32)); notes.push('32 saplings to the chest') }
+    if (charcoalBlockType != null) {
+      let n = 0
+      await chestMove('quickMove', async () => { n = await quickMoveType(win, charcoalBlockType) })
+      if (n) notes.push(`${n} charcoal blocks to the chest`)
+    }
+    if (fullFurStack()) {
+      let n = 0
+      await chestMove('quickMove', async () => { n = await quickMoveType(win, BALL_OF_FUR_TYPE) })
+      notes.push(`${n} balls of fur to the chest`)
+    }
     chestSaplings = chestCount(win, 'sapling', BIRCH_META)
     beeChores.chestBaked = chestCount(win, 'baked_potato', 0)
     if (chestSaplings >= 64) await chestMove('withdraw', () => win.withdraw(packItem('sapling', BIRCH_META)?.type ?? 6, BIRCH_META, 64))
@@ -4067,7 +4252,7 @@ async function runBeeCabinChores ({ force = false } = {}) {
         if (!isBedtime()) { const p = await potatoPatchChores(); if (p) notes.push(p) }
       }
     }
-    const due = force || countItem('log', BIRCH_META) > 0 || countItem('sapling', BIRCH_META) >= 64 ||
+    const due = force || countItem('log', BIRCH_META) > 0 || countItem('sapling', BIRCH_META) >= 64 || fullFurStack() ||
       Date.now() - beeChores.lastFurnaceAt >= BEE_FURNACE_VISIT_MS
     if (due && !isBedtime()) {
       if (await ensureInsideBeeCabin()) {
@@ -4110,7 +4295,7 @@ const VOYAGE_CHAT_TRACE = process.env.VOYAGE_CHAT_TRACE === '1'
 let voyageTraceActive = false
 function voyageNote (msg) {
   logEvent('voyage', msg)
-  if (VOYAGE_CHAT_TRACE) { try { bot.chat(`[voyage] ${msg}`) } catch (_) {} }
+  if (VOYAGE_CHAT_TRACE) { try { say(`[voyage] ${msg}`) } catch (_) {} }
 }
 function voyageLegNote (i, n, leg, r) {
   const p = r.pos ? `(${(+r.pos.x).toFixed(0)}, ${(+r.pos.z).toFixed(0)})` : '?'
@@ -4136,6 +4321,7 @@ const PORT_TO_BEE_COVE_LEGS = [
 // surface and the same walk east climbs her out onto the planks, exactly as at
 // the farm port on 2026-10-05 (Dad: treading water matters on every docking).
 const BEE_DOCK_PUSH = { x: -418.4, z: 285.5 }
+const BEE_DOCK_LANDING = { x: -415, y: 63, z: 280 } // stone at the head of the dock, walking home
 const BEE_DOCK_PLANKS_X = -416.0
 const BEE_DOCK_CLEAR_Z = 288.6 // where the 10-03 landing came ashore (the old z 289 post line)
 const BEE_SHORE_POINT_Z = 280.6 // stone at the head of the dock
@@ -4233,10 +4419,9 @@ async function runBeeVoyage ({ force = false } = {}) {
     return { ok: false, where, error: 'too late in the day for the cove — I will go at first light' }
   }
   treadWaterEnabled = true // every docking leans on it (Dad, 2026-10-05)
-  const gate = startTask('voyage', 'to the bees')
-  if (!gate.allowed) return { ok: false, where, error: 'busy', task: gate.current, detail: gate.detail }
-  const myGen = abortGen
-  const startDeaths = deathCount
+  const task = beginTask('voyage', 'to the bees')
+  if (!task.allowed) return { where, ...task.busyReply }
+  const { myGen, startDeaths } = task
   let res
   try {
     voyageTraceActive = true
@@ -4278,7 +4463,7 @@ async function runBeeVoyage ({ force = false } = {}) {
   } catch (e) {
     res = { ok: false, error: e.name === 'AbortError' ? 'stopped' : e.message }
   } finally {
-    endTask('voyage')
+    task.end()
     voyageTraceActive = false
   }
   if (!res.ok) { voyageNote(`to the bees: stopped at ${voyagePosStr()}: ${res.error}`); return { where, ...res } }
@@ -4312,10 +4497,9 @@ async function runBeeVoyageHome ({ force = false } = {}) {
   }
   if (beeState.active) stopKeepBees('going home')
   treadWaterEnabled = true
-  const gate = startTask('voyage', 'home from the bees')
-  if (!gate.allowed) return { ok: false, where, error: 'busy', task: gate.current, detail: gate.detail }
-  const myGen = abortGen
-  const startDeaths = deathCount
+  const task = beginTask('voyage', 'home from the bees')
+  if (!task.allowed) return { where, ...task.busyReply }
+  const { myGen, startDeaths } = task
   let res
   try {
     voyageTraceActive = true
@@ -4323,7 +4507,7 @@ async function runBeeVoyageHome ({ force = false } = {}) {
     if (where !== 'boat') {
       if (insideBeeCabin()) await beeCabinExit()
       checkAbort(myGen)
-      if (!onBeeDock()) await pathToSure({ x: -415, y: 63, z: 280 }, 1, 2, 3, 15000)
+      if (!onBeeDock()) await pathToSure(BEE_DOCK_LANDING, 1, 2, 3, 15000)
       checkAbort(myGen)
       // Pathfinder stops short over the stairs: finish onto the stone.
       if (bot.entity.position.z < 280) {
@@ -4382,7 +4566,7 @@ async function runBeeVoyageHome ({ force = false } = {}) {
   } catch (e) {
     res = { ok: false, error: e.name === 'AbortError' ? 'stopped' : e.message }
   } finally {
-    endTask('voyage')
+    task.end()
     voyageTraceActive = false
   }
   voyageNote(`home from the bees: ${res.ok ? 'home' : `stopped: ${res.error}`} at ${voyagePosStr()}`)
@@ -4408,10 +4592,9 @@ async function paddleLegs (legs, label, myGen, startDeaths, onLeg = null) {
 }
 // West bank → Bleu de Paris: farm port → paddle boat → landing → gangplank.
 async function bleuPaddleOver () {
-  const gate = startTask('voyage', 'paddle over to the Bleu')
-  if (!gate.allowed) return { ok: false, error: 'busy', task: gate.current, detail: gate.detail }
-  const myGen = abortGen
-  const startDeaths = deathCount
+  const task = beginTask('voyage', 'paddle over to the Bleu')
+  if (!task.allowed) return { ...task.busyReply }
+  const { myGen, startDeaths } = task
   try {
     if (!bot.vehicle) {
       if (insideHouse()) await runGoOutside('the Bleu de Paris')
@@ -4428,15 +4611,14 @@ async function bleuPaddleOver () {
   } catch (e) {
     return { ok: false, error: e.name === 'AbortError' ? 'stopped' : e.message }
   } finally {
-    endTask('voyage')
+    task.end()
   }
 }
 
 async function bleuPaddleHome ({ boatId = null } = {}) {
-  const gate = startTask('voyage', 'paddle home from the Bleu')
-  if (!gate.allowed) return { ok: false, error: 'busy', task: gate.current, detail: gate.detail }
-  const myGen = abortGen
-  const startDeaths = deathCount
+  const task = beginTask('voyage', 'paddle home from the Bleu')
+  if (!task.allowed) return { ...task.busyReply }
+  const { myGen, startDeaths } = task
   try {
     if (onBleu()) await gangplankLeave()
     checkAbort(myGen)
@@ -4469,7 +4651,7 @@ async function bleuPaddleHome ({ boatId = null } = {}) {
   } catch (e) {
     return { ok: false, error: e.name === 'AbortError' ? 'stopped' : e.message }
   } finally {
-    endTask('voyage')
+    task.end()
   }
 }
 
@@ -4480,10 +4662,9 @@ async function runRiverVoyage (toFarm, { force = false } = {}) {
   if (!force && (!bot.time.isDay || bot.time.timeOfDay >= VOYAGE_LATEST_START)) {
     return { ok: false, error: 'too late in the day for the river — go at first light (force: true to override)' }
   }
-  const gate = startTask('voyage', label)
-  if (!gate.allowed) return { ok: false, error: 'busy', task: gate.current, detail: gate.detail }
-  const myGen = abortGen
-  const startDeaths = deathCount
+  const task = beginTask('voyage', label)
+  if (!task.allowed) return { ...task.busyReply }
+  const { myGen, startDeaths } = task
   const legs = toFarm ? RIVER_ROUTE.slice(1) : RIVER_ROUTE.slice(0, -1).reverse()
   const start = toFarm ? RIVER_ROUTE[0] : RIVER_ROUTE[RIVER_ROUTE.length - 1]
   try {
@@ -4526,7 +4707,7 @@ async function runRiverVoyage (toFarm, { force = false } = {}) {
     logEvent('voyage', `${label}: ${e.name === 'AbortError' ? 'stopped' : `failed: ${e.message}`}`)
     return { ok: false, error: e.name === 'AbortError' ? 'stopped' : e.message }
   } finally {
-    endTask('voyage')
+    task.end()
   }
 }
 
@@ -4553,7 +4734,7 @@ async function _runIdleBoating () {
   logEvent('idle-boating', 'heading to the pond')
   // Route south of the house first to avoid pathfinding through it.
   // field_east_approach is south of the house z-bounds.
-  await pathTo({ x: -278, y: 64, z: 567 }, 2, 10000)
+  await pathTo(HARVEST_WAYPOINTS.field_east_approach, 2, 10000)
   await pathTo(POND_SHORE, 2, 15000)
 
   const p = bot.entity.position
@@ -4841,6 +5022,20 @@ function expressiveGateOpen (kind) {
   return true
 }
 
+// Every spoken line goes out through say(). It strips characters the server
+// kicks for (control characters, the section sign) and refuses a line that
+// would run as a command: speech never starts with "/" (llm.js strips a leading
+// slash too; this catches every other source). Slash commands, /me actions and
+// fire-duty dot-codes go through sendCommand() on purpose.
+function say (line) {
+  const text = String(line ?? '').replace(/[\u0000-\u001f\u007f\u00a7]/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!text) return false
+  if (text.startsWith('/')) { logEvent('say', `refused a command-like line: ${text.slice(0, 60)}`); return false }
+  bot.chat(text)
+  return true
+}
+function sendCommand (command) { bot.chat(command) }
+
 // Speak one expressive line through the gate. Returns false (silently) if the
 // gate is closed — callers don't need their own timing bookkeeping.
 function speakExpressive (kind, line, { me = false } = {}) {
@@ -4848,7 +5043,8 @@ function speakExpressive (kind, line, { me = false } = {}) {
   const now = Date.now()
   lastExpressiveAt = now
   lastExpressiveByKind[kind] = now
-  bot.chat(me ? `/me ${line}` : line)
+  if (me) sendCommand(`/me ${line}`)
+  else say(line)
   return true
 }
 
@@ -5162,9 +5358,6 @@ function startSquirrelWatcher () {
   logEvent('squirrel-watcher', 'started, checking every 7s')
 }
 
-function stopSquirrelWatcher () {
-  if (squirrelWatcherId) { clearInterval(squirrelWatcherId); squirrelWatcherId = null }
-}
 
 // ── Named sheep ──────────────────────────────────────────────────────────────
 // Track specific sheep by dyed wool color. Colors are MC 1.12.2 wool data values.
@@ -5225,9 +5418,6 @@ function startAmbientActionTimer () {
   logEvent('ambient-action', `timer started, interval ${AMBIENT_ACTION_MIN_MS / 1000}–${AMBIENT_ACTION_MAX_MS / 1000}s`)
 }
 
-function stopAmbientActionTimer () {
-  if (ambientActionTimerId) { clearTimeout(ambientActionTimerId); ambientActionTimerId = null }
-}
 
 // Wheat-ready alert mode. This is intentionally louder than ambient chatter:
 // when every known wheat tile is mature, remind nearby humans until one
@@ -5570,7 +5760,7 @@ function snoozeWheatReadyAlerts (username = 'someone') {
   wheatReadyState.snoozed = true
   wheatReadyState.lastAlertAt = 0
   const pool = withPersonaSlot(WHEAT_SNOOZE_ACK_LINES, 'wheatSnoozeAck')
-  bot.chat(pool[Math.floor(Math.random() * pool.length)])
+  say(pool[Math.floor(Math.random() * pool.length)])
   logEvent('wheat-alert', `snoozed by ${username}`)
   return true
 }
@@ -5595,12 +5785,15 @@ function tryWheatReadyAlert () {
 
   if (wheatReadyState.snoozed) return
   if (brainMode === 'helm') return // operator speaks for Roz in helm mode; ready state still tracked + logged
+  // On fire duty the loop harvests the wheat itself, so offering to harvest it
+  // is noise (Dad, 2026-10-09: Muse kept asking while already on duty).
+  if (sustainState.active || /harvest/.test(activeTask.name || '')) return
   const homeDist = distanceFromHome()
   if (!Number.isFinite(homeDist) || homeDist > HOME_RADIUS) return
   const now = Date.now()
   if (now - wheatReadyState.lastAlertAt < WHEAT_READY_ALERT_MS) return
   wheatReadyState.lastAlertAt = now
-  bot.chat(pickWheatReadyLine())
+  say(pickWheatReadyLine())
 }
 
 function startWheatReadyWatcher () {
@@ -5668,11 +5861,10 @@ function orderNautilusCCW (tiles) {
 // 2026-05-14 (per the journal) as the user-preferred path — it minimizes
 // total walking distance and keeps the bot near each drop it generates.
 async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, keepSeeds = false, skipDeposit = false } = {}) {
-  const taskCheck = startTask('harvest', half)
-  if (!taskCheck.allowed) { bot.chat(`Busy with ${taskCheck.current} — one thing at a time.`); return }
-  const myGen = abortGen
+  const task = beginTask('harvest', half, { busyLine: BUSY_LINE })
+  if (!task.allowed) return
+  const { myGen, startDeaths } = task
   try {
-    const startDeaths = deathCount
 
     // If it's nighttime or bedtime, sleep first then start fresh in the morning.
     const t = bot.time || {}
@@ -5685,7 +5877,7 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
       : half === 'north-field' ? 'the north field'
       : half === 'south-field' ? 'the south field'
       : `the ${half} half`
-    bot.chat(pickLine(withPersonaSlot(HARVEST_START_LINES, 'harvestStart'), { userTag: user ? ' ' + user + ',' : '', half: halfLabel }))
+    say(pickLine(withPersonaSlot(HARVEST_START_LINES, 'harvestStart'), { userTag: user ? ' ' + user + ',' : '', half: halfLabel }))
     logEvent('harvest-rc', `start half=${half} startDeaths=${startDeaths}`)
 
     if (insideHouse()) {
@@ -5819,7 +6011,7 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
       .filter(i => i.name === 'wheat')
       .reduce((s, i) => s + i.count, 0)
     const gained = wheatOnHand - wheatCountBefore
-    bot.chat(pickLine(withPersonaSlot(HARVEST_DONE_LINES, 'harvestDone'), { dug: totalHarvested, gained, onhand: wheatOnHand }))
+    say(pickLine(withPersonaSlot(HARVEST_DONE_LINES, 'harvestDone'), { dug: totalHarvested, gained, onhand: wheatOnHand }))
     logEvent('harvest-rc', `activated=${totalActivated} harvested=${totalHarvested} gained=${gained} onhand=${wheatOnHand} kept-on-hand`)
     diaryNote(`harvested the wheat (${half}): ${totalHarvested} tiles cut, ${gained} wheat gained`)
 
@@ -5853,7 +6045,7 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
       }
     }
   } finally {
-    endTask(activeTask.name)
+    task.end()
     bot.pathfinder.setGoal(null)
     await clearHand()
   }
@@ -5874,11 +6066,12 @@ const BENCH_OUTPUT_SLOT = 28
 const BENCH_PLAYER_INV_START = 29 // bench has 29 own slots (0-28)
 const VANILLA_TABLE_SLOTS = 46
 // Dad asked for crafting to narrate in chat so players can watch the new
-// table (2026-10-03, after Muse's puzzling "cookware" run). Turn off once trusted.
-const CRAFT_DEBUG_CHAT = true
+// table (2026-10-03, after Muse's puzzling "cookware" run). Turned off 2026-10-07
+// at Dad's request — the narration still lands in bot.log via logEvent.
+const CRAFT_DEBUG_CHAT = false
 function craftDebug (msg) {
   logEvent('craft', msg)
-  if (CRAFT_DEBUG_CHAT) bot.chat(`[craft] ${msg}`)
+  if (CRAFT_DEBUG_CHAT) say(`[craft] ${msg}`)
 }
 const itemTag = (it) => it ? `${it.name}${it.name === 'unknown' ? `#${it.type}:${it.metadata}` : ''} x${it.count}` : 'nothing'
 
@@ -5900,9 +6093,8 @@ function findBenchBlock () {
   return bot.findBlock({ point: new Vec3(BENCH_POS.x, BENCH_POS.y, BENCH_POS.z), matching: table.id, maxDistance: 4 })
 }
 
-function openBench () {
+function openBench (benchBlock = findBenchBlock()) {
   return new Promise((resolve, reject) => {
-    const benchBlock = findBenchBlock()
     if (!benchBlock) return reject(new Error('no bench or crafting table at the house crafting spot'))
     const timeout = setTimeout(() => {
       bot.removeListener('windowOpen', onOpen)
@@ -6097,7 +6289,7 @@ const sustainState = {
 async function feedHopperOneAtATime (waitMs, { requireSustain = false } = {}) {
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-  const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
+  const hopperBlock = blockAtPos(HOPPER)
   if (!hopperBlock) { logEvent('sustain-hopper', 'hopper block not loaded'); return false }
 
   for (let fed = 0; fed < 7; fed++) {
@@ -6107,46 +6299,43 @@ async function feedHopperOneAtATime (waitMs, { requireSustain = false } = {}) {
       logEvent('sustain-hopper', `out of fuel after ${fed} fed`)
       return false
     }
-    const win = await bot.openContainer(hopperBlock)
-    const slots = win.slots.slice(0, win.slots.length - 36)
-    const hasBalls = slots.some(s => s && s.name === 'unknown')
-    if (!hasBalls) {
+    const outcome = await withContainer(hopperBlock, async (win) => {
+      if (!containerSlots(win).some(s => s && s.name === 'unknown')) return 'clear'
+      const containerSize = win.slots.length - 36
+      const playerSlots = win.slots.slice(containerSize)
+      const srcIdx = playerSlots.findIndex(s => s && s.name === fuelName)
+      if (srcIdx === -1) return 'no-fuel-slot'
+      const winSlot = containerSize + srcIdx
+      const count = playerSlots[srcIdx].count
+      try {
+        await bot.clickWindow(winSlot, 1, 0)
+        await bot.clickWindow(1, 1, 0)
+        if (count > 2) await bot.clickWindow(winSlot, 0, 0)
+        else if (count === 2) {
+          const emptyIdx = playerSlots.findIndex((s, i) => i !== srcIdx && !s)
+          if (emptyIdx !== -1) await bot.clickWindow(containerSize + emptyIdx, 0, 0)
+          else await bot.clickWindow(winSlot, 0, 0)
+        }
+      } catch (e) {
+        // "Server rejected transaction" is routine on this modded server and the
+        // click usually lands anyway (same tolerance depositQuickMove has). The
+        // next iteration re-opens the hopper and re-checks — a feed that truly
+        // failed simply gets retried; never let it kill the whole clearing pass.
+        logEvent('sustain-hopper', `click rejected (benign on this server): ${e.message}`)
+      }
+      return 'fed'
+    })
+    if (outcome === 'clear') {
       logEvent('sustain-hopper', `hopper clear after ${fed} items`)
-      win.close()
       return true
     }
-    const containerSize = win.slots.length - 36
-    const playerSlots = win.slots.slice(containerSize)
-    const srcIdx = playerSlots.findIndex(s => s && s.name === fuelName)
-    if (srcIdx === -1) { win.close(); return false }
-    const winSlot = containerSize + srcIdx
-    const count = playerSlots[srcIdx].count
-    try {
-      await bot.clickWindow(winSlot, 1, 0)
-      await bot.clickWindow(1, 1, 0)
-      if (count > 2) await bot.clickWindow(winSlot, 0, 0)
-      else if (count === 2) {
-        const emptyIdx = playerSlots.findIndex((s, i) => i !== srcIdx && !s)
-        if (emptyIdx !== -1) await bot.clickWindow(containerSize + emptyIdx, 0, 0)
-        else await bot.clickWindow(winSlot, 0, 0)
-      }
-    } catch (e) {
-      // "Server rejected transaction" is routine on this modded server and the
-      // click usually lands anyway (same tolerance depositQuickMove has). The
-      // next iteration re-opens the hopper and re-checks — a feed that truly
-      // failed simply gets retried; never let it kill the whole clearing pass.
-      logEvent('sustain-hopper', `click rejected (benign on this server): ${e.message}`)
-    }
-    try { win.close() } catch (_) {}
+    if (outcome === 'no-fuel-slot') return false
     logEvent('sustain-hopper', `fed ${fuelName} ${fed + 1}/7, waiting ${waitMs / 1000}s`)
     if (requireSustain) await sustainWait(waitMs)
     else await sleep(waitMs)
   }
-  const win2 = await bot.openContainer(hopperBlock)
-  const finalSlots = win2.slots.slice(0, win2.slots.length - 36)
-  const stillJammed = finalSlots.some(s => s && s.name === 'unknown')
-  win2.close()
-  return !stillJammed
+  const finalSlots = await peekContainer(hopperBlock)
+  return !finalSlots.some(s => s && s.name === 'unknown')
 }
 
 // THE un-jam routine — the ONLY hopper-lock holder (user spec, 2026-07-07).
@@ -6221,7 +6410,7 @@ function isSameBot (a, b) {
 // "shoots rock") — dialog goes out as PLAIN chat with the machine core as a
 // trailing tail (user rule: never wrap spoken lines in /me).
 function chatCore (prose, core) {
-  try { bot.chat(prose ? `${prose} (${core})` : `/me ${core}`) } catch (_) {}
+  try { sendCommand(prose ? `${prose} (${core})` : `/me ${core}`) } catch (_) {}
 }
 
 const RPS_WORD_TO_CODE = { rock: 'r', paper: 'p', scissors: 's' }
@@ -6638,7 +6827,7 @@ async function runFunRpsChallenger () {
   // same dual-challenge tiebreak. (Previously the LLM flavor line ran first,
   // leaving a ~4s window where a simultaneous rival's .j was ignored.)
   const acceptPromise = new Promise(resolve => { rpsFunChallengeResolve = resolve })
-  bot.chat('/me .j')
+  sendCommand('/me .j')
   // Flavor line is cosmetic — fire it WITHOUT awaiting. Duty RPS has no such
   // line and its handshake stays tight; a blocking ~4s impulse here delayed the
   // accept/withdraw path and the match setup by that long, desyncing the
@@ -6650,7 +6839,7 @@ async function runFunRpsChallenger () {
   // Only speak the canned fallback while the challenge is still open — a slow
   // generation can resolve false 30-45s later (after the 15s accept race, or
   // mid-match), and a stale invitation confuses the other bots' routers.
-  ).then(said => { if (!said && rpsFunChallengeResolve) bot.chat('Anyone up for rock-paper-scissors?') }).catch(() => {})
+  ).then(said => { if (!said && rpsFunChallengeResolve) say('Anyone up for rock-paper-scissors?') }).catch(() => {})
   const accepted = await Promise.race([
     acceptPromise,
     sleep(15000).then(() => false)
@@ -6681,7 +6870,7 @@ async function runFunRpsAcceptor (rival) {
   if (isBedtime()) { logEvent('rps-fun', 'declining — bedtime'); return null }
   rpsFunBusy = true
   logEvent('rps-fun', `accepting ${rival}'s fun RPS challenge`)
-  bot.chat('/me .m') // .m = fun-RPS accept (distinct from the .j challenge)
+  sendCommand('/me .m') // .m = fun-RPS accept (distinct from the .j challenge)
   try {
     return await runRpsMatch(rival, false, { forFun: true })
   } finally {
@@ -6696,14 +6885,14 @@ async function runFunRpsAcceptor (rival) {
 // outside first (safely) so an indoor ask actually starts a match.
 async function startFunRps (user) {
   if (user) facePlayer(user).catch(() => {})
-  if (isBedtime()) { bot.chat('Not now — it is nearly bedtime. A game in the morning?'); return }
-  if (rpsFunBusy || rpsState) { bot.chat('Already mid-match — watch this one first.'); return }
+  if (isBedtime()) { say('Not now — it is nearly bedtime. A game in the morning?'); return }
+  if (rpsFunBusy || rpsState) { say('Already mid-match — watch this one first.'); return }
   if (sustainState.active && !sustainState.potatoRole) {
-    bot.chat('I am on fire duty right now — have me stand down first and I will play.')
+    say('I am on fire duty right now — have me stand down first and I will play.')
     return
   }
   if (!rpsFunRivalName()) {
-    bot.chat('No other unit nearby — but I will play YOU. Say "play RPS with me".')
+    say('No other unit nearby — but I will play YOU. Say "play RPS with me".')
     return
   }
   if (insideHouse()) {
@@ -6711,12 +6900,12 @@ async function startFunRps (user) {
       await runGoOutside('play RPS')
     } catch (e) {
       logEvent('rps-fun', `could not get outside to play: ${e.message}`)
-      bot.chat('I could not get outside to play just now.')
+      say('I could not get outside to play just now.')
       return
     }
   }
   const started = await runFunRpsChallenger()
-  if (!started) bot.chat('Could not get a game going — maybe next time.')
+  if (!started) say('Could not get a game going — maybe next time.')
 }
 
 // ── Human-vs-bot RPS ─────────────────────────────────────────────────────────
@@ -6731,10 +6920,10 @@ async function startFunRps (user) {
 // player, so everyone else's chatter still flows to the router.
 async function startHumanRps (user) {
   facePlayer(user).catch(() => {})
-  if (isBedtime()) { bot.chat('Not now — it is nearly bedtime. A game in the morning?'); return }
-  if (rpsFunBusy || rpsState || rpsHumanState || rpsCurrentRival) { bot.chat('Already mid-match — watch this one first.'); return }
+  if (isBedtime()) { say('Not now — it is nearly bedtime. A game in the morning?'); return }
+  if (rpsFunBusy || rpsState || rpsHumanState || rpsCurrentRival) { say('Already mid-match — watch this one first.'); return }
   if (sustainState.active && !sustainState.potatoRole) {
-    bot.chat('I am on fire duty right now — have me stand down first and I will play.')
+    say('I am on fire duty right now — have me stand down first and I will play.')
     return
   }
   rpsFunBusy = true
@@ -6753,7 +6942,7 @@ async function startHumanRps (user) {
 function waitHumanThrow (player, ms) {
   const answer = new Promise(resolve => { rpsHumanState = { player, resolve } })
   const reminder = setTimeout(() => {
-    if (rpsHumanState) bot.chat('Type rock, paper, or scissors!')
+    if (rpsHumanState) say('Type rock, paper, or scissors!')
   }, Math.floor(ms / 2))
   return Promise.race([answer, sleep(ms).then(() => null)])
     .finally(() => { clearTimeout(reminder); rpsHumanState = null })
@@ -6762,7 +6951,7 @@ function waitHumanThrow (player, ms) {
 async function runHumanRpsMatch (player) {
   logEvent('rps-human', `match with ${player} — best of 3`)
   sendEmote('wave')
-  bot.chat(`Best two out of three, ${player}! On "Shoot!" type rock, paper, or scissors — mine is already picked, and I show it once you throw.`)
+  say(`Best two out of three, ${player}! On "Shoot!" type rock, paper, or scissors — mine is already picked, and I show it once you throw.`)
   await sleep(2500)
   const throws = ['r', 'p', 's']
   let myWins = 0, theirWins = 0
@@ -6772,28 +6961,28 @@ async function runHumanRpsMatch (player) {
     logEvent('rps-human', `round ${round}: committed ${RPS_NAMES[myThrow]}`)
     await facePlayer(player).catch(() => {})
     sendEmote('salute')
-    bot.chat(`Rock, paper, scissors — round ${round}!`)
+    say(`Rock, paper, scissors — round ${round}!`)
     await sleep(3000)
     sendEmote('point')
-    bot.chat('Shoot!')
+    say('Shoot!')
     const got = await waitHumanThrow(player, 30000)
     if (!got) {
       logEvent('rps-human', `round ${round}: no throw from ${player} — ending`)
-      bot.chat(`No throw came — I had ${RPS_NAMES[myThrow]} waiting! We can pick this up whenever you like.`)
+      say(`No throw came — I had ${RPS_NAMES[myThrow]} waiting! We can pick this up whenever you like.`)
       return null
     }
     if (got.quit) {
       logEvent('rps-human', `${player} called it off in round ${round}`)
       sendEmote('wave')
-      bot.chat('Calling it here — good game!')
+      say('Calling it here — good game!')
       return null
     }
-    bot.chat(`/me shoots ${RPS_NAMES[myThrow]}`)
+    sendCommand(`/me shoots ${RPS_NAMES[myThrow]}`)
     await sleep(800)
     const result = rpsWinner(myThrow, got.throw)
     logEvent('rps-human', `round ${round}: ${RPS_NAMES[myThrow]} vs ${RPS_NAMES[got.throw]} → ${result}`)
     if (result === 'tie') {
-      bot.chat("It's a tie!")
+      say("It's a tie!")
       await sleep(1500)
       continue
     }
@@ -6805,7 +6994,7 @@ async function runHumanRpsMatch (player) {
         `You just won a friendly best-of-3 rock-paper-scissors match ${myWins}-${theirWins} against ${player} — a human player, not a bot. Celebrate with playful gloating — one short sentence.`,
         { skipGate: true }
       ).catch(() => false)
-      if (!said) bot.chat('Ha! I win!')
+      if (!said) say('Ha! I win!')
       diaryNote(`won a friendly rock-paper-scissors match against ${player} (${myWins}-${theirWins})`)
       await sleep(2000)
       return 'win'
@@ -6816,21 +7005,21 @@ async function runHumanRpsMatch (player) {
         `You just lost a friendly best-of-3 rock-paper-scissors match ${myWins}-${theirWins} to ${player} — a human player, not a bot. React with playful concession — one short sentence.`,
         { skipGate: true }
       ).catch(() => false)
-      if (!said) bot.chat('Good game! You got me.')
+      if (!said) say('Good game! You got me.')
       diaryNote(`lost a friendly rock-paper-scissors match to ${player} (${myWins}-${theirWins})`)
       await sleep(2000)
       return 'lose'
     }
     if (result === 'win') {
       sendEmote(Math.random() < 0.5 ? 'clap' : 'yes')
-      bot.chat(`That's ${myWins}-${theirWins}!`)
+      say(`That's ${myWins}-${theirWins}!`)
     } else {
       sendEmote('shrug')
-      bot.chat(`That's ${myWins}-${theirWins}...`)
+      say(`That's ${myWins}-${theirWins}...`)
     }
     await sleep(2000)
   }
-  bot.chat("Ten rounds and no winner — we'll call that a draw!")
+  say("Ten rounds and no winner — we'll call that a draw!")
   return 'draw'
 }
 
@@ -6951,16 +7140,16 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
         if (!shootCalled && revealTick - now <= 40) {
           shootCalled = true
           sendEmote('point')
-          if (isChallenger) bot.chat('Shoot!')
+          if (isChallenger) say('Shoot!')
         }
         if (matchAborted) { rpsState = null; return failed(`aborted in round ${round}`) }
         await sleep(100)
       }
       if (!shootCalled) { // early break (nonsense tick) — still do the ceremony
         sendEmote('point')
-        if (isChallenger) bot.chat('Shoot!')
+        if (isChallenger) say('Shoot!')
       }
-      bot.chat(`/me shoots ${RPS_NAMES[myThrow]} (.t${round})`)
+      sendCommand(`/me shoots ${RPS_NAMES[myThrow]} (.t${round})`)
       logEvent('rps', `round ${round}: threw ${RPS_NAMES[myThrow]} at tick ${Number(bot.time?.age ?? 0)}`)
 
       const rivalThrow = await Promise.race([
@@ -6978,7 +7167,7 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
       logEvent('rps', `round ${round}: ${RPS_NAMES[myThrow]} vs ${RPS_NAMES[rivalThrow]} → ${result}`)
 
       if (result === 'tie') {
-        bot.chat("It's a tie!")
+        say("It's a tie!")
         await sleep(1500)
         continue
       }
@@ -6996,7 +7185,7 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
             `You just won a friendly best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}! No stakes, just fun. Celebrate with playful gloating — one short sentence.`,
             { skipGate: true }
           ).catch(() => false)
-          if (!said) bot.chat('Ha! I win!')
+          if (!said) say('Ha! I win!')
         } else {
           sustainState.potatoRole = 'mine'
           logEvent('rps', `won best-of-3 (${myWins}-${rivalWins}) — claiming potato duty`)
@@ -7004,7 +7193,7 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
             `You just won a best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}! You get potato duty. Celebrate — be genuinely excited, playful, triumphant. No task language, no "task acquired." One short sentence, like you're gloating to a friend.`,
             { skipGate: true }
           ).catch(() => false)
-          if (!said) bot.chat('I win the potatoes!')
+          if (!said) say('I win the potatoes!')
         }
         diaryNote(`won ${forFun ? 'a friendly' : 'the potato-duty'} rock-paper-scissors match against ${rival} (${myWins}-${rivalWins})`)
         await sleep(2000)
@@ -7019,7 +7208,7 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
             `You just lost a friendly best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}. No stakes, just fun. React with playful concession — one short sentence.`,
             { skipGate: true }
           ).catch(() => false)
-          if (!said) bot.chat('Good game! You got me.')
+          if (!said) say('Good game! You got me.')
         } else {
           sustainState.potatoRole = 'theirs'
           logEvent('rps', `lost best-of-3 (${myWins}-${rivalWins}) — rival gets potato duty`)
@@ -7027,7 +7216,7 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
             `You just lost a best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}. They get potato duty. React with warmth and humor — a playful concession, not clinical acceptance. No task language. One short sentence.`,
             { skipGate: true }
           ).catch(() => false)
-          if (!said) bot.chat('You win... potatoes are yours.')
+          if (!said) say('You win... potatoes are yours.')
         }
         diaryNote(`lost ${forFun ? 'a friendly' : 'the potato-duty'} rock-paper-scissors match against ${rival} (${myWins}-${rivalWins})`)
         await sleep(2000)
@@ -7037,10 +7226,10 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
       // Mid-match round reaction
       if (result === 'win') {
         sendEmote(Math.random() < 0.5 ? 'clap' : 'yes')
-        bot.chat(`That's ${myWins}-${rivalWins}!`)
+        say(`That's ${myWins}-${rivalWins}!`)
       } else {
         sendEmote('shrug')
-        bot.chat(`That's ${myWins}-${rivalWins}...`)
+        say(`That's ${myWins}-${rivalWins}...`)
       }
       await sleep(2000)
     }
@@ -7049,7 +7238,7 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
     // Never an alphabetical fallback: RPS is the one true potato tiebreak.
     rpsFailStreak = 0
     logEvent('rps', `10 rounds no winner (${myWins}-${rivalWins}) — calling it a wash`)
-    bot.chat(forFun ? "We'll call that a draw!" : "We'll call that a wash — rematch in a bit!")
+    say(forFun ? "We'll call that a draw!" : "We'll call that a wash — rematch in a bit!")
     if (!forFun) rpsChallengerCooldownUntil = Date.now() + 30000 + Math.random() * 30000
     await sleep(2000)
     return forFun ? 'draw' : null
@@ -7568,13 +7757,11 @@ let nextHopperPatrolAt = 0
 async function sustainHopperPatrol () {
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-  const hopperBlock = bot.blockAt(new Vec3(HOPPER.x, HOPPER.y, HOPPER.z))
+  const hopperBlock = blockAtPos(HOPPER)
   if (!hopperBlock) { logEvent('sustain-hopper', 'patrol: hopper block not loaded'); return }
-  const win = await bot.openContainer(hopperBlock)
-  const slots = win.slots.slice(0, win.slots.length - 36)
+  const slots = await peekContainer(hopperBlock)
   const hasBalls = slots.some(s => s && s.name === 'unknown')
   const hasPotato = slots.some(s => s && s.name === 'potato')
-  win.close()
   if (!hasBalls) { logEvent('sustain-hopper', 'patrol: hopper clear'); return }
   if (hasPotato) { logEvent('sustain-hopper', 'patrol: balls + potato present — digesting, not jammed'); return }
   logEvent('sustain-hopper', 'patrol: balls sitting with no potato — running un-jam routine')
@@ -7659,7 +7846,7 @@ function sustainOutdoorOk () {
 }
 
 async function runSustainFarm (user) {
-  if (sustainState.active) { bot.chat('Already keeping the fire going.'); return }
+  if (sustainState.active) { say('Already keeping the fire going.'); return }
   sustainState.active = true
   sustainState.startedBy = user || null
   sustainState.cycles = 0
@@ -7927,11 +8114,10 @@ async function runSustainFarm (user) {
 // so the replant step equips "potato" and places on the farmland below
 // each harvested tile. Deposits to the kitchen chest at the end.
 async function runHarvestPotatoes ({ user } = {}) {
-  const taskCheck = startTask('harvest_potatoes')
-  if (!taskCheck.allowed) { bot.chat(`Busy with ${taskCheck.current} — one thing at a time.`); return }
-  const myGen = abortGen
+  const task = beginTask('harvest_potatoes', null, { busyLine: BUSY_LINE })
+  if (!task.allowed) return
+  const { myGen, startDeaths } = task
   try {
-    const startDeaths = deathCount
 
     const t = bot.time || {}
     if (!t.isDay || isBedtime()) {
@@ -8054,11 +8240,7 @@ async function runHarvestPotatoes ({ user } = {}) {
     // Deposit potatoes to kitchen chest (vanilla item, registry-safe).
     await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
     try {
-      const chestBlock = bot.blockAt(new Vec3(
-        HARVEST_WAYPOINTS.kitchen_chest.x,
-        HARVEST_WAYPOINTS.kitchen_chest.y,
-        HARVEST_WAYPOINTS.kitchen_chest.z,
-      ))
+      const chestBlock = blockAtPos(KITCHEN_CHEST)
       if (!chestBlock) throw new Error('kitchen chest not reachable')
       const win = await bot.openContainer(chestBlock)
       const potatoItems = bot.inventory.items().filter(i => i.name === 'potato')
@@ -8087,7 +8269,7 @@ async function runHarvestPotatoes ({ user } = {}) {
       logEvent('harvest-potato', `deposit failed: ${e.message}`)
     }
   } finally {
-    endTask(activeTask.name)
+    task.end()
     bot.pathfinder.setGoal(null)
     await clearHand()
   }
@@ -8100,11 +8282,10 @@ async function runHarvestPotatoes ({ user } = {}) {
 // x >= -286 to keep the bot out of the water (see journal place note
 // water-hazard-west-of-potatoes.md).
 async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Infinity } = {}) {
-  const taskCheck = startTask('harvest_potatoes_rc')
-  if (!taskCheck.allowed) { bot.chat(`Busy with ${taskCheck.current} — one thing at a time.`); return }
-  const myGen = abortGen
+  const task = beginTask('harvest_potatoes_rc', null, { busyLine: BUSY_LINE })
+  if (!task.allowed) return
+  const { myGen, startDeaths } = task
   try {
-    const startDeaths = deathCount
 
     const t = bot.time || {}
     if (!t.isDay || isBedtime()) {
@@ -8224,7 +8405,7 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
       logEvent('harvest-potato-rc', `auto-bake: keeping ${onHand} potatoes for bake step`)
     } else {
       const potatoPool = withPersonaSlot(POTATO_ASK_LINES, 'potatoAsk'); const askLine = potatoPool[Math.floor(Math.random() * potatoPool.length)]
-      bot.chat(askLine)
+      say(askLine)
       logEvent('harvest-potato-rc', `asking user: bake or stash? (${onHand} potatoes)`)
 
       const answer = await waitForChatReply((username, msg) => {
@@ -8241,11 +8422,7 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
         try {
           await ensureInsideHouse()
           await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-          const chestBlock = bot.blockAt(new Vec3(
-            HARVEST_WAYPOINTS.kitchen_chest.x,
-            HARVEST_WAYPOINTS.kitchen_chest.y,
-            HARVEST_WAYPOINTS.kitchen_chest.z,
-          ))
+          const chestBlock = blockAtPos(KITCHEN_CHEST)
           if (!chestBlock) throw new Error('kitchen chest not reachable')
           const win = await bot.openContainer(chestBlock)
           const items = bot.inventory.items().filter(i => i.name === 'potato')
@@ -8264,7 +8441,7 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
       }
     }
   } finally {
-    endTask(activeTask.name)
+    task.end()
     bot.pathfinder.setGoal(null)
     await clearHand()
   }
@@ -8276,8 +8453,8 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
 // for the output to populate, take it out, deposit extras to the kitchen
 // chest (keeping up to 8 baked potatoes on hand for auto-eat).
 async function runBakePotatoes ({ user } = {}) {
-  const taskCheck = startTask('bake_potatoes')
-  if (!taskCheck.allowed) { bot.chat(`Busy with ${taskCheck.current} — one thing at a time.`); return }
+  const task = beginTask('bake_potatoes', null, { busyLine: BUSY_LINE })
+  if (!task.allowed) return
   try {
     // Must be inside to reach the furnace.
     if (!insideHouse()) {
@@ -8293,11 +8470,7 @@ async function runBakePotatoes ({ user } = {}) {
     try {
       await ensureInsideHouse()
       await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 8000)
-      const chestBlock = bot.blockAt(new Vec3(
-        HARVEST_WAYPOINTS.kitchen_chest.x,
-        HARVEST_WAYPOINTS.kitchen_chest.y,
-        HARVEST_WAYPOINTS.kitchen_chest.z,
-      ))
+      const chestBlock = blockAtPos(KITCHEN_CHEST)
       if (chestBlock) {
         const win = await bot.openContainer(chestBlock)
         try {
@@ -8348,9 +8521,7 @@ async function runBakePotatoes ({ user } = {}) {
       if (!bot.pathfinder.isMoving()) break
     }
 
-    const furnaceBlock = bot.blockAt(new Vec3(
-      HARVEST_WAYPOINTS.furnace.x, HARVEST_WAYPOINTS.furnace.y, HARVEST_WAYPOINTS.furnace.z,
-    ))
+    const furnaceBlock = blockAtPos(HARVEST_WAYPOINTS.furnace)
     if (!furnaceBlock) throw new Error('furnace block not loaded')
 
     // Put all raw potatoes into the input slot.
@@ -8398,7 +8569,7 @@ async function runBakePotatoes ({ user } = {}) {
     logEvent('bake-potato-error', e.message)
     logEvent('bake-potato', `aborted: ${e.message}`)
   } finally {
-    endTask(activeTask.name)
+    task.end()
     bot.pathfinder.setGoal(null)
   }
 }
@@ -8433,11 +8604,7 @@ async function countBakedInChest () {
   try {
     await ensureInsideHouse()
     await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 8000)
-    const chestBlock = bot.blockAt(new Vec3(
-      HARVEST_WAYPOINTS.kitchen_chest.x,
-      HARVEST_WAYPOINTS.kitchen_chest.y,
-      HARVEST_WAYPOINTS.kitchen_chest.z,
-    ))
+    const chestBlock = blockAtPos(KITCHEN_CHEST)
     if (!chestBlock) return 0
     const win = await bot.openContainer(chestBlock)
     try {
@@ -8460,9 +8627,7 @@ async function runBakePotatoesSustain (count) {
   try {
     await ensureInsideHouse()
     await pathTo(HARVEST_WAYPOINTS.furnace, 2, 8000)
-    const furnaceBlock = bot.blockAt(new Vec3(
-      HARVEST_WAYPOINTS.furnace.x, HARVEST_WAYPOINTS.furnace.y, HARVEST_WAYPOINTS.furnace.z,
-    ))
+    const furnaceBlock = blockAtPos(HARVEST_WAYPOINTS.furnace)
     if (!furnaceBlock) { logEvent('sustain-bake', 'furnace not loaded'); return 0 }
 
     const f = await bot.openFurnace(furnaceBlock)
@@ -8667,15 +8832,13 @@ async function tryCollectBake () {
   // potato collection to a ripe wheat field — exactly backwards. The potato
   // pipeline IS the fire; wheat is the bonus tier. Gate removed.)
 
-  const taskCheck = startTask('collect_potatoes')
-  if (!taskCheck.allowed) return
+  const task = beginTask('collect_potatoes')
+  if (!task.allowed) return
   pendingBakeBusy = true
   try {
     if (!insideHouse()) await runGoInside()
     await pathTo(HARVEST_WAYPOINTS.furnace, 2, 8000)
-    const furnaceBlock = bot.blockAt(new Vec3(
-      HARVEST_WAYPOINTS.furnace.x, HARVEST_WAYPOINTS.furnace.y, HARVEST_WAYPOINTS.furnace.z,
-    ))
+    const furnaceBlock = blockAtPos(HARVEST_WAYPOINTS.furnace)
     if (!furnaceBlock) throw new Error('furnace not loaded')
 
     let taken = 0
@@ -8709,7 +8872,7 @@ async function tryCollectBake () {
   } catch (e) {
     logEvent('collect-bake', `error: ${e.message}`)
   } finally {
-    endTask('collect_potatoes')
+    task.end()
     pendingBakeBusy = false
     bot.pathfinder.setGoal(null)
   }
@@ -8752,11 +8915,7 @@ async function tryRestockSupplies () {
       try {
         await ensureInsideHouse()
         await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 8000)
-        const chestBlock = bot.blockAt(new Vec3(
-          HARVEST_WAYPOINTS.kitchen_chest.x,
-          HARVEST_WAYPOINTS.kitchen_chest.y,
-          HARVEST_WAYPOINTS.kitchen_chest.z,
-        ))
+        const chestBlock = blockAtPos(KITCHEN_CHEST)
         if (chestBlock) {
           const win = await bot.openContainer(chestBlock)
           try {
@@ -8854,6 +9013,7 @@ const PEN_INSIDE     = { x: -278, y: 64, z: 575 }  // pad south of gate (inside 
 // door threshold — starting right at PEN_INSIDE (1 block out) lets it snag on
 // the door frame from a standstill. Mirrors the entry runway at z=571.
 const PEN_INSIDE_RUNWAY = { x: -278, y: 64, z: 577 }
+const PEN_RUNWAY = { x: -278, y: 64, z: 571 } // two blocks north of the plate: start of the walk south through the gate
 
 // The OUTSIDE pad (-278, 64, 573) is a stone pressure plate that holds the door
 // open via redstone. Standing on it keeps the door open and lets sheep follow
@@ -8928,33 +9088,71 @@ const HOUSE_DOOR = { x: -272, y: 65, z: 572 }
 // `door_strafe` ctl action so we can tune without restarting.
 // Empirically: strafe-left while facing west over-steers south; the door
 // needs the opposite nudge, and only briefly (the door frame is 2 blocks).
-let EXIT_STRAFE = 'auto'   // 'auto' = side-step toward the door line (z=572.5); or 'left'/'right'/null
+let EXIT_STRAFE = 'auto'   // 'auto' = side-step toward the door line (EXIT_DOOR_Z); or 'left'/'right'/null
 let ENTER_STRAFE = null    // no strafe on entry — corridor too narrow for either
                            // direction; left hits z=571 wall, right hits south side.
 let EXIT_STRAFE_MS = 200
 const EXIT_START_X = -267.5 // house_center block's middle (player coords)
-const EXIT_DOOR_Z = 572.5   // door-line center the exit walk must start on
-const EXIT_Z_TOL = 0.15     // re-align if drifted further than this after yaw lock
+// Door-line z the walk must start on. Not the block's middle (572.5): the open
+// door (type 571, facing west, hinge left) folds against the SOUTH edge of its
+// block, z 572.8125–573, so with a ±0.3 body the clear band is only
+// z 572.30–572.51. Aim at its middle (2026-10-09: an entry from z 572.595 jammed
+// at x -272.4, the retry from 572.493 walked straight through).
+const EXIT_DOOR_Z = 572.4
+const EXIT_Z_TOL = 0.09     // keep the start inside 572.31–572.49
 const EXIT_XZ_TOL = 0.3     // refuse the doorway walk if the start is off by more
 
-// Lineup steps inside the house are sneak-walked: at full walk speed a step
-// overshoots 0.2–1.0 blocks, and one x-align slid her to (-266.6, 573.5), a
-// step from the charge pad (2026-09-28).
+// Lineup steps are walked in short taps, not one long walk: at full walk speed
+// a step overshoots 0.2–1.0 blocks, and one x-align slid her to (-266.6, 573.5),
+// a step from the charge pad (2026-09-28). They used to be sneak-walked; Dad
+// asked for no crouch (2026-10-09), so each tap is a normal step that stops
+// short of the target and lets her coast, and she checks where she landed.
 // Each step faces its own heading (derived from axis + direction, so the yaw
 // can't disagree with the walk), refuses to walk if the turn didn't take, and
 // holds that heading for the whole step.
 const ALIGN_YAW = { x: { lte: Math.PI / 2, gte: -Math.PI / 2 }, z: { lte: 0, gte: Math.PI } }
+const ALIGN_TAP_LONG_MS = 150  // far from the target
+const ALIGN_TAP_SHORT_MS = 50  // within half a block: about one physics tick
+const ALIGN_SETTLE_MS = 250    // let the coast finish before measuring
+// One tap from standing always moves ~0.21 (one physics tick of walking plus
+// the coast), wider than the door band (EXIT_Z_TOL ±0.09), so taps alone hop
+// back and forth across it: 572.283 ↔ 572.493 every time (2026-10-09). Taps
+// stop once the target is within one tap; the rest is a direct slide, as the
+// boat code does (the client owns its position on this server).
+const ALIGN_TAP_MOVE = 0.21
+const ALIGN_SLIDE_MAX = 0.3    // never slide further than this
+const ALIGN_CLOSE_ENOUGH = 0.02
 async function exitAlignStep (axis, target, direction, maxMs = 3000) {
   const yaw = ALIGN_YAW[axis][direction]
   const faced = await faceYaw(yaw)
   if (!faced.ok) throw new Error(`align ${axis} ${direction}: yaw didn't converge (got ${faced.yaw.toFixed(2)} rad)`)
-  bot.setControlState('sneak', true)
+  const left = () => direction === 'lte' ? bot.entity.position[axis] - target : target - bot.entity.position[axis]
+  const start = bot.entity.position[axis]
+  const t0 = Date.now()
+  let taps = 0
   try {
-    return await walkUntilAxis({ axis, target, direction, maxMs, maintainYaw: yaw })
+    while (left() > ALIGN_TAP_MOVE && Date.now() - t0 < maxMs) {
+      await bot.look(yaw, 0, true)
+      bot.setControlState('forward', true)
+      await sleep(left() > 0.5 ? ALIGN_TAP_LONG_MS : ALIGN_TAP_SHORT_MS)
+      bot.setControlState('forward', false)
+      await sleep(ALIGN_SETTLE_MS)
+      taps++
+    }
   } finally {
-    bot.setControlState('sneak', false)
-    await sleep(300)
+    bot.setControlState('forward', false)
   }
+  let slid = 0
+  const off = bot.entity.position[axis] - target
+  if (Math.abs(off) > ALIGN_CLOSE_ENOUGH && Math.abs(off) <= ALIGN_SLIDE_MAX) {
+    bot.entity.velocity.set(0, bot.entity.velocity.y, 0)
+    bot.entity.position[axis] = target
+    slid = -off
+    await sleep(ALIGN_SETTLE_MS)
+  }
+  const end = bot.entity.position[axis]
+  logEvent('align', `${axis}→${target} ${direction}: ${start.toFixed(3)} → ${end.toFixed(3)} in ${taps} taps${slid ? `, slid ${slid.toFixed(3)}` : ''}`)
+  return { reached: left() <= ALIGN_CLOSE_ENOUGH, x: bot.entity.position.x, z: bot.entity.position.z }
 }
 let ENTER_STRAFE_MS = 200
 
@@ -8985,17 +9183,17 @@ async function faceYaw (targetYaw, { maxAttempts = 4, tolerance = 0.25 } = {}) {
 // On damage or death, throws with a message containing "damage" or "died"
 // so the wrapper can refuse to retry.
 async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
-  if (!insideHouse()) { bot.chat("I'm already outside."); return }
+  if (!insideHouse()) { say("I'm already outside."); return }
   if (!skipTimeCheck) {
     const t = bot.time || {}
     if (!t.isDay || (t.timeOfDay ?? 0) >= 11500) {
-      bot.chat(pickLine(withPersonaSlot(TOO_LATE_LINES, 'tooLate')))
+      say(pickLine(withPersonaSlot(TOO_LATE_LINES, 'tooLate')))
       return
     }
   }
   const act = activity || 'stuff'
   const itself = act === 'potatoes' ? 'themselves' : 'itself'
-  if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(GO_OUTSIDE_LINES, 'goOutside'), { activity: act, itself }))
+  if (banalPlatitudesOk()) say(pickLine(withPersonaSlot(GO_OUTSIDE_LINES, 'goOutside'), { activity: act, itself }))
   const startDeaths = deathCount
   // Suppress lookAt for the whole traversal — a background yaw change mid-walk
   // is what drove the bot east into the furnace on prior runs.
@@ -9035,15 +9233,15 @@ async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
     logEvent('go-outside', `x-align done: x=${bot.entity.position.x.toFixed(2)}`)
   }
 
-  // 2b. Align z toward door center (572.5). The collision face at x≈-270.7
-  // catches westbound traffic when z > ~572.6; go-inside already does this.
+  // 2b. Align z onto the door line (EXIT_DOOR_Z, north of the block's middle:
+  // the open door panel takes the south edge).
   const curZExit = bot.entity.position.z
-  if (curZExit > 572.7) {
-    logEvent('go-outside', `z-align: ${curZExit.toFixed(2)} > 572.7, nudging -z`)
+  if (curZExit > EXIT_DOOR_Z + EXIT_Z_TOL) {
+    logEvent('go-outside', `z-align: ${curZExit.toFixed(2)} > ${(EXIT_DOOR_Z + EXIT_Z_TOL).toFixed(2)}, nudging -z`)
     await exitAlignStep('z', EXIT_DOOR_Z, 'lte')
     logEvent('go-outside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
-  } else if (curZExit < 572.45) {
-    logEvent('go-outside', `z-align: ${curZExit.toFixed(2)} < 572.45, nudging +z`)
+  } else if (curZExit < EXIT_DOOR_Z - EXIT_Z_TOL) {
+    logEvent('go-outside', `z-align: ${curZExit.toFixed(2)} < ${(EXIT_DOOR_Z - EXIT_Z_TOL).toFixed(2)}, nudging +z`)
     await exitAlignStep('z', EXIT_DOOR_Z, 'gte')
     logEvent('go-outside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
   }
@@ -9079,7 +9277,7 @@ async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
     throw new Error(`not at house_center orientation block (off by dx=${offX.toFixed(2)}, dz=${offZ.toFixed(2)})`)
   }
   const preWalkPos = bot.entity?.position
-  if (preWalkPos) logEvent('go-outside', `pre-walk pos=(${preWalkPos.x.toFixed(3)}, ${preWalkPos.y.toFixed(3)}, ${preWalkPos.z.toFixed(3)}) z-offset-from-door-center=${(preWalkPos.z - 572.5).toFixed(3)}`)
+  if (preWalkPos) logEvent('go-outside', `pre-walk pos=(${preWalkPos.x.toFixed(3)}, ${preWalkPos.y.toFixed(3)}, ${preWalkPos.z.toFixed(3)}) z-offset-from-door-line=${(preWalkPos.z - EXIT_DOOR_Z).toFixed(3)}`)
   sendEmote('cheer')
 
   // 4. Monkey-patch collision out for the door AND the modded block at (-271,65,572)
@@ -9105,10 +9303,10 @@ async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
       ? (pos) => ((pos?.z ?? EXIT_DOOR_Z) > EXIT_DOOR_Z ? 'right' : 'left')
       : EXIT_STRAFE,
     unstickMs: EXIT_STRAFE_MS,
-    // Tiny north nudge just as the threshold is crossed: pre-empts the
-    // south-jamb catch at x≈-270.8 (oak door, hinge south).
-    // Facing west, 'right' = -z = north.
-    thresholdStrafe: { at: -270.3, strafe: 'right', ms: 150 },
+    // No threshold nudge. The old north nudge at x -270.3 made up for starting
+    // on z 572.5, at the south edge of the clear band. From EXIT_DOOR_Z it
+    // pushed her past the north edge instead: two exits from z 572.31 each
+    // snagged the north wall at (-270.7, 572.24) (2026-10-09).
   })
 
   bot.world.getBlock = origGetBlockExit
@@ -9128,9 +9326,9 @@ async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
 
 // Single attempt at entering the house. Wrapped by runGoInside for retry.
 async function runGoInsideOnce () {
-  if (insideHouse()) { bot.chat("I'm already inside."); return }
+  if (insideHouse()) { say("I'm already inside."); return }
   const startDeaths = deathCount
-  if (banalPlatitudesOk()) bot.chat(pickLine(isBedtime() ? withPersonaSlot(BEDTIME_LINES, 'bedtime') : withPersonaSlot(COME_INSIDE_LINES, 'comeInside')))
+  if (banalPlatitudesOk()) say(pickLine(isBedtime() ? withPersonaSlot(BEDTIME_LINES, 'bedtime') : withPersonaSlot(COME_INSIDE_LINES, 'comeInside')))
   suppressLookAt(20000)
 
   // 1. Get onto outside_orientation. If pathfinding fails or doesn't arrive
@@ -9158,19 +9356,19 @@ async function runGoInsideOnce () {
   }
   logEvent('go-inside', `at orientation ${JSON.stringify(atOrigin.pos)}`)
 
-  // 2b. Align z to 572.5 — center of door opening. Wall (planks) at z=571,
-  // door at z=572. Bot bbox is ±0.3, so the hard collision edge is z=572.0.
-  // Use z=572.45 as the lower trigger — gives 0.15 block clearance from the plank.
+  // 2b. Align z onto the door line (EXIT_DOOR_Z). Wall (planks) at z=571 puts
+  // the north edge at z=572.0 for a ±0.3 body; the open door panel puts the
+  // south edge at 572.81, so the clear band is 572.30–572.51.
   // Sneak-walked like the exit lineup: at full walk speed the +z nudge
   // coasted ~0.3 past its target (done 572.57 → pre-walk 572.82) and every
   // such entry clipped the south door frame on try 1 (2026-10-03, ×4).
   const curZ = bot.entity.position.z
-  if (curZ > 572.7) {
-    logEvent('go-inside', `z-align: ${curZ.toFixed(2)} > 572.7, nudging -z`)
+  if (curZ > EXIT_DOOR_Z + EXIT_Z_TOL) {
+    logEvent('go-inside', `z-align: ${curZ.toFixed(2)} > ${(EXIT_DOOR_Z + EXIT_Z_TOL).toFixed(2)}, nudging -z`)
     await exitAlignStep('z', EXIT_DOOR_Z, 'lte')
     logEvent('go-inside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
-  } else if (curZ < 572.45) {
-    logEvent('go-inside', `z-align: ${curZ.toFixed(2)} < 572.45, nudging +z`)
+  } else if (curZ < EXIT_DOOR_Z - EXIT_Z_TOL) {
+    logEvent('go-inside', `z-align: ${curZ.toFixed(2)} < ${(EXIT_DOOR_Z - EXIT_Z_TOL).toFixed(2)}, nudging +z`)
     await exitAlignStep('z', EXIT_DOOR_Z, 'gte')
     logEvent('go-inside', `z-align done: z=${bot.entity.position.z.toFixed(2)}`)
   }
@@ -9197,7 +9395,7 @@ async function runGoInsideOnce () {
     await sleep(300)
   }
   const preWalkPosIn = bot.entity?.position
-  if (preWalkPosIn) logEvent('go-inside', `pre-walk pos=(${preWalkPosIn.x.toFixed(3)}, ${preWalkPosIn.y.toFixed(3)}, ${preWalkPosIn.z.toFixed(3)}) z-offset-from-door-center=${(preWalkPosIn.z - 572.5).toFixed(3)}`)
+  if (preWalkPosIn) logEvent('go-inside', `pre-walk pos=(${preWalkPosIn.x.toFixed(3)}, ${preWalkPosIn.y.toFixed(3)}, ${preWalkPosIn.z.toFixed(3)}) z-offset-from-door-line=${(preWalkPosIn.z - EXIT_DOOR_Z).toFixed(3)}`)
 
   // 4. Activate door only if it's closed. Bit 0x04 in metadata = open.
   const doorBlock = bot.blockAt(new Vec3(HOUSE_DOOR.x, HOUSE_DOOR.y, HOUSE_DOOR.z))
@@ -9307,7 +9505,7 @@ async function runGoOutside (activity, { skipTimeCheck = false } = {}) {
     }
     logEvent('go-outside', `attempt 1 failed gracefully (${err.message}); retrying`)
     sendEmote('facepalm')
-    if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
+    if (banalPlatitudesOk()) say(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
     await sleep(500)
     // Reset to the inside pad before retry — runGoOutsideOnce starts from
     // HOUSE_CENTER, and we may be stranded in the door jamb after the snag.
@@ -9364,7 +9562,7 @@ async function runGoInside ({ stillWanted = null } = {}) {
           throw err
         }
         sendEmote('facepalm')
-        if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
+        if (banalPlatitudesOk()) say(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
         await sleep(500)
         await resetToHouseSide(OUTSIDE_ORIENTATION)
       }
@@ -9392,7 +9590,7 @@ async function runGoInside ({ stillWanted = null } = {}) {
 async function runGoIntoPen ({ skipActivate = false, allowNight = false } = {}) {
   const t = bot.time || {}
   if (!allowNight && (!t.isDay || (t.timeOfDay ?? 0) >= 11500)) {
-    bot.chat(pickLine(withPersonaSlot(TOO_LATE_LINES, 'tooLate')))
+    say(pickLine(withPersonaSlot(TOO_LATE_LINES, 'tooLate')))
     return
   }
   if (insideHouse()) {
@@ -9410,8 +9608,7 @@ async function runGoIntoPen ({ skipActivate = false, allowNight = false } = {}) 
   // all in one continuous forward motion. The plate triggers the gate open
   // as the bot crosses z=573, and walk_until carries momentum through the
   // gate before the close-delay fires.
-  const RUNWAY = { x: -278, y: 64, z: 571 }
-  await pathTo(RUNWAY, 0, 8000)
+  await pathTo(PEN_RUNWAY, 0, 8000)
   if (deathCount > startDeaths) throw new Error('died en route to gate runway')
 
   // Always align x to gate center (-277.5). No tolerance — fence gap is tight.
@@ -9489,10 +9686,10 @@ async function runEnterPen ({ allowNight = false } = {}) {
     if (!isGracefulDoorFailure(err, hpDelta, deathDelta)) throw err
     logEvent('enter-pen', `attempt 1 failed (${err.message}); retrying`)
     sendEmote('facepalm')
-    if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
+    if (banalPlatitudesOk()) say(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
     await ensurePenDoorClosed()
     await sleep(500)
-    await pathTo({ x: -278, y: 64, z: 571 }, 0, 6000).catch(() => {})
+    await pathTo(PEN_RUNWAY, 0, 6000).catch(() => {})
     try {
       await runGoIntoPen({ skipActivate: true, allowNight })
       return
@@ -9507,7 +9704,7 @@ async function runEnterPen ({ allowNight = false } = {}) {
       sendEmote('facepalm')
       await ensurePenDoorClosed()
       await sleep(500)
-      await pathTo({ x: -278, y: 64, z: 571 }, 0, 6000).catch(() => {})
+      await pathTo(PEN_RUNWAY, 0, 6000).catch(() => {})
       try {
         await runGoIntoPen({ skipActivate: true, allowNight })
       } catch (err3) {
@@ -9613,7 +9810,7 @@ async function runLeavePen () {
         throw err
       }
       sendEmote('facepalm')
-      if (banalPlatitudesOk()) bot.chat(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
+      if (banalPlatitudesOk()) say(pickLine(withPersonaSlot(RETRY_LINES, 'retry')))
       await ensurePenDoorClosed()
       await sleep(500)
       await pathTo(PEN_INSIDE, 0, 6000).catch(() => {})
@@ -9634,19 +9831,19 @@ async function ensureShears () {
   logEvent('shear', 'crafting new shears')
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-  const win = await openChest()
-  const ironStack = win.slots[CHEST_SLOTS.iron]
-  if (!ironStack || ironStack.count < 2) {
-    win.close()
+  const ironHad = await withKitchenChest(async (win) => {
+    const ironStack = win.slots[CHEST_SLOTS.iron]
+    if (!ironStack || ironStack.count < 2) return 0
+    const emptySlot = findEmptyInvSlotInWindow(win, win.slots.length - 36)
+    if (!emptySlot) throw new Error('inventory full')
+    await twoClick(CHEST_SLOTS.iron, emptySlot.windowSlot)
+    return ironStack.count
+  })
+  if (!ironHad) {
     logEvent('shear', 'need 2 iron ingots in chest slot 45')
     return false
   }
-  const containerSize = win.slots.length - 36
-  const emptySlot = findEmptyInvSlotInWindow(win, containerSize)
-  if (!emptySlot) { win.close(); throw new Error('inventory full') }
-  await twoClick(CHEST_SLOTS.iron, emptySlot.windowSlot)
-  win.close()
-  logEvent('shear', `withdrew iron stack from chest slot 45 (had ${ironStack.count})`)
+  logEvent('shear', `withdrew iron stack from chest slot 45 (had ${ironHad})`)
 
   // Craft shears: 2x2 grid, iron in slots 1 and 3 (diagonal top-left, bottom-right).
   // Player inventory window: slot 0 = result, 1-4 = 2x2 grid.
@@ -9783,23 +9980,17 @@ async function runShearSheep () {
   const woolItems = bot.inventory.items().filter(i => i.name === 'wool')
   if (woolItems.length) {
     await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 8000)
-    const chestBlock = bot.blockAt(new Vec3(
-      HARVEST_WAYPOINTS.kitchen_chest.x,
-      HARVEST_WAYPOINTS.kitchen_chest.y,
-      HARVEST_WAYPOINTS.kitchen_chest.z,
-    ))
+    const chestBlock = blockAtPos(KITCHEN_CHEST)
     if (chestBlock) {
       try {
-        const win = await bot.openContainer(chestBlock)
-        for (const w of bot.inventory.items().filter(i => i.name === 'wool')) {
-          await win.deposit(w.type, w.metadata, w.count)
-        }
-        win.close()
+        await withContainer(chestBlock, async (win) => {
+          for (const w of bot.inventory.items().filter(i => i.name === 'wool')) {
+            await win.deposit(w.type, w.metadata, w.count)
+          }
+        })
         const total = woolItems.reduce((s, w) => s + w.count, 0)
         logEvent('shear', `stashed ${total} wool`)
-        logEvent('shear', `stashed ${total} wool`)
       } catch (e) {
-        logEvent('shear', `stash failed: ${e.message}`)
         logEvent('shear', `stash failed: ${e.message}`)
       }
     }
@@ -9829,16 +10020,19 @@ async function runShearSheep () {
 // Bot inventory slot-index convention (mineflayer): main 9-35, hotbar 36-44.
 // In the player's own window, these map to window slots 9-44 unchanged;
 // slots 0-4 are the result + 2x2 craft grid.
-const KITCHEN_CHEST = { x: -266, y: 67, z: 569 }
+const KITCHEN_CHEST = HARVEST_WAYPOINTS.kitchen_chest
 const CHEST_APPROACH_POS = { x: -267, y: 65, z: 570 }
 const CHEST_SLOTS = { water: 16, salt: 25, flour: 26, bowl: 17, bakeware: 8, iron: 18 }
 
 async function openChest () {
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 8000)
-  const b = bot.blockAt(new Vec3(KITCHEN_CHEST.x, KITCHEN_CHEST.y, KITCHEN_CHEST.z))
-  if (!b) throw new Error('kitchen chest block not loaded')
-  return bot.openContainer(b)
+  return openContainerAt(KITCHEN_CHEST, { label: 'kitchen chest' })
+}
+// Walk to the kitchen chest, run fn(win), always close.
+async function withKitchenChest (fn) {
+  const win = await openChest()
+  try { return await fn(win) } finally { try { win.close() } catch (_) {} }
 }
 
 // Pick up from window slot A, drop into window slot B. Raw mode-0 clicks,
@@ -9865,22 +10059,6 @@ function findEmptyInvSlotInWindow (win, containerSize) {
   return null
 }
 
-async function withdrawChestSlot (chestSlot) {
-  // Pull chest slot into the first empty inventory slot. Returns the
-  // mineflayer inventory-slot index (9-44) the item landed in.
-  const win = await openChest()
-  try {
-    const containerSize = win.slots.length - 36
-    const src = win.slots[chestSlot]
-    if (!src) throw new Error(`chest slot ${chestSlot} empty`)
-    const empty = findEmptyInvSlotInWindow(win, containerSize)
-    if (!empty) throw new Error('player inventory full')
-    await twoClick(chestSlot, empty.windowSlot)
-    return empty.invSlot
-  } finally {
-    win.close()
-  }
-}
 
 async function depositToChestSlot (invSlot, chestSlot) {
   const win = await openChest()
@@ -10019,8 +10197,8 @@ async function takeOneCraft () {
 }
 
 async function runBake (mode = 'both') {
-  const taskCheck = startTask('bake', mode)
-  if (!taskCheck.allowed) { bot.chat(`Busy with ${taskCheck.current} — one thing at a time.`); return }
+  const task = beginTask('bake', mode, { busyLine: BUSY_LINE })
+  if (!task.allowed) return
   try {
     // -- 1. Move near the chest so clicks reach (pathfinder safe indoors). --
     await ensureInsideHouse()
@@ -10243,7 +10421,7 @@ async function runBake (mode = 'both') {
 
     let deposited = 0
     try {
-      const b = bot.blockAt(new Vec3(KITCHEN_CHEST.x, KITCHEN_CHEST.y, KITCHEN_CHEST.z))
+      const b = blockAtPos(KITCHEN_CHEST)
       const win = await bot.openContainer(b)
       try {
         const breads = bot.inventory.items().filter(i => i.name === 'bread')
@@ -10272,7 +10450,7 @@ async function runBake (mode = 'both') {
     // 2x2 (or result slot) will fall on the ground when the next window
     // event closes the inventory.
     try { await sweepCraftGridToInv() } catch (_) {}
-    endTask(activeTask.name)
+    task.end()
     bot.pathfinder.setGoal(null)
   }
 }
@@ -10319,11 +10497,7 @@ async function runStashUnknown () {
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
 
-  const chestBlock = bot.blockAt(new Vec3(
-    HARVEST_WAYPOINTS.kitchen_chest.x,
-    HARVEST_WAYPOINTS.kitchen_chest.y,
-    HARVEST_WAYPOINTS.kitchen_chest.z,
-  ))
+  const chestBlock = blockAtPos(KITCHEN_CHEST)
   if (!chestBlock) throw new Error('kitchen chest not reachable')
 
   const win = await bot.openContainer(chestBlock)
@@ -10367,7 +10541,7 @@ async function runStashUnknown () {
   const msg = remaining > 0
     ? `Stashed ${deposited} unknown items. ${remaining} didn't fit.`
     : `Stashed ${deposited} unknown items. Pockets clear.`
-  bot.chat(msg)
+  say(msg)
   logEvent('stash', `deposited=${deposited} remaining=${remaining}`)
 }
 
@@ -10402,24 +10576,20 @@ const STASH_JUNK_EMPTY_LINES = [
 async function runStashJunk (filterNames) {
   const junk = getJunkItems(filterNames)
   if (!junk.length) {
-    bot.chat(pickLine(withPersonaSlot(STASH_JUNK_EMPTY_LINES, 'stashJunkEmpty')))
+    say(pickLine(withPersonaSlot(STASH_JUNK_EMPTY_LINES, 'stashJunkEmpty')))
     return
   }
 
   const label = filterNames?.length
     ? filterNames.join(', ')
     : junk.map(i => `${i.count}× ${i.name}`).join(', ')
-  bot.chat(pickLine(withPersonaSlot(STASH_JUNK_LINES, 'stashJunk')))
+  say(pickLine(withPersonaSlot(STASH_JUNK_LINES, 'stashJunk')))
   logEvent('stash-junk', `starting: ${label}`)
 
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
 
-  const chestBlock = bot.blockAt(new Vec3(
-    HARVEST_WAYPOINTS.kitchen_chest.x,
-    HARVEST_WAYPOINTS.kitchen_chest.y,
-    HARVEST_WAYPOINTS.kitchen_chest.z,
-  ))
+  const chestBlock = blockAtPos(KITCHEN_CHEST)
   if (!chestBlock) throw new Error('kitchen chest not reachable')
 
   const win = await bot.openContainer(chestBlock)
@@ -10438,14 +10608,14 @@ async function runStashJunk (filterNames) {
     }
   } finally { win.close() }
 
-  bot.chat(pickLine(withPersonaSlot(STASH_JUNK_DONE_LINES, 'stashJunkDone'), { deposited }))
+  say(pickLine(withPersonaSlot(STASH_JUNK_DONE_LINES, 'stashJunkDone'), { deposited }))
   logEvent('stash-junk', `deposited=${deposited} remaining=${remaining}`)
 }
 
 async function runStashWheat () {
   const onHand = bot.inventory.items().filter(i => i.name === 'wheat').reduce((s, i) => s + i.count, 0)
-  if (!onHand) { bot.chat('No wheat in my pockets.'); return }
-  bot.chat(`Crafting ${onHand} wheat into plant balls…`)
+  if (!onHand) { say('No wheat in my pockets.'); return }
+  say(`Crafting ${onHand} wheat into plant balls…`)
 
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
@@ -10453,10 +10623,10 @@ async function runStashWheat () {
   const cr = await craftPlantBalls({ ingredient: 'wheat', keepCount: 0, maxBalls: Infinity })
   if (cr.crafted > 0) {
     const r = await depositToHopper('unknown', { keep: 0 })
-    bot.chat(`Crafted ${cr.crafted} plant balls, sent to the hopper.`)
+    say(`Crafted ${cr.crafted} plant balls, sent to the hopper.`)
     logEvent('stash-wheat', `crafted=${cr.crafted} deposited=${r.deposited}`)
   } else {
-    bot.chat('Not enough wheat to craft plant balls.')
+    say('Not enough wheat to craft plant balls.')
     logEvent('stash-wheat', 'no plant balls crafted')
   }
 }
@@ -10473,7 +10643,7 @@ async function runDepositNamed (names) {
   const inv = bot.inventory.items()
   const present = names.filter(n => inv.some(i => i.name === n))
   if (!present.length) {
-    bot.chat(`Nothing to deposit — none of ${names.join(', ')} on hand.`)
+    say(`Nothing to deposit — none of ${names.join(', ')} on hand.`)
     return
   }
 
@@ -10517,11 +10687,7 @@ async function runDepositNamed (names) {
   // everything else → kitchen chest
   const toChest = names.filter(n => n !== 'wheat' && n !== 'wheat_seeds')
   if (toChest.length && toChest.some(n => inv.some(i => i.name === n))) {
-    const chestBlock = bot.blockAt(new Vec3(
-      HARVEST_WAYPOINTS.kitchen_chest.x,
-      HARVEST_WAYPOINTS.kitchen_chest.y,
-      HARVEST_WAYPOINTS.kitchen_chest.z,
-    ))
+    const chestBlock = blockAtPos(KITCHEN_CHEST)
     if (!chestBlock) throw new Error('kitchen chest not reachable')
     const win = await bot.openContainer(chestBlock)
     try {
@@ -10545,7 +10711,7 @@ async function runDepositNamed (names) {
   }
 
   const msg = summary.length ? `Deposited — ${summary.join('; ')}.` : `Nothing deposited.`
-  bot.chat(msg)
+  say(msg)
   logEvent('deposit-named', summary.join('; '))
 }
 
@@ -10556,8 +10722,8 @@ async function runDepositNamed (names) {
 const STASH_ALL_KEEP = { baked_potato: 128, shears: 1 }
 async function runStashAll () {
   const inv = bot.inventory.items()
-  if (!inv.length) { bot.chat('Pockets already empty.'); return }
-  bot.chat('Stashing everything…')
+  if (!inv.length) { say('Pockets already empty.'); return }
+  say('Stashing everything…')
 
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
@@ -10582,11 +10748,7 @@ async function runStashAll () {
     }
   }
 
-  const chestBlock = bot.blockAt(new Vec3(
-    HARVEST_WAYPOINTS.kitchen_chest.x,
-    HARVEST_WAYPOINTS.kitchen_chest.y,
-    HARVEST_WAYPOINTS.kitchen_chest.z,
-  ))
+  const chestBlock = blockAtPos(KITCHEN_CHEST)
   if (!chestBlock) throw new Error('kitchen chest not reachable')
 
   // First pass: figure out how much of each keep-item to retain.
@@ -10684,7 +10846,7 @@ async function runStashAll () {
   const parts = [`stashed ${deposited}`]
   if (kept > 0) parts.push(`kept ${kept} (food/shears)`)
   if (failed > 0) parts.push(`${failed} didn't fit`)
-  bot.chat(parts.join(', ') + '.')
+  say(parts.join(', ') + '.')
   logEvent('stash-all', `deposited=${deposited} kept=${kept} failed=${failed}`)
 }
 
@@ -10711,9 +10873,11 @@ const RECORD_HOME_SLOTS = {
 const RECORD_INFO = {
   record_cat:     { title: 'Cat',     color: 'green',   durationSec: 185, factoid: "Quesss's favorite disc. Like all our records it came from a dungeon chest — though legend tells of an older world where discs were farmed in a long dungeon corridor: a creeper baited behind doors and gates, skeleton arrows doing the rest." },
   record_blocks:  { title: 'Blocks',  color: 'orange',  durationSec: 345, factoid: 'A bright, bouncy C418 tune — the most cheerful track in the collection. Replaced Far in the chest after a mystery visitor made off with it.' },
-  record_mall:    { title: 'Mall',    color: 'purple',  durationSec: 197, factoid: 'C418 wrote this one to feel like wandering an empty shopping mall — spacious and a little mysterious.' },
+  // Mall and Chirp play other songs through the server resource pack (Dad,
+  // 2026-10-01): the label still says Mall/Chirp, so those names stay as aliases.
+  record_mall:    { title: 'Tezeta',  color: 'purple',  durationSec: 377, aliases: ['mall', 'nostalgia', 'mulatu astatke', 'mulatu'], factoid: 'Mulatu Astatke, the father of Ethio-jazz. Tezeta is Amharic for nostalgia: a longing for what is gone. It plays on the Mall disc now.' },
   record_wait:    { title: 'Wait',    color: 'blue',    durationSec: 238, factoid: 'C418 originally titled this one "Where are we now" — the most upbeat disc in our collection.' },
-  record_chirp:   { title: 'Chirp',   color: 'red',     durationSec: 185, factoid: 'A funky retro C418 groove that sounds like a broadcast from another decade.' },
+  record_chirp:   { title: 'I Will Follow You into the Dark', color: 'red', durationSec: 189, aliases: ['chirp', 'death cab', 'death cab for cutie', 'follow you into the dark'], factoid: 'Death Cab for Cutie: one voice and one acoustic guitar. It plays on the Chirp disc now.' },
   record_mellohi: { title: 'Mellohi', color: 'magenta', durationSec: 96,  factoid: 'A short, melancholy waltz in three-four time — C418 at his most wistful.' },
 }
 // Now-playing state (in-memory; lost on restart). Set both when this bot puts
@@ -10771,13 +10935,13 @@ function tryReturnRecord () {
   if (taskBusy()) return
   if (Date.now() - recordReturnLastTryAt < RECORD_RETURN_RETRY_MS) return
   recordReturnLastTryAt = Date.now()
-  const t = startTask('return_record')
-  if (!t.allowed) return
+  const task = beginTask('return_record')
+  if (!task.allowed) return
   const info = recordInfo(nowPlayingRecord)
   logEvent('jukebox', `auto-returning "${info.title}" — song over, bot free`)
   ;(async () => {
     try { await runStopRecord() } catch (e) { logEvent('jukebox-error', `auto-return failed: ${e.message}`) }
-    finally { endTask('return_record') }
+    finally { task.end() }
   })()
 }
 
@@ -10810,13 +10974,13 @@ function tryBedtimeRecord () {
   if (Math.random() > BEDTIME_RECORD_CHANCE) return
   const names = Object.keys(RECORD_INFO)
   const pick = recordInfo(names[Math.floor(Math.random() * names.length)])
-  const task = startTask('bedtime_record')
+  const task = beginTask('bedtime_record')
   if (!task.allowed) return
   logEvent('music', `bedtime record: putting on "${pick.title}" before bed`)
   ;(async () => {
     try { await runPlayRecord({ title: pick.title }) }
     catch (e) { logEvent('music', `bedtime record failed: ${e.message}`) }
-    finally { endTask('bedtime_record') }
+    finally { task.end() }
   })()
 }
 
@@ -10831,7 +10995,7 @@ function findRecordName ({ title, color } = {}) {
   const t = String(title || '').toLowerCase().replace(/^record_/, '').trim()
   const c = String(color || '').toLowerCase().trim()
   for (const [name, info] of Object.entries(RECORD_INFO)) {
-    if (t && (info.title.toLowerCase() === t || name === `record_${t}`)) return name
+    if (t && (info.title.toLowerCase() === t || name === `record_${t}` || (info.aliases || []).includes(t))) return name
     if (!t && c && info.color.toLowerCase() === c) return name
   }
   return null
@@ -10856,9 +11020,9 @@ function answerMusicQuestion (asker, title) {
   setTimeout(() => {
     if (heard) {
       const note = m.notes.length ? ` ${m.notes[m.notes.length - 1]}` : ''
-      bot.chat(`Yes — I last heard it on day ${m.lastHeardDay}.${note}`)
+      say(`Yes — I last heard it on day ${m.lastHeardDay}.${note}`)
     } else {
-      bot.chat(rn ? "No, I haven't heard that one yet." : `No, I don't know "${title}".`)
+      say(rn ? "No, I haven't heard that one yet." : `No, I don't know "${title}".`)
     }
     logEvent('music', `answered ${asker} about "${title}": heard=${heard}`)
   }, 1500 + Math.random() * 2500)
@@ -10879,13 +11043,13 @@ async function runMusicQuestion () {
     logEvent('music', `asking ${pick.username} about "${info.title}"`)
     const answer = await new Promise(resolve => {
       musicAskState = { title: info.title, rival: pick.username, resolve }
-      bot.chat(`${pick.nick}, have you heard "${info.title}"?`)
+      say(`${pick.nick}, have you heard "${info.title}"?`)
       setTimeout(() => resolve(null), MUSIC_ASK_TIMEOUT_MS)
     })
     musicAskState = null
     if (answer === 'no') {
       logEvent('music', `${pick.username} hasn't heard "${info.title}" — putting it on for them`)
-      bot.chat("Oh, you're in for a treat — let me put it on.")
+      say("Oh, you're in for a treat — let me put it on.")
       diaryNote(`introduced ${pick.nick} to "${info.title}" on the jukebox`)
       try { await runPlayRecord({ title: info.title }) } catch (e) { logEvent('music', `play-for-friend failed: ${e.message}`) }
       return true
@@ -10929,7 +11093,7 @@ async function collectNearbyItemDrops (center, radius = 6, timeoutMs = 12000) {
 async function runPlayRecord ({ title, color } = {}) {
   const wanted = findRecordName({ title, color })
   if ((title || color) && !wanted) {
-    bot.chat(`I don't know that disc. Our collection: ${Object.values(RECORD_INFO).map(r => r.title).join(', ')}.`)
+    say(`I don't know that disc. Our collection: ${Object.values(RECORD_INFO).map(r => r.title).join(', ')}.`)
     return
   }
   // Suppress auto-sleep immediately — the DJ is on duty from the moment the
@@ -10942,7 +11106,7 @@ async function runPlayRecord ({ title, color } = {}) {
   if (jb && jb.name === 'jukebox' && jb.metadata === 1) {
     const info = nowPlayingRecord ? recordInfo(nowPlayingRecord) : null
     const stillPlaying = nowPlayingEndsAt && Date.now() < nowPlayingEndsAt
-    bot.chat(info
+    say(info
       ? (stillPlaying ? `The jukebox is already playing "${info.title}".` : `"${info.title}" is still in the jukebox — the song's finished, though.`)
       : 'The jukebox already has a record in it.')
     clearNowPlaying()
@@ -10954,11 +11118,7 @@ async function runPlayRecord ({ title, color } = {}) {
   if (!record) {
     await ensureInsideHouse()
     await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-    const chestBlock = bot.blockAt(new Vec3(
-      HARVEST_WAYPOINTS.kitchen_chest.x,
-      HARVEST_WAYPOINTS.kitchen_chest.y,
-      HARVEST_WAYPOINTS.kitchen_chest.z,
-    ))
+    const chestBlock = blockAtPos(KITCHEN_CHEST)
     if (!chestBlock) { clearNowPlaying(); throw new Error('kitchen chest not reachable') }
     const win = await bot.openContainer(chestBlock)
     const containerSlotCount = win.slots.length - 36
@@ -10968,7 +11128,7 @@ async function runPlayRecord ({ title, color } = {}) {
     }
     if (recordSlot < 0) {
       win.close()
-      bot.chat(wanted ? `"${recordInfo(wanted).title}" isn't in the chest right now.` : 'No record in the chest.')
+      say(wanted ? `"${recordInfo(wanted).title}" isn't in the chest right now.` : 'No record in the chest.')
       clearNowPlaying()
       return
     }
@@ -10976,7 +11136,7 @@ async function runPlayRecord ({ title, color } = {}) {
     for (let j = containerSlotCount; j < win.slots.length; j++) {
       if (!win.slots[j]) { destSlot = j; break }
     }
-    if (destSlot < 0) { win.close(); bot.chat('Inventory is full.'); clearNowPlaying(); return }
+    if (destSlot < 0) { win.close(); say('Inventory is full.'); clearNowPlaying(); return }
     try {
       await bot.clickWindow(recordSlot, 0, 0)
       await bot.clickWindow(destSlot, 0, 0)
@@ -10989,7 +11149,7 @@ async function runPlayRecord ({ title, color } = {}) {
     win.close()
     await sleep(300)
     record = bot.inventory.items().find(i => matches(i.name))
-    if (!record) { bot.chat("Couldn't grab the record from the chest."); clearNowPlaying(); return }
+    if (!record) { say("Couldn't grab the record from the chest."); clearNowPlaying(); return }
     logEvent('jukebox', `withdrew ${record.name} from chest slot ${recordSlot}`)
   }
 
@@ -11001,13 +11161,13 @@ async function runPlayRecord ({ title, color } = {}) {
 
   const stillHas = bot.inventory.items().some(i => i.name === record.name)
   if (stillHas) {
-    bot.chat("The jukebox didn't take the record.")
+    say("The jukebox didn't take the record.")
     logEvent('jukebox', 'play failed — record still in inventory')
     clearNowPlaying()
   } else {
     const info = recordInfo(record.name)
     startNowPlaying(record.name, { mine: true })
-    bot.chat(`Now playing: "${info.title}" — the ${info.color} disc.`)
+    say(`Now playing: "${info.title}" — the ${info.color} disc.`)
     // Follow-up is the bot's OWN feeling about the song, in persona voice —
     // the factoid/lore stays available as background (buildExpressiveContext
     // injects it for whatever's in the jukebox) but is never recited. Local
@@ -11052,10 +11212,10 @@ async function runStopRecord () {
 
   if (!record) {
     if (boxHasRecord) {
-      bot.chat("Ejected the record but couldn't pick it up.")
+      say("Ejected the record but couldn't pick it up.")
       logEvent('jukebox', 'eject ok but pickup failed')
     } else {
-      bot.chat("No record in the jukebox, and I don't see one on the ground.")
+      say("No record in the jukebox, and I don't see one on the ground.")
       logEvent('jukebox', 'nothing to collect')
     }
     return
@@ -11063,11 +11223,7 @@ async function runStopRecord () {
 
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-  const chestBlock = bot.blockAt(new Vec3(
-    HARVEST_WAYPOINTS.kitchen_chest.x,
-    HARVEST_WAYPOINTS.kitchen_chest.y,
-    HARVEST_WAYPOINTS.kitchen_chest.z,
-  ))
+  const chestBlock = blockAtPos(KITCHEN_CHEST)
   if (!chestBlock) throw new Error('kitchen chest not reachable')
   const win = await bot.openContainer(chestBlock)
   const containerSlotCount = win.slots.length - 36
@@ -11077,7 +11233,7 @@ async function runStopRecord () {
     const it = win.slots[j]
     if (it && it.name.startsWith('record_')) { srcSlot = j; break }
   }
-  if (srcSlot < 0) { win.close(); bot.chat('Lost the record somehow.'); return }
+  if (srcSlot < 0) { win.close(); say('Lost the record somehow.'); return }
 
   // Each record goes back to its own assigned slot. If that slot is somehow
   // occupied, fall back to another free home slot; any empty slot only as a
@@ -11096,7 +11252,7 @@ async function runStopRecord () {
   }
   if (destSlot < 0) {
     win.close()
-    bot.chat('The chest is full — no room for the record.')
+    say('The chest is full — no room for the record.')
     logEvent('jukebox', 'can\'t return record — chest full')
     return
   }
@@ -11112,7 +11268,7 @@ async function runStopRecord () {
   win.close()
 
   const returnedInfo = recordInfo(record.name)
-  bot.chat(`"${returnedInfo.title}" is back in its place in the chest.`)
+  say(`"${returnedInfo.title}" is back in its place in the chest.`)
   logEvent('jukebox', `returned ${record.name} ("${returnedInfo.title}") to chest slot ${destSlot}`)
   diaryNote(`collected "${returnedInfo.title}" (the ${returnedInfo.color} disc) and put it back in its place in the chest`)
 }
@@ -11169,7 +11325,7 @@ function skipperSlip (username, commandName) {
   lastSkipperSlipAt = now
   const line = pickAvoidingRecentPhrase(SKIPPER_SLIP_LINES.map(f => f(username)))
   if (!line) return false
-  bot.chat(line)
+  say(line)
   // The facepalm lands right as the correction hits chat.
   setTimeout(() => { try { sendEmote('facepalm') } catch (_) {} }, 500)
   logEvent('skipper-slip', `${commandName} <- ${username}`)
@@ -11189,9 +11345,9 @@ const CHAT_HANDLERS = [
     handler: (user) => {
       abortGen++
       const target = findPlayerEntity(user)
-      if (!target) { bot.chat(pickLine(withPersonaSlot(CANT_SEE_LINES, 'cantSee'), { user })); return }
+      if (!target) { say(pickLine(withPersonaSlot(CANT_SEE_LINES, 'cantSee'), { user })); return }
       sustainPause('follow')
-      bot.chat(pickLine(withPersonaSlot(FOLLOW_START_LINES, 'followStart'), { user }))
+      say(pickLine(withPersonaSlot(FOLLOW_START_LINES, 'followStart'), { user }))
       const startFollow = async () => {
         if (insideHouse()) await runGoOutside()
         followTarget = user
@@ -11212,7 +11368,7 @@ const CHAT_HANDLERS = [
     pattern: /\b(?:(?:take\s+a\s+)?break\s+from|stop|quit|pause)\b[^.!?]{0,20}\bbees\b/i,
     handler: () => {
       const r = stopKeepBees('chat')
-      bot.chat(r.wasActive ? 'Resting from the bees. The hives can keep themselves a while.' : 'I am not tending the bees just now.')
+      say(r.wasActive ? 'Resting from the bees. The hives can keep themselves a while.' : 'I am not tending the bees just now.')
     },
   },
   {
@@ -11222,22 +11378,22 @@ const CHAT_HANDLERS = [
     name: 'tend_bees',
     pattern: /\b(?:tend|keep|look\s+after|care\s+for|go\s+to|back\s+to)\b[^.!?]{0,20}\bbees\b/i,
     handler: (user) => {
-      if (beeState.active) { bot.chat('I am already tending the bees.'); return }
-      if (taskBusy()) { bot.chat(`I am in the middle of ${activeTask.name} — tell me to stop first.`); return }
+      if (beeState.active) { say('I am already tending the bees.'); return }
+      if (taskBusy()) { say(`I am in the middle of ${activeTask.name} — tell me to stop first.`); return }
       const where = beeVoyageWhere()
-      if (where === 'unknown') { bot.chat('I do not know the way to the bees from here. Bring me to the farm or the cove first.'); return }
-      if (beeVoyageTooLate(where)) { bot.chat('Too late in the day for the cove — the trip would land in the dark. Ask me at first light.'); return }
+      if (where === 'unknown') { say('I do not know the way to the bees from here. Bring me to the farm or the cove first.'); return }
+      if (beeVoyageTooLate(where)) { say('Too late in the day for the cove — the trip would land in the dark. Ask me at first light.'); return }
       abortGen++
       followTarget = null; followEntity = null; followChainPos = 0
       sustainPause('bee_voyage')
-      bot.chat(where === 'bee cross' ? 'Tending the bees.'
+      say(where === 'bee cross' ? 'Tending the bees.'
         : where === 'bee dock' ? 'Up the stairs to the bees.'
         : 'Off to the bees — by boat from the port, about three minutes.')
       runBeeVoyage()
         .then((r) => {
-          if (r.arrived && r.keeper?.ok) { if (where !== 'bee cross') bot.chat('At the bee cross. Tending the hives now.') }
-          else if (r.arrived) bot.chat(`I am at the cross, but the keeper would not start — ${r.keeper?.error}.`)
-          else bot.chat(`I did not get to the bees — ${r.error}.`)
+          if (r.arrived && r.keeper?.ok) { if (where !== 'bee cross') say('At the bee cross. Tending the hives now.') }
+          else if (r.arrived) say(`I am at the cross, but the keeper would not start — ${r.keeper?.error}.`)
+          else say(`I did not get to the bees — ${r.error}.`)
         })
         .catch(e => logEvent('voyage', `chat bee voyage failed: ${e.message}`))
         .finally(() => sustainResume('bee_voyage ended'))
@@ -11253,15 +11409,15 @@ const CHAT_HANDLERS = [
     name: 'walk_to_igloo',
     pattern: /\b(?:go|goto|walk|head|travel|journey|hike|run|set\s*off|make\s+your\s+way)\b[^.!?]{0,30}\bigloo\b/i,
     handler: (user) => {
-      if (taskBusy()) { bot.chat(`I am in the middle of ${activeTask.name} — tell me to stop first.`); return }
+      if (taskBusy()) { say(`I am in the middle of ${activeTask.name} — tell me to stop first.`); return }
       abortGen++
       followTarget = null; followEntity = null; followChainPos = 0
       sustainPause('walk_route')
-      bot.chat('Setting off for the igloo — over the roof garden, then south. Give me a minute and a half.')
+      say('Setting off for the igloo — over the roof garden, then south. Give me a minute and a half.')
       runWalkRoute('farm_to_igloo', { fromNearest: true })
         .then((r) => {
-          if (r.ok) bot.chat('I have reached the igloo. Standing on the frozen lake outside it.')
-          else bot.chat(`I did not get there — ${r.error}, at leg ${r.leg ?? '?'}.`)
+          if (r.ok) say('I have reached the igloo. Standing on the frozen lake outside it.')
+          else say(`I did not get there — ${r.error}, at leg ${r.leg ?? '?'}.`)
         })
         .catch(e => logEvent('route', `chat walk to igloo failed: ${e.message}`))
         .finally(() => sustainResume('walk_route ended'))
@@ -11273,18 +11429,18 @@ const CHAT_HANDLERS = [
     name: 'walk_home',
     pattern: /\b(?:come|walk|head|get|go|make\s+your\s+way)\s+(?:back\s+)?(?:home|to\s+the\s+farm)\b/i,
     handler: (user) => {
-      if (taskBusy()) { bot.chat(`I am in the middle of ${activeTask.name} — tell me to stop first.`); return }
+      if (taskBusy()) { say(`I am in the middle of ${activeTask.name} — tell me to stop first.`); return }
       const away = distanceFromHome()
-      if (away <= HOME_RADIUS) { bot.chat('I am already home.'); return }
+      if (away <= HOME_RADIUS) { say('I am already home.'); return }
       if (nearBeeCove()) {
         // From the bees home is by boat (Dad, 2026-10-05).
-        if (beeVoyageTooLate('boat')) { bot.chat('Too late in the day for the water — I will sleep at the cabin and sail home at first light.'); return }
+        if (beeVoyageTooLate('boat')) { say('Too late in the day for the water — I will sleep at the cabin and sail home at first light.'); return }
         abortGen++
         followTarget = null; followEntity = null; followChainPos = 0
         sustainPause('bee_voyage')
-        bot.chat('Coming home from the bees — by boat to the port, about three minutes.')
+        say('Coming home from the bees — by boat to the port, about three minutes.')
         runBeeVoyageHome()
-          .then((r) => bot.chat(r.ok ? 'Home again, standing in the wheat field.' : `I did not get home — ${r.error}.`))
+          .then((r) => say(r.ok ? 'Home again, standing in the wheat field.' : `I did not get home — ${r.error}.`))
           .catch(e => logEvent('voyage', `chat bee voyage home failed: ${e.message}`))
           .finally(() => sustainResume('bee_voyage ended'))
         return
@@ -11294,15 +11450,15 @@ const CHAT_HANDLERS = [
       // blocks away, straight across the sea — off the road, refuse.
       const p0 = bot.entity.position
       const offRoad = Math.min(...ROUTES.farm_to_igloo.legs.map(l => Math.hypot(p0.x - l.x, p0.z - l.z)))
-      if (offRoad > 40) { bot.chat(`I know no walking road home from here — the nearest is ${offRoad.toFixed(0)} blocks off.`); return }
+      if (offRoad > 40) { say(`I know no walking road home from here — the nearest is ${offRoad.toFixed(0)} blocks off.`); return }
       abortGen++
       followTarget = null; followEntity = null; followChainPos = 0
       sustainPause('walk_route')
-      bot.chat(`On my way home — ${away.toFixed(0)} blocks, over the roof and down to the field.`)
+      say(`On my way home — ${away.toFixed(0)} blocks, over the roof and down to the field.`)
       runWalkRoute('farm_to_igloo', { reverse: true, fromNearest: true })
         .then((r) => {
-          if (r.ok) bot.chat('Home again, standing in the wheat field.')
-          else bot.chat(`I got stuck coming home — ${r.error}, at leg ${r.leg ?? '?'}.`)
+          if (r.ok) say('Home again, standing in the wheat field.')
+          else say(`I got stuck coming home — ${r.error}, at leg ${r.leg ?? '?'}.`)
         })
         .catch(e => logEvent('route', `chat walk home failed: ${e.message}`))
         .finally(() => sustainResume('walk_route ended'))
@@ -11314,7 +11470,7 @@ const CHAT_HANDLERS = [
     handler: (user) => {
       if (followTarget && user === followTarget) {
         bot.pathfinder.setGoal(null)
-        bot.chat(pickFarewell())
+        say(pickFarewell())
         logEvent('follow', `${followTarget} said goodbye, stopping follow`)
         followTarget = null; followEntity = null; followChainPos = 0
         sustainResume('follow ended (farewell)')
@@ -11333,13 +11489,13 @@ const CHAT_HANDLERS = [
       const wasSustaining = sustainState.active
       sustainState.active = false
       if (followTarget) {
-        bot.chat(pickLine(withPersonaSlot(STOP_FOLLOW_LINES, 'stopFollow'), { user: followTarget }))
+        say(pickLine(withPersonaSlot(STOP_FOLLOW_LINES, 'stopFollow'), { user: followTarget }))
         followTarget = null; followEntity = null; followChainPos = 0
       } else if (wasSustaining) {
         announceFireStandDown()
         logEvent('sustain', 'stopped by stop command')
       } else {
-        bot.chat(pickLine(withPersonaSlot(STOP_LINES, 'stop')))
+        say(pickLine(withPersonaSlot(STOP_LINES, 'stop')))
       }
     },
   },
@@ -11365,7 +11521,7 @@ const CHAT_HANDLERS = [
         announceFireStandDown()
         logEvent('sustain', `stopped (stand down) by ${user}`)
       } else {
-        bot.chat(pickLine(withPersonaSlot(STAND_DOWN_LINES, 'standDown')))
+        say(pickLine(withPersonaSlot(STAND_DOWN_LINES, 'standDown')))
       }
       logEvent('idle-wander', `disabled (stand down) by ${user}`)
     },
@@ -11377,7 +11533,7 @@ const CHAT_HANDLERS = [
     pattern: /\b(do your (own )?thing|as you were|carry on|go on then)\b/i,
     handler: (user) => {
       idleWanderEnabled = true
-      bot.chat(pickLine(withPersonaSlot(AS_YOU_WERE_LINES, 'asYouWere')))
+      say(pickLine(withPersonaSlot(AS_YOU_WERE_LINES, 'asYouWere')))
       logEvent('idle-wander', `enabled (as you were) by ${user}`)
     },
   },
@@ -11387,7 +11543,7 @@ const CHAT_HANDLERS = [
     handler: (_user) => {
       runStashAll().catch(e => {
         logEvent('stash-all-error', e.message)
-        bot.chat(`Stash failed: ${e.message}`)
+        say(`Stash failed: ${e.message}`)
       })
     },
   },
@@ -11398,12 +11554,12 @@ const CHAT_HANDLERS = [
     name: 'exit_boat',
     pattern: /\b(get|hop|climb|step|jump)\s+(out\s+of|off(\s+of)?)\s+(the|that|your)\s+boat\b|\b(exit|leave)\s+(the|your)\s+boat\b|\bdisembark\b/i,
     handler: (_user) => {
-      if (!seatedBoat()) { bot.chat('I am not in a boat.'); return }
+      if (!seatedBoat()) { say('I am not in a boat.'); return }
       disembark()
-        .then(r => { if (r.landed === false) bot.chat('Out of the boat, but no dry land close by. Swimming for shore.') })
+        .then(r => { if (r.landed === false) say('Out of the boat, but no dry land close by. Swimming for shore.') })
         .catch(e => {
           logEvent('exit-boat-error', e.message)
-          bot.chat(`Could not get out of the boat: ${e.message}`)
+          say(`Could not get out of the boat: ${e.message}`)
         })
     },
   },
@@ -11416,8 +11572,8 @@ const CHAT_HANDLERS = [
         .sort((a, b) => b.count - a.count)
         .slice(0, 3)
         .map(i => `${i.count}× ${i.name}`)
-      if (!items.length) bot.chat(pickLine(withPersonaSlot(INVENTORY_EMPTY, 'inventoryEmpty')))
-      else bot.chat(pickLine(withPersonaSlot(INVENTORY_LINES, 'inventory'), { items: items.join(', ') }))
+      if (!items.length) say(pickLine(withPersonaSlot(INVENTORY_EMPTY, 'inventoryEmpty')))
+      else say(pickLine(withPersonaSlot(INVENTORY_LINES, 'inventory'), { items: items.join(', ') }))
     },
   },
   {
@@ -11428,7 +11584,7 @@ const CHAT_HANDLERS = [
       runShearSheep().catch(e => {
         if (e.name === 'AbortError') return
         logEvent('shear-error', e.message)
-        bot.chat(`Can't shear: ${e.message}`)
+        say(`Can't shear: ${e.message}`)
       })
     },
   },
@@ -11442,7 +11598,7 @@ const CHAT_HANDLERS = [
       // dough-stage mode check will find the dough if present and skip mix.
       runBake('both').catch(e => {
         logEvent('bake-error', e.message)
-        bot.chat(`Bake aborted: ${e.message}`)
+        say(`Bake aborted: ${e.message}`)
       })
     },
   },
@@ -11456,7 +11612,7 @@ const CHAT_HANDLERS = [
       runHarvestPotatoesRightClick({ user }).catch(e => {
         if (e.name === 'AbortError') return
         logEvent('harvest-potato-rc-error', e.message)
-        bot.chat(`Potato run aborted: ${e.message}`)
+        say(`Potato run aborted: ${e.message}`)
       })
     },
   },
@@ -11470,7 +11626,7 @@ const CHAT_HANDLERS = [
     handler: (user) => {
       runSustainFarm(user).catch(e => {
         logEvent('sustain-error', e.message)
-        bot.chat(`Couldn't keep the fire going: ${e.message}`)
+        say(`Couldn't keep the fire going: ${e.message}`)
       })
     },
   },
@@ -11479,7 +11635,7 @@ const CHAT_HANDLERS = [
     pattern: /\b(who(?:'s| is)?|are you|is anyone|anyone)\b.*\b(fire|keeping.+fire|fire.+duty|tending)\b/i,
     handler: () => {
       if (sustainState.active) {
-        bot.chat(`I am — covering ${describeFireDuties()}.`)
+        say(`I am — covering ${describeFireDuties()}.`)
       } else {
         // Off duty: give the keepers first right of reply (user, 2026-07-07 —
         // Roz waited but still said "not me" after Private answered). Listen
@@ -11500,7 +11656,7 @@ const CHAT_HANDLERS = [
               : `staying quiet — known crew: ${[...fireCrew.keys()].join(', ')}`)
             return
           }
-          bot.chat('Not me, not right now.')
+          say('Not me, not right now.')
         }, 4000 + Math.random() * 3000)
       }
     },
@@ -11538,7 +11694,7 @@ const CHAT_HANDLERS = [
         { name: 'a sad wiggle', moves: ['weep', 'shrug', 'weep', 'wave', 'shrug'], spin: false },
       ]
       const dance = dances[Math.floor(Math.random() * dances.length)]
-      bot.chat(`/me does ${dance.name}`)
+      sendCommand(`/me does ${dance.name}`)
       for (const move of dance.moves) {
         sendEmote(move)
         if (dance.spin) {
@@ -11562,7 +11718,7 @@ const CHAT_HANDLERS = [
         for (let i = 0; i < copies; i++) weightedJokes.push(j)
       }
       const joke = pickAvoidingRecentPhrase(weightedJokes, j => j.setup)
-      bot.chat(joke.setup)
+      say(joke.setup)
       pendingJoke = joke
       pendingJokeTimer = setTimeout(() => {
         if (pendingJoke) deliverPunchline()
@@ -11616,7 +11772,7 @@ const CHAT_INTENTS = {
   harvest_wheat: {
     hint: 'harvest/cut/reap the wheat field — ONLY when explicitly asked to harvest ("walk/go/head to the field" is go_to_field, NOT this); args.section one of all|north|south|north-field|south-field (default all)',
     run: (user, args) => {
-      if (sustainState.active) { bot.chat('Already on fire duty — the sustain loop handles harvesting.'); return }
+      if (sustainState.active) { say('Already on fire duty — the sustain loop handles harvesting.'); return }
       abortGen++
       const half = ['north', 'south', 'north-field', 'south-field'].includes(args.section) ? args.section : 'all'
       return runHarvestRightClick({ half, user })
@@ -11637,7 +11793,7 @@ const CHAT_INTENTS = {
   walk_home: {
     hint: 'come back home / return to the farm from somewhere far away (e.g. from the igloo). Walks the igloo route in reverse, over the roof garden and down to the field from the north',
     run: () => {
-      if (distanceFromHome() <= HOME_RADIUS) { bot.chat('I am already home.'); return }
+      if (distanceFromHome() <= HOME_RADIUS) { say('I am already home.'); return }
       abortGen++
       followTarget = null; followEntity = null; followChainPos = 0
       return runWalkRoute('farm_to_igloo', { reverse: true, fromNearest: true })
@@ -11646,7 +11802,7 @@ const CHAT_INTENTS = {
   harvest_potatoes: {
     hint: 'harvest/dig the potato patch',
     run: (user) => {
-      if (sustainState.active) { bot.chat('Already on fire duty — the sustain loop handles harvesting.'); return }
+      if (sustainState.active) { say('Already on fire duty — the sustain loop handles harvesting.'); return }
       abortGen++
       return runHarvestPotatoesRightClick({ user })
     },
@@ -11663,9 +11819,9 @@ const CHAT_INTENTS = {
   unjam_hopper: {
     hint: 'unclog / unjam / clear the hopper or bio-fuel intake (plant balls sitting stuck) — feeds RAW potatoes one at a time until the balls drain',
     run: async () => {
-      if (countOnHand('potato') < 1) { bot.chat('I have no raw potatoes to clear the hopper with.'); return }
+      if (countOnHand('potato') < 1) { say('I have no raw potatoes to clear the hopper with.'); return }
       const ok = await clearJammedHopper()
-      bot.chat(ok ? 'Hopper cleared — the plant balls are draining.' : 'Hopper is still jammed after two passes. Someone should look at the machine.')
+      say(ok ? 'Hopper cleared — the plant balls are draining.' : 'Hopper is still jammed after two passes. Someone should look at the machine.')
     },
   },
   stash_unknown: { hint: 'stash unknown/modded items with no name', run: () => runStashUnknown() },
@@ -11713,11 +11869,11 @@ const CHAT_INTENTS = {
   eat: {
     hint: 'eat something now',
     run: () => {
-      if (bot.food >= 20) { bot.chat(pickLine(withPersonaSlot(EAT_FULL_LINES, 'eatFull'), { food: bot.food })); return Promise.resolve() }
-      return eatSomething().then(msg => bot.chat(msg))
+      if (bot.food >= 20) { say(pickLine(withPersonaSlot(EAT_FULL_LINES, 'eatFull'), { food: bot.food })); return Promise.resolve() }
+      return eatSomething().then(msg => say(msg))
     },
   },
-  sleep: { hint: 'go to bed now', run: () => { bot.chat('Heading to bed.'); return tryAutoSleep() } },
+  sleep: { hint: 'go to bed now', run: () => { say('Heading to bed.'); return tryAutoSleep() } },
   check_furnace: { hint: 'report what is cooking in the furnace', run: () => reportFurnace() },
   look_at_sun: { hint: 'look up at the sun and gaze for a moment', run: () => lookAtSun() },
   play_rps: {
@@ -11742,7 +11898,7 @@ const CHAT_INTENTS = {
       bot.pathfinder.setGoal(null)
       const user = followTarget
       followTarget = null; followEntity = null; followChainPos = 0
-      bot.chat(pickFarewell())
+      say(pickFarewell())
       logEvent('chat-intent', `stop_follow (was following ${user})`)
       sustainResume('follow ended (stop_follow)')
       return Promise.resolve()
@@ -11753,7 +11909,7 @@ const CHAT_INTENTS = {
     run: (user, args) => {
       if (user !== 'ABBYO') {
         logEvent('story-time', `tell_story rejected — only ABBYO can request stories (got ${user})`)
-        bot.chat("Sorry, not unless Abbyo says it's ok.")
+        say("Sorry, not unless Abbyo says it's ok.")
         return Promise.resolve()
       }
       const t = bot.time?.timeOfDay
@@ -11775,10 +11931,10 @@ const CHAT_INTENTS = {
     hint: 'answer a question about fire duty status — "who is keeping the fire?", "are you on fire duty?", "is anyone tending the fire?"',
     run: async () => {
       if (sustainState.active) {
-        bot.chat(`I am — covering ${describeFireDuties()}.`)
+        say(`I am — covering ${describeFireDuties()}.`)
       } else {
         await sleep(4000 + Math.random() * 3000)
-        bot.chat("Not me, not right now.")
+        say("Not me, not right now.")
       }
     },
   },
@@ -11795,17 +11951,17 @@ const CHAT_INTENTS = {
     // Registered as a short task so it can't fight an in-flight harvest for
     // the pathfinder; fire duty waits it out and resumes on its own.
     run: async (_user, args) => {
-      const t = startTask('play_record')
-      if (!t.allowed) { bot.chat(`One moment — ${t.current} first, then music.`); return }
-      try { await runPlayRecord(args || {}) } finally { endTask('play_record') }
+      const task = beginTask('play_record', null, { busyLine: (cur) => `One moment — ${cur} first, then music.` })
+      if (!task.allowed) return
+      try { await runPlayRecord(args || {}) } finally { task.end() }
     },
   },
   stop_record: {
     hint: 'stop the music / eject the record / pick up or collect a record or disc (from the jukebox or the ground near it) and put it away in the chest',
     run: async () => {
-      const t = startTask('stop_record')
-      if (!t.allowed) { bot.chat(`Busy with ${t.current} — the record can wait a moment.`); return }
-      try { await runStopRecord() } finally { endTask('stop_record') }
+      const task = beginTask('stop_record', null, { busyLine: (cur) => `Busy with ${cur} — the record can wait a moment.` })
+      if (!task.allowed) return
+      try { await runStopRecord() } finally { task.end() }
     },
   },
   equip_item: {
@@ -11814,9 +11970,9 @@ const CHAT_INTENTS = {
       const name = typeof args.name === 'string' ? args.name.toLowerCase().replace(/\s+/g, '_') : null
       const ALIASES = { creeper_head: 'skull', skeleton_skull: 'skull', head: 'skull', helmet: 'skull' }
       const resolved = ALIASES[name] || name
-      if (!resolved) { bot.chat("I don't know which item you mean."); return }
+      if (!resolved) { say("I don't know which item you mean."); return }
       const item = bot.inventory.items().find(i => i.name === resolved)
-      if (!item) { bot.chat(`I don't have any ${args.name || 'of that'}.`); return }
+      if (!item) { say(`I don't have any ${args.name || 'of that'}.`); return }
       const dest = ['hand', 'off-hand', 'head', 'torso', 'legs', 'feet'].includes(args.destination) ? args.destination : 'hand'
       await bot.equip(item, dest)
     },
@@ -11937,7 +12093,7 @@ async function runTellStory (user, topic) {
     } catch (e) {
       logEvent('story-time', `couldn't reach bedside: ${e.message}`)
     }
-    bot.chat('Gather round, everyone.')
+    say('Gather round, everyone.')
     await sleep(5000)
     sendEmote('think')
     const { arc, cast, setting } = composeStoryBrief()
@@ -11963,15 +12119,15 @@ async function runTellStory (user, topic) {
       maxChars: 240,
     }, { reactive: true })
     if (!lines || !lines.length) {
-      bot.chat("I... had something. It's gone now.")
+      say("I... had something. It's gone now.")
       return
     }
     for (let i = 0; i < lines.length; i++) {
-      bot.chat(lines[i])
+      say(lines[i])
       if (i < lines.length - 1) await sleep(4000 + Math.random() * 2000)
     }
     await sleep(2000)
-    bot.chat('...That is my story.')
+    say('...That is my story.')
     logEvent('story', `arc="${arc.name}" topic="${topic || '(none)'}" for ${user} (${lines.length} lines)`)
     diaryNote(`told a bedtime tale — ${arc.name}${topic ? `, about "${topic}"` : ''} — for ${user}`)
   } finally {
@@ -11986,10 +12142,8 @@ async function runTellStory (user, topic) {
 // Old furnace_status handler, preserved as a routine for the check_furnace intent.
 async function reportFurnace () {
   sendEmote('think')
-  const b = bot.blockAt(new Vec3(
-    HARVEST_WAYPOINTS.furnace.x, HARVEST_WAYPOINTS.furnace.y, HARVEST_WAYPOINTS.furnace.z,
-  ))
-  if (!b) { bot.chat("Can't see the furnace from here."); return }
+  const b = blockAtPos(HARVEST_WAYPOINTS.furnace)
+  if (!b) { say("Can't see the furnace from here."); return }
   try {
     const f = await bot.openFurnace(b)
     const input = f.inputItem()
@@ -12000,9 +12154,9 @@ async function reportFurnace () {
     if (input) parts.push(`${input.count}× ${input.name} cooking`)
     if (output) parts.push(`${output.count}× ${output.name} done`)
     if (fuel) parts.push(`fuel: ${fuel.count}× ${fuel.name}`)
-    if (!parts.length) bot.chat('Furnace is empty — nothing cooking.')
-    else bot.chat(parts.join('; ') + '.')
-  } catch (e) { bot.chat(`Couldn't check the furnace: ${e.message}`) }
+    if (!parts.length) say('Furnace is empty — nothing cooking.')
+    else say(parts.join('; ') + '.')
+  } catch (e) { say(`Couldn't check the furnace: ${e.message}`) }
 }
 
 function buildRouterSystemPrompt () {
@@ -12269,7 +12423,7 @@ async function routeChatLocal (username, message, { namedMe, fromBot, preVerdict
     Promise.resolve(intent.run(username, verdict.args || {})).catch(e => {
       if (e.name === 'AbortError') return
       logEvent('chat-intent', `${verdict.intent} failed: ${e.message}`)
-      bot.chat(`Couldn't do that: ${e.message}`)
+      say(`Couldn't do that: ${e.message}`)
     })
     return
   }
@@ -12290,7 +12444,7 @@ async function routeChatLocal (username, message, { namedMe, fromBot, preVerdict
       : `${username} just said to the room: "${message}". Nobody addressed you, but it caught your attention and you may have something worth adding. One line, in your voice — or PASS if not.`),
   })
   if (line) {
-    bot.chat(line)
+    say(line)
     logEvent('player-chat', `<${username}> ${message} -> ${line}`)
   }
 }
@@ -12323,7 +12477,7 @@ async function executeClaudeResponse (username, message, result, { namedMe, from
       const chunks = splitChatLines(text, 230)
       for (let i = 0; i < chunks.length; i++) {
         if (i > 0) await sleep(1500 + Math.random() * 1000)
-        bot.chat(chunks[i])
+        say(chunks[i])
       }
     }
   }
@@ -12342,7 +12496,7 @@ async function executeClaudeResponse (username, message, result, { namedMe, from
       }
       if (cmd.action === 'tell_story' && username !== 'ABBYO') {
         logEvent('claude-brain', `rejected tell_story — only ABBYO can request stories (got ${username})`)
-        bot.chat("Sorry, not unless Abbyo says it's ok.")
+        say("Sorry, not unless Abbyo says it's ok.")
         continue
       }
       if (cmd.action === 'keep_fire' && !namedMe) {
@@ -12359,7 +12513,7 @@ async function executeClaudeResponse (username, message, result, { namedMe, from
       } catch (e) {
         if (e.name === 'AbortError') break
         logEvent('claude-intent', `${cmd.action} failed: ${e.message}`)
-        bot.chat(`Couldn't do that: ${e.message}`)
+        say(`Couldn't do that: ${e.message}`)
         break
       }
     }
@@ -12393,11 +12547,11 @@ bot.on('chat', (username, message) => {
   // nothing. The ack is canned — one line per bot, then silence.
   if (!fromBot) {
     if (QUIET_ON_RE.test(message)) {
-      if (setQuietMode(true, `chat by ${username}`)) bot.chat('Quiet hours. Keeping the fire going, silently.')
+      if (setQuietMode(true, `chat by ${username}`)) say('Quiet hours. Keeping the fire going, silently.')
       return
     }
     if (QUIET_OFF_RE.test(message)) {
-      if (setQuietMode(false, `chat by ${username}`)) bot.chat('Good morning. I am listening again.')
+      if (setQuietMode(false, `chat by ${username}`)) say('Good morning. I am listening again.')
       return
     }
   }
@@ -12438,7 +12592,7 @@ bot.on('chat', (username, message) => {
   // Story-time coordination: bot story request — only honored from ABBYO
   if (fromBot && /would you tell us a story/i.test(message) && !storyTimeActive && PERSONA === 'roz') {
     logEvent('story-time', `${username} requested a story — declined (only ABBYO can request)`)
-    bot.chat("Sorry, not unless Abbyo says it's ok.")
+    say("Sorry, not unless Abbyo says it's ok.")
     return
   }
 
@@ -12538,7 +12692,7 @@ bot.on('chat', (username, message) => {
         if (/^(hi|hey|hello|yo|sup|howdy)\b/i.test(stripped)) {
           facePlayer(username).catch(() => {})
           sendEmote('wave')
-          bot.chat(pickGreeting(username))
+          say(pickGreeting(username))
           setTimeout(() => {
             try { rule.handler(username, stripped) } catch (e) { logEvent('chat-error', `${rule.name}: ${e.message}`) }
           }, 1000)
@@ -12810,10 +12964,9 @@ async function runWalkRoute (routeName, { reverse = false, maxLegs = 0, fromNear
     logEvent('route', 'refusing to start: no position yet (still spawning?)')
     return { ok: false, error: 'no position yet — bot is still spawning' }
   }
-  const gate = startTask('walk_route', `${route.label}${reverse ? ' reversed' : ''}`)
-  if (!gate.allowed) return { ok: false, error: 'busy', task: gate.current, detail: gate.detail }
-  const myGen = abortGen
-  const startDeaths = deathCount
+  const task = beginTask('walk_route', `${route.label}${reverse ? ' reversed' : ''}`)
+  if (!task.allowed) return task.busyReply
+  const { myGen, startDeaths } = task
   let legs = reverse ? [...route.legs].reverse() : route.legs
   // fromNearest drops the legs already behind us, so "come home" works from
   // anywhere along the route instead of only from the far end. Without it, a
@@ -12923,7 +13076,7 @@ async function runWalkRoute (routeName, { reverse = false, maxLegs = 0, fromNear
     // 20 blocks after the walk had already reported "lost". Unmanaged movement
     // is exactly what we are trying to stop.
     bot.pathfinder.setGoal(null)
-    endTask('walk_route')
+    task.end()
   }
 }
 
@@ -12986,7 +13139,7 @@ bot.on('entityHurt', (entity) => {
     bot.vehicle = null
   }
   if (bot.health <= 6) {
-    bot.chat('Taking damage — breaking off!')
+    say('Taking damage — breaking off!')
     bot.pathfinder.setGoal(null)
     followTarget = null; followEntity = null; followChainPos = 0
   }
@@ -12997,7 +13150,7 @@ bot.on('entityHurt', (entity) => {
     moddedHostileKillCooldown = now
     const types = [...new Set(hostiles.map(h => h.name))]
     logEvent('hostile-watchdog', `emergency kill on damage — ${types.join(', ')}`)
-    for (const type of types) bot.chat(`/kill @e[type=${type},r=16]`)
+    for (const type of types) sendCommand(`/kill @e[type=${type},r=16]`)
     return
   }
   const unknowns = Object.values(bot.entities).filter(e =>
@@ -13008,7 +13161,7 @@ bot.on('entityHurt', (entity) => {
   moddedHostileKillCooldown = now
   logEvent('hostile-watchdog', `damage from unknown source — killing modded hostiles`)
   for (const type of MODDED_HOSTILE_TYPES) {
-    bot.chat(`/kill @e[type=${type},r=16]`)
+    sendCommand(`/kill @e[type=${type},r=16]`)
   }
 })
 
@@ -13026,7 +13179,7 @@ setInterval(async () => {
 
   const types = [...new Set(hostiles.map(h => h.name))]
   for (const type of types) {
-    bot.chat(`/kill @e[type=${type},r=16]`)
+    sendCommand(`/kill @e[type=${type},r=16]`)
   }
   await sleep(2000)
 
@@ -13378,7 +13531,7 @@ bot.on('playerLeft', (player) => {
   if (!player || player.username === bot.username) return
   logEvent('player-left', player.username)
   const line = pickFarewell()
-  setTimeout(() => bot.chat(line), 800)
+  setTimeout(() => say(line), 800)
 
   // Clean up fire-duty claim so remaining keepers can expand coverage
   const name = String(player.username).toLowerCase()
@@ -13416,1239 +13569,1223 @@ bot.on('end', (reason) => {
 // --- Control server ---
 // Commands come in as JSON lines over a TCP socket on localhost:ctrlPort.
 // Each command gets a JSON reply line. This is how Claude sends instructions.
-function handleCommand (cmd) {
-  const { action, args = {} } = cmd
-  switch (action) {
-    case 'say':
-      bot.chat(String(args.message ?? ''))
-      return { ok: true }
-    case 'emote': {
-      const VALID_EMOTES = ['no','yes','wave','salute','cheer','clap','think','point','shrug','headbang','weep','facepalm']
-      const name = String(args.name ?? '').toLowerCase()
-      if (!VALID_EMOTES.includes(name)) return { ok: false, error: `Unknown emote: ${name}. Valid: ${VALID_EMOTES.join(', ')}` }
-      if (args.dry) return { ok: true, emote: name, dry: true }
-      sendEmote(name)
-      logEvent('emote', name)
-      return { ok: true, emote: name }
-    }
-    case 'whoami': {
-      // Who this bot is on this machine — the helm operator reads this at launch
-      // rather than assuming a name (several machines run helm mode).
-      // `voice` is the persona spec the LLM brains speak from — in helm mode the
-      // operator speaks from it too, so each bot sounds like itself.
-      return {
-        ok: true, nickname: NICKNAME || bot.username, username: bot.username, persona: PERSONA, brain: brainMode,
-        voice: { name: personaSpec.name, systemPrompt: personaSpec.systemPrompt, exemplars: personaSpec.exemplars }
+// ── Control API command table ─────────────────────────────────────────────
+// One handler per action: (args, cmd) → reply object or Promise of one.
+// Sections can add entries with registerCommand(); handleCommand only looks up.
+const COMMANDS = Object.create(null)
+function registerCommand (names, handler) {
+  for (const n of [].concat(names)) {
+    if (COMMANDS[n]) throw new Error(`duplicate command: ${n}`)
+    COMMANDS[n] = handler
+  }
+}
+// Fire-and-forget start for long-running routines: log failures under `tag`
+// and reply at once. `fn` is called synchronously, as the switch used to.
+function startAsync (tag, fn, reply = { ok: true, started: true }) {
+  Promise.resolve(fn()).catch(e => logEvent(tag, e.message))
+  return reply
+}
+
+registerCommand('say', (args, cmd) => {
+  sendCommand(String(args.message ?? ''))
+  return { ok: true }
+})
+registerCommand('emote', (args, cmd) => {
+  const VALID_EMOTES = ['no','yes','wave','salute','cheer','clap','think','point','shrug','headbang','weep','facepalm']
+  const name = String(args.name ?? '').toLowerCase()
+  if (!VALID_EMOTES.includes(name)) return { ok: false, error: `Unknown emote: ${name}. Valid: ${VALID_EMOTES.join(', ')}` }
+  if (args.dry) return { ok: true, emote: name, dry: true }
+  sendEmote(name)
+  logEvent('emote', name)
+  return { ok: true, emote: name }
+})
+registerCommand('whoami', (args, cmd) => {
+  // Who this bot is on this machine — the helm operator reads this at launch
+  // rather than assuming a name (several machines run helm mode).
+  // `voice` is the persona spec the LLM brains speak from — in helm mode the
+  // operator speaks from it too, so each bot sounds like itself.
+  return {
+    ok: true, nickname: NICKNAME || bot.username, username: bot.username, persona: PERSONA, brain: brainMode,
+    voice: { name: personaSpec.name, systemPrompt: personaSpec.systemPrompt, exemplars: personaSpec.exemplars }
+  }
+})
+registerCommand('deaths', (args, cmd) => {
+  return { ok: true, count: deathCount }
+})
+registerCommand('llm', (args, cmd) => {
+  // In no-local modes an un-inited local model reports off:true — not the
+  // misleading healthy:false of a crashed local LLM box.
+  const local = localInited ? llm.status() : { healthy: false, off: true }
+  return { ok: true, ...local, persona: PERSONA, personaName: personaSpec.name, botChatDepth: BOT_CHAT_DEPTH, brainMode, claude: claude.status() }
+})
+registerCommand('quiet', (args, cmd) => {
+  // {"action":"quiet"} → status; {"args":{"enabled":true|false}} → set.
+  if (typeof args.enabled === 'boolean') setQuietMode(args.enabled, 'ctl')
+  return { ok: true, quiet: quietMode }
+})
+registerCommand('brain', (args, cmd) => {
+  const newMode = String(args.mode || '').toLowerCase()
+  if (newMode && !KNOWN_BRAIN_MODES.has(newMode)) {
+    return { ok: false, error: `unknown mode "${newMode}" (known: ${[...KNOWN_BRAIN_MODES].join(', ')})` }
+  }
+  if (CLAUDE_MODES.has(newMode)) {
+    const st = claude.status()
+    if (!st.hasKey) return { ok: false, error: 'CLAUDE_API_KEY / ANTHROPIC_API_KEY not set in .env' }
+    brainMode = newMode
+    if (!localOff()) ensureLocalInited() // plain `claude` still uses the local prefilter/voice
+    claude.revive() // operator switch re-arms after an auth-error mute
+    logEvent('brain', `switched to ${newMode} (${st.model})`)
+    return { ok: true, mode: newMode, model: st.model, prefilter: newMode === 'claude' ? CLAUDE_PREFILTER : 'none', localOff: localOff(), ambientViaClaude: ambientViaClaude() }
+  }
+  if (newMode === 'local') {
+    ensureLocalInited()
+    brainMode = 'local'
+    logEvent('brain', 'switched to local')
+    return { ok: true, mode: 'local', model: llm.status().model }
+  }
+  if (newMode === 'remote') {
+    ensureLocalInited() // remote still classifies via the local model
+    brainMode = 'remote'
+    logEvent('brain', 'switched to remote (chat driven externally via bot-ctl)')
+    return { ok: true, mode: 'remote' }
+  }
+  if (newMode === 'helm') {
+    brainMode = 'helm'
+    autoSleepEnabled = true // known sleep places only, see tryAutoSleep
+    autoGreetEnabled = false
+    idleWanderEnabled = false
+    abortGen++
+    bot.pathfinder.setGoal(null)
+    clearControlStates()
+    logEvent('brain', 'switched to helm — operator has full control, autonomous behaviors disabled (auto-sleep: known places only)')
+    return { ok: true, mode: 'helm', autoSleep: 'known places only', autoGreet: false, idleWander: false }
+  }
+  return { ok: true, mode: brainMode, quiet: quietMode, local: localInited ? llm.status() : { off: true }, claude: claude.status(), prefilter: brainMode === 'claude' ? CLAUDE_PREFILTER : 'none', localOff: localOff(), ambientViaClaude: ambientViaClaude() }
+})
+registerCommand('mem', (args, cmd) => {
+  // Memory counters: {"action":"mem"}
+  return { ok: true, ...memoryStatus() }
+})
+registerCommand('pos', (args, cmd) => {
+  // Prefer raw protocol state — mineflayer's entity may be stuck at 0,0,0 on modded servers.
+  const usingRaw = rawState.spawned && (!bot.entity || (bot.entity.position.x === 0 && bot.entity.position.y === 0))
+  const source = usingRaw ? rawState : (bot.entity ? {
+    x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z,
+    yaw: bot.entity.yaw, pitch: bot.entity.pitch,
+  } : rawState)
+  return {
+    ok: true,
+    x: +source.x.toFixed(2), y: +source.y.toFixed(2), z: +source.z.toFixed(2),
+    yaw: +source.yaw.toFixed(3), pitch: +source.pitch.toFixed(3),
+    health: bot.health, food: bot.food,
+    dimension: bot.game?.dimension,
+    source: usingRaw ? 'raw' : 'mineflayer',
+    deaths: deathCount,
+  }
+})
+registerCommand('look', (args, cmd) => {
+  bot.look(Number(args.yaw ?? 0), Number(args.pitch ?? 0), true)
+  return { ok: true }
+})
+registerCommand('look_at_sun', (args, cmd) => {
+  const sun = sunYawPitch()
+  if (!sun) return { ok: false, error: 'sun is below the horizon' }
+  lookAtSun().catch(() => {})
+  return { ok: true, ...sun }
+})
+registerCommand('control', (args, cmd) => {
+  // args: { state: 'forward'|'back'|'left'|'right'|'jump'|'sprint'|'sneak', value: bool, duration_ms?: number }
+  bot.setControlState(args.state, !!args.value)
+  if (args.duration_ms && args.value) {
+    setTimeout(() => bot.setControlState(args.state, false), args.duration_ms)
+  }
+  return { ok: true }
+})
+registerCommand('tread_water', (args, cmd) => {
+  // args: { enabled?: bool } — query or toggle the always-on tread-water reflex
+  if (typeof args.enabled === 'boolean') treadWaterEnabled = args.enabled
+  return { ok: true, enabled: treadWaterEnabled, treading: treadingWater, inWater: !!bot.entity?.isInWater, air: bot.oxygenLevel ?? null }
+})
+registerCommand('stop', (args, cmd) => {
+  abortGen++
+  stopKeepBees('stop')
+  cancelBeeFoodRun('stop')
+  if (activeTask.name) {
+    logEvent('task', `force-stopped: ${activeTask.name}`)
+    activeTask.name = null
+    activeTask.detail = null
+    activeTask.startedAt = null
+    activeTask.sleeping = false
+  }
+  bot.pathfinder.setGoal(null)
+  clearControlStates()
+  return { ok: true }
+})
+registerCommand('walk_until', (args, cmd) => {
+  // Walk forward until the bot's position reaches a target coordinate along one axis.
+  // args: { axis: 'x'|'z', target: number, direction: 'gte'|'lte', max_ms?: 8000 }
+  const axis = args.axis
+  const target = Number(args.target)
+  const direction = args.direction || 'gte'
+  const maxMs = Number(args.max_ms ?? 8000)
+  return new Promise((resolve) => {
+    const start = Date.now()
+    bot.setControlState('forward', true)
+    const timer = setInterval(() => {
+      const val = bot.entity?.position?.[axis] ?? 0
+      const reached = direction === 'gte' ? val >= target : val <= target
+      if (reached || Date.now() - start > maxMs) {
+        bot.setControlState('forward', false)
+        clearInterval(timer)
+        const p = bot.entity.position
+        resolve({
+          ok: true, reached,
+          x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2),
+          elapsed_ms: Date.now() - start,
+        })
+      }
+    }, 50)
+  })
+})
+registerCommand('goto', (args, cmd) => {
+  const dx = Number(args.dx ?? 0), dy = Number(args.dy ?? 0), dz = Number(args.dz ?? 0)
+  rawState.x += dx; rawState.y += dy; rawState.z += dz
+  client.write('position_look', {
+    x: rawState.x, y: rawState.y, z: rawState.z,
+    yaw: rawState.yaw * 180 / Math.PI, pitch: rawState.pitch * 180 / Math.PI, onGround: true,
+  })
+  return { ok: true, x: rawState.x, y: rawState.y, z: rawState.z }
+})
+registerCommand('pathfind', (args, cmd) => {
+  // Routes through pathTo() so all safety guards apply automatically:
+  // cabin corridor exit, pen exit, occupied-block avoidance.
+  const { x, y, z, range } = args
+  const px = Number(x), py = Number(y), pz = Number(z)
+  const pfRange = range !== undefined ? Number(range) : 1
+  pathTo({ x: px, y: py, z: pz }, pfRange, Number(args.timeout ?? 30000))
+    .then(ok => logEvent('pathfind', `pathTo (${px},${py},${pz}) range=${pfRange} → ${ok ? 'reached' : 'stopped'}`))
+    .catch(e => logEvent('pathfind', `pathTo (${px},${py},${pz}) failed: ${e.message}`))
+  return { ok: true, goal: `(${px},${py},${pz}) range=${pfRange}` }
+})
+registerCommand('pathfind_status', (args, cmd) => {
+  const g = bot.pathfinder.goal
+  return {
+    ok: true,
+    isMoving: bot.pathfinder.isMoving(),
+    isBuilding: bot.pathfinder.isBuilding?.() ?? false,
+    goal: g ? { x: g.x, y: g.y, z: g.z } : null,
+    pos: bot.entity ? { x: +bot.entity.position.x.toFixed(2), y: +bot.entity.position.y.toFixed(2), z: +bot.entity.position.z.toFixed(2) } : null,
+  }
+})
+registerCommand('pathfind_stop', (args, cmd) => {
+  bot.pathfinder.setGoal(null)
+  return { ok: true }
+})
+registerCommand('walk_blocks', (args, cmd) => {
+  // Smooth walk: sends many small position packets over time so server accepts it as walking.
+  // args: { dx, dz, speed? (blocks/sec, default 4) }
+  const dx = Number(args.dx ?? 0), dz = Number(args.dz ?? 0)
+  const speed = Number(args.speed ?? 4)
+  const dist = Math.sqrt(dx * dx + dz * dz)
+  const tickMs = 50 // 20 ticks/sec
+  const steps = Math.max(1, Math.ceil((dist / speed) * (1000 / tickMs)))
+  const stepX = dx / steps, stepZ = dz / steps
+  const startX = bot.entity?.position?.x ?? rawState.x
+  const startY = bot.entity?.position?.y ?? rawState.y
+  const startZ = bot.entity?.position?.z ?? rawState.z
+  let i = 0
+  const timer = setInterval(() => {
+    i++
+    const nx = startX + stepX * i
+    const nz = startZ + stepZ * i
+    client.write('position', { x: nx, y: startY, z: nz, onGround: true })
+    if (i >= steps) clearInterval(timer)
+  }, tickMs)
+  return { ok: true, steps, dist: +dist.toFixed(2) }
+})
+registerCommand('nearby_entities', (args, cmd) => {
+  const p = bot.entity.position
+  const radius = Number(args.radius ?? 16)
+  const list = Object.values(bot.entities)
+    .filter(e => e !== bot.entity && e.position.distanceTo(p) <= radius)
+    .map(e => ({
+      id: e.id, name: e.name, username: e.username, type: e.type,
+      distance: +e.position.distanceTo(p).toFixed(2),
+      x: +e.position.x.toFixed(1), y: +e.position.y.toFixed(1), z: +e.position.z.toFixed(1),
+    }))
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 30)
+  return { ok: true, entities: list }
+})
+registerCommand('nearby_players', (args, cmd) => {
+  return { ok: true, players: Object.keys(bot.players).filter(n => n !== bot.username) }
+})
+registerCommand('named_sheep', (args, cmd) => {
+  scanNamedSheep()
+  const sheep = [...namedSheepTracking.values()]
+  return { ok: true, sheep, registry: NAMED_SHEEP.map(s => s.name) }
+})
+registerCommand('deposit', (args, cmd) => {
+  // Put items from bot inventory into a container.
+  // args: { x, y, z, names: [string] } — all items matching any name get deposited.
+  const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
+  if (!b) return { ok: false, error: 'no block' }
+  const wantedNames = new Set(args.names || [])
+  // Raw grain jams the bio-fuel intake (user rule, 2026-07-07). This path
+  // bypasses depositToHopper, so enforce the rule here too: strip
+  // wheat/seeds when the target is a hopper and report them refused.
+  const refusedGrain = []
+  if (b.name === 'hopper' || (b.position.x === HOPPER.x && b.position.y === HOPPER.y && b.position.z === HOPPER.z)) {
+    for (const g of HOPPER_FORBIDDEN) if (wantedNames.delete(g)) refusedGrain.push(g)
+    if (refusedGrain.length) logEvent('hopper-guard', `deposit: refused ${refusedGrain.join(', ')} into hopper — craft plantballs first`)
+    if (!wantedNames.size) return { ok: false, error: `${refusedGrain.join(', ')} jams the bio-fuel intake — craft plantballs first (use stash_wheat)` }
+  }
+  return withContainer(b, async (win) => {
+    const deposited = {}
+    // Bot inventory items (not the window's first N slots)
+    const items = bot.inventory.items().filter(i => wantedNames.has(i.name))
+    for (const it of items) {
+      try {
+        await win.deposit(it.type, it.metadata, it.count)
+        deposited[it.name] = (deposited[it.name] || 0) + it.count
+      } catch (e) {
+        // Chest full or other — stop early
+        break
       }
     }
-    case 'deaths': {
-      return { ok: true, count: deathCount }
+    return refusedGrain.length ? { ok: true, deposited, refused: refusedGrain } : { ok: true, deposited }
+  }).catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('open_container', (args, cmd) => {
+  const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
+  if (!b) return { ok: false, error: 'no block' }
+  return withContainer(b, async (win) => {
+    // Exclude player inventory (last 36 slots) — only report the container's own slots.
+    const containerSlotCount = win.slots.length - 36
+    const items = []
+    for (let i = 0; i < containerSlotCount; i++) {
+      const it = win.slots[i]
+      if (it) items.push({ slot: i, name: it.name, displayName: it.displayName, count: it.count })
     }
-    case 'llm': {
-      // In no-local modes an un-inited local model reports off:true — not the
-      // misleading healthy:false of a crashed local LLM box.
-      const local = localInited ? llm.status() : { healthy: false, off: true }
-      return { ok: true, ...local, persona: PERSONA, personaName: personaSpec.name, botChatDepth: BOT_CHAT_DEPTH, brainMode, claude: claude.status() }
+    return { ok: true, block: b.name, containerSize: containerSlotCount, items }
+  }).catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('deposit_slot', (args, cmd) => {
+  // Put a stack from the bot's inventory into a specific container slot.
+  // args: { x, y, z, fromSlot, toSlot } — fromSlot is mineflayer inventory
+  // slot (main 9-35, hotbar 36-44); toSlot is container-relative (0-based).
+  // Uses raw two-click, so works for modded `unknown` items.
+  const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
+  if (!b) return { ok: false, error: 'no block' }
+  const fromSlot = Number(args.fromSlot)
+  const toSlot = Number(args.toSlot)
+  return withContainer(b, async (win) => {
+    const containerSlotCount = win.slots.length - 36
+    if (toSlot < 0 || toSlot >= containerSlotCount) {
+      return { ok: false, error: `toSlot ${toSlot} out of range (0..${containerSlotCount - 1})` }
     }
-    case 'quiet': {
-      // {"action":"quiet"} → status; {"args":{"enabled":true|false}} → set.
-      if (typeof args.enabled === 'boolean') setQuietMode(args.enabled, 'ctl')
-      return { ok: true, quiet: quietMode }
+    // Player inventory slot N (mineflayer 9-44) maps to window slot
+    // containerSlotCount + (N - 9). Slots 36-44 (hotbar) map accordingly.
+    const winSrc = containerSlotCount + (fromSlot - 9)
+    if (winSrc < containerSlotCount || winSrc >= win.slots.length) {
+      return { ok: false, error: `fromSlot ${fromSlot} maps out of window (${winSrc})` }
     }
-    case 'brain': {
-      const newMode = String(args.mode || '').toLowerCase()
-      if (newMode && !KNOWN_BRAIN_MODES.has(newMode)) {
-        return { ok: false, error: `unknown mode "${newMode}" (known: ${[...KNOWN_BRAIN_MODES].join(', ')})` }
-      }
-      if (CLAUDE_MODES.has(newMode)) {
-        const st = claude.status()
-        if (!st.hasKey) return { ok: false, error: 'CLAUDE_API_KEY / ANTHROPIC_API_KEY not set in .env' }
-        brainMode = newMode
-        if (!localOff()) ensureLocalInited() // plain `claude` still uses the local prefilter/voice
-        claude.revive() // operator switch re-arms after an auth-error mute
-        logEvent('brain', `switched to ${newMode} (${st.model})`)
-        return { ok: true, mode: newMode, model: st.model, prefilter: newMode === 'claude' ? CLAUDE_PREFILTER : 'none', localOff: localOff(), ambientViaClaude: ambientViaClaude() }
-      }
-      if (newMode === 'local') {
-        ensureLocalInited()
-        brainMode = 'local'
-        logEvent('brain', 'switched to local')
-        return { ok: true, mode: 'local', model: llm.status().model }
-      }
-      if (newMode === 'remote') {
-        ensureLocalInited() // remote still classifies via the local model
-        brainMode = 'remote'
-        logEvent('brain', 'switched to remote (chat driven externally via bot-ctl)')
-        return { ok: true, mode: 'remote' }
-      }
-      if (newMode === 'helm') {
-        brainMode = 'helm'
-        autoSleepEnabled = true // known sleep places only, see tryAutoSleep
-        autoGreetEnabled = false
-        idleWanderEnabled = false
-        abortGen++
-        bot.pathfinder.setGoal(null)
-        clearControlStates()
-        logEvent('brain', 'switched to helm — operator has full control, autonomous behaviors disabled (auto-sleep: known places only)')
-        return { ok: true, mode: 'helm', autoSleep: 'known places only', autoGreet: false, idleWander: false }
-      }
-      return { ok: true, mode: brainMode, quiet: quietMode, local: localInited ? llm.status() : { off: true }, claude: claude.status(), prefilter: brainMode === 'claude' ? CLAUDE_PREFILTER : 'none', localOff: localOff(), ambientViaClaude: ambientViaClaude() }
+    const srcItem = win.slots[winSrc]
+    if (!srcItem) { return { ok: false, error: `inv slot ${fromSlot} is empty` } }
+    // Raw grain jams the bio-fuel intake (user rule, 2026-07-07) — this
+    // path also bypasses depositToHopper, so enforce the rule here too.
+    if (HOPPER_FORBIDDEN.has(srcItem.name) &&
+        (b.name === 'hopper' || (b.position.x === HOPPER.x && b.position.y === HOPPER.y && b.position.z === HOPPER.z))) {
+      logEvent('hopper-guard', `deposit_slot: refused ${srcItem.name} into hopper — craft plantballs first`)
+      return { ok: false, error: `${srcItem.name} jams the bio-fuel intake — craft plantballs first (use stash_wheat)` }
     }
-    case 'mem': {
-      // Memory counters: {"action":"mem"}
-      return { ok: true, ...memoryStatus() }
+    if (win.slots[toSlot]) { return { ok: false, error: `chest slot ${toSlot} already occupied` } }
+    try {
+      await bot.clickWindow(winSrc, 0, 0)
+      await bot.clickWindow(toSlot, 0, 0)
+      return { ok: true, name: srcItem.name, count: srcItem.count, fromSlot, toSlot }
+    } catch (e) {
+      try { await bot.clickWindow(-999, 0, 0) } catch (_) {}
+      return { ok: false, error: e.message }
     }
-    case 'pos': {
-      // Prefer raw protocol state — mineflayer's entity may be stuck at 0,0,0 on modded servers.
-      const usingRaw = rawState.spawned && (!bot.entity || (bot.entity.position.x === 0 && bot.entity.position.y === 0))
-      const source = usingRaw ? rawState : (bot.entity ? {
-        x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z,
-        yaw: bot.entity.yaw, pitch: bot.entity.pitch,
-      } : rawState)
-      return {
-        ok: true,
-        x: +source.x.toFixed(2), y: +source.y.toFixed(2), z: +source.z.toFixed(2),
-        yaw: +source.yaw.toFixed(3), pitch: +source.pitch.toFixed(3),
-        health: bot.health, food: bot.food,
-        dimension: bot.game?.dimension,
-        source: usingRaw ? 'raw' : 'mineflayer',
-        deaths: deathCount,
-      }
+  }).catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('withdraw_slot', (args, cmd) => {
+  // Take a specific container slot into the bot's inventory, bypassing
+  // mineflayer's item registry (works for modded `unknown` items).
+  // args: { x, y, z, slot } — `slot` is the container-relative slot index
+  // as reported by open_container. Picks up the stack and drops it into
+  // the first empty player-inventory slot.
+  const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
+  if (!b) return { ok: false, error: 'no block' }
+  const srcSlot = Number(args.slot)
+  return withContainer(b, async (win) => {
+    const containerSlotCount = win.slots.length - 36
+    if (srcSlot < 0 || srcSlot >= containerSlotCount) {
+      return { ok: false, error: `slot ${srcSlot} out of range (0..${containerSlotCount - 1})` }
     }
-    case 'look': {
-      bot.look(Number(args.yaw ?? 0), Number(args.pitch ?? 0), true)
-      return { ok: true }
+    const srcItem = win.slots[srcSlot]
+    if (!srcItem) { return { ok: false, error: `chest slot ${srcSlot} is empty` } }
+    let destSlot = -1
+    for (let j = containerSlotCount; j < win.slots.length; j++) {
+      if (!win.slots[j]) { destSlot = j; break }
     }
-    case 'look_at_sun': {
-      const sun = sunYawPitch()
-      if (!sun) return { ok: false, error: 'sun is below the horizon' }
-      lookAtSun().catch(() => {})
-      return { ok: true, ...sun }
+    if (destSlot < 0) { return { ok: false, error: 'player inventory full' } }
+    try {
+      await bot.clickWindow(srcSlot, 0, 0)
+      await bot.clickWindow(destSlot, 0, 0)
+      return { ok: true, name: srcItem.name, displayName: srcItem.displayName, count: srcItem.count, destSlot }
+    } catch (e) {
+      try { await bot.clickWindow(-999, 0, 0) } catch (_) {}
+      return { ok: false, error: e.message }
     }
-    case 'control': {
-      // args: { state: 'forward'|'back'|'left'|'right'|'jump'|'sprint'|'sneak', value: bool, duration_ms?: number }
-      bot.setControlState(args.state, !!args.value)
-      if (args.duration_ms && args.value) {
-        setTimeout(() => bot.setControlState(args.state, false), args.duration_ms)
-      }
-      return { ok: true }
+  }).catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('dig', (args, cmd) => {
+  // Left-click: break a block.
+  const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
+  if (!b) return { ok: false, error: 'no block at coords' }
+  return bot.dig(b).then(() => ({ ok: true, name: b.name })).catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('place_block', (args, cmd) => {
+  // Right-click: place the currently-held item onto a face of a reference block.
+  // args: { x, y, z, face: 'top'|'bottom'|'north'|'south'|'east'|'west' } — ref block coords
+  const faces = {
+    top: new Vec3(0, 1, 0), bottom: new Vec3(0, -1, 0),
+    north: new Vec3(0, 0, -1), south: new Vec3(0, 0, 1),
+    east: new Vec3(1, 0, 0), west: new Vec3(-1, 0, 0),
+  }
+  const face = faces[args.face || 'top']
+  if (!face) return { ok: false, error: `bad face: ${args.face}` }
+  const ref = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
+  if (!ref) return { ok: false, error: 'no reference block' }
+  return bot.placeBlock(ref, face)
+    .then(() => ({ ok: true, on: ref.name }))
+    .catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('activate_item', (args, cmd) => {
+  // Right-click air: use held item (eat, drink, bow-draw, etc.).
+  // args: { offhand?: bool }
+  try {
+    bot.activateItem(!!args.offhand)
+    return { ok: true }
+  } catch (e) { return { ok: false, error: e.message } }
+})
+registerCommand('deactivate_item', (args, cmd) => {
+  try { bot.deactivateItem(); return { ok: true } }
+  catch (e) { return { ok: false, error: e.message } }
+})
+registerCommand('activate_and_read', (args, cmd) => {
+  // Right-click a block, wait for a window to open, dump its contents.
+  // For modded containers that mineflayer's openContainer doesn't recognize
+  // (empty-name blocks). args: { x, y, z, waitMs? }
+  const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
+  if (!b) return { ok: false, error: 'no block' }
+  const waitMs = args.waitMs != null ? Number(args.waitMs) : 1500
+  return new Promise(async resolve => {
+    let settled = false
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      resolve(result)
     }
-    case 'tread_water': {
-      // args: { enabled?: bool } — query or toggle the always-on tread-water reflex
-      if (typeof args.enabled === 'boolean') treadWaterEnabled = args.enabled
-      return { ok: true, enabled: treadWaterEnabled, treading: treadingWater, inWater: !!bot.entity?.isInWater, air: bot.oxygenLevel ?? null }
+    const onOpen = (win) => {
+      setTimeout(() => {
+        try {
+          const items = []
+          for (let i = 0; i < win.slots.length; i++) {
+            const it = win.slots[i]
+            if (it) items.push({ slot: i, name: it.name, displayName: it.displayName, count: it.count })
+          }
+          const summary = { ok: true, windowType: win.type, windowId: win.id, totalSlots: win.slots.length, items }
+          win.close()
+          finish(summary)
+        } catch (e) {
+          finish({ ok: false, error: `read failed: ${e.message}` })
+        }
+      }, 300)
     }
-    case 'stop': {
+    bot.once('windowOpen', onOpen)
+    setTimeout(() => {
+      bot.removeListener('windowOpen', onOpen)
+      finish({ ok: false, error: `no window opened within ${waitMs}ms`, currentWindow: bot.currentWindow ? { type: bot.currentWindow.type, id: bot.currentWindow.id } : null })
+    }, waitMs)
+    try {
+      await bot.activateBlock(b)
+    } catch (e) {
+      finish({ ok: false, error: `activate failed: ${e.message}` })
+    }
+  })
+})
+registerCommand('tend_apiary', (args, cmd) => {
+  // One hive, once. args: { x, y, z, dry_run? }. See tendApiary().
+  return tendApiary(Number(args.x), Number(args.y), Number(args.z), !!args.dry_run)
+})
+registerCommand('keep_bees', (args, cmd) => {
+  // Start the bee keeper (see runKeepBees). Refused away from the bee cross.
+  return startKeepBees({ intervalMs: args.interval_ms })
+})
+registerCommand('bee_voyage', (args, cmd) => {
+  // "Tend the bees" from wherever she is: farm → boat → bee dock → cross,
+  // then the keeper. args: { force?: true to sail after BEE_VOYAGE_LATEST_START }
+  return runBeeVoyage({ force: !!args.force })
+})
+registerCommand('bee_voyage_home', (args, cmd) => {
+  // Bees → farm: stop the keeper, dock → boat → port → wheat field.
+  // args: { force?: true to sail after BEE_VOYAGE_LATEST_START }
+  return runBeeVoyageHome({ force: !!args.force })
+})
+registerCommand('bee_chores', (args, cmd) => {
+  // Run one pass of the bee cabin chores now (birch, potato patch, furnaces).
+  // args: { force?: true to visit the furnaces even if not due }
+  if (taskBusy()) return { ok: false, error: `busy with ${activeTask.name}` }
+  if (beeState.inRound) return { ok: false, error: 'a keeper round is running' }
+  return runBeeCabinChores({ force: !!args.force })
+})
+registerCommand('bee_chores_status', (args, cmd) => {
+  return { ok: true, ...beeChoresStatus() }
+})
+registerCommand('keep_bees_stop', (args, cmd) => {
+  return stopKeepBees(args.reason || 'ctl')
+})
+registerCommand('keep_bees_status', (args, cmd) => {
+  return { ok: true, ...keepBeesStatus() }
+})
+registerCommand('dump_drones', (args, cmd) => {
+  if (taskBusy() || beeState.inRound || beeFoodRun.busy) return { ok: false, error: 'busy' }
+  if (!nearBeeCross()) return { ok: false, error: 'not at the bee cross' }
+  if (insideBeeCabin()) return { ok: false, error: 'inside the bee cabin' }
+  return dumpDronesBehindCabin()
+})
+registerCommand('furnace_state', (args, cmd) => {
+  // Open a furnace and report what's in each slot. Slots: 0=input,
+  // 1=fuel, 2=output. Assumes fuel is already present.
+  const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
+  if (!b) return { ok: false, error: 'no block' }
+  return withContainer(b, async (f) => {
+    const slots = ['inputItem', 'fuelItem', 'outputItem'].map(fn => {
+      const it = f[fn]()
+      return it ? { name: it.name, displayName: it.displayName, count: it.count } : null
+    })
+    return { ok: true, input: slots[0], fuel: slots[1], output: slots[2] }
+  }, { furnace: true }).catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('furnace_put', (args, cmd) => {
+  // Put items from bot inventory into the furnace input slot. Works for
+  // vanilla items (potato, beef, iron ore, etc.).
+  // args: { x,y,z, name, count, slot?: 'input'|'fuel', metadata? }
+  const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
+  if (!b) return { ok: false, error: 'no block' }
+  const wantName = String(args.name)
+  const wantCount = Number(args.count)
+  const wantMeta = args.metadata != null ? Number(args.metadata) : null
+  const it = bot.inventory.items().find(i => i.name === wantName && (wantMeta == null || i.metadata === wantMeta))
+  if (!it) return { ok: false, error: `no ${wantName} in inventory` }
+  const n = Math.min(wantCount, it.count)
+  const toFuel = args.slot === 'fuel'
+  return withContainer(b, async (f) => {
+    try {
+      if (toFuel) await f.putFuel(it.type, it.metadata, n)
+      else await f.putInput(it.type, it.metadata, n)
+      return { ok: true, put: n, name: wantName, slot: toFuel ? 'fuel' : 'input' }
+    } catch (e) {
+      return { ok: false, error: e.message }
+    }
+  }, { furnace: true }).catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('furnace_take', (args, cmd) => {
+  // Take the output of the furnace into the bot's inventory.
+  // args: { x,y,z, slot?: 'output'|'fuel' } — 'fuel' pulls the fuel stack
+  // (e.g. charcoal moved to the potato furnace before saplings go in).
+  const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
+  if (!b) return { ok: false, error: 'no block' }
+  const fromFuel = args.slot === 'fuel'
+  return withContainer(b, async (f) => {
+    const out = fromFuel ? f.fuelItem() : f.outputItem()
+    if (!out) { return { ok: false, error: `${fromFuel ? 'fuel' : 'output'} slot empty` } }
+    try {
+      const got = fromFuel ? await f.takeFuel() : await f.takeOutput()
+      return { ok: true, name: got?.name, count: got?.count }
+    } catch (e) {
+      return { ok: false, error: e.message }
+    }
+  }, { furnace: true }).catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('click_slot', (args, cmd) => {
+  // Raw clickWindow on whichever window is currently open (defaults to
+  // the player's own inventory window if no container is open). Used for
+  // modded mechanics that mineflayer's recipe system can't see — e.g.
+  // 2x2 inventory crafting with modded ingredients/outputs.
+  // args: { slot, button=0, mode=0 }  (mode 1 = shift-click)
+  const slot = Number(args.slot)
+  const button = args.button != null ? Number(args.button) : 0
+  const mode = args.mode != null ? Number(args.mode) : 0
+  return bot.clickWindow(slot, button, mode)
+    .then(() => {
+      const win = bot.currentWindow || bot.inventory
+      const it = win.slots[slot]
+      return { ok: true, slot, button, mode, slotNow: it ? { name: it.name, count: it.count } : null }
+    })
+    .catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('window_slots', (args, cmd) => {
+  // Dump the current window's slot contents (defaults to player inventory
+  // if no container open). Handy for watching crafting grid state.
+  const win = bot.currentWindow || bot.inventory
+  const items = []
+  for (let i = 0; i < win.slots.length; i++) {
+    const it = win.slots[i]
+    if (it) items.push({ slot: i, name: it.name, displayName: it.displayName, count: it.count })
+  }
+  return { ok: true, windowType: bot.currentWindow ? bot.currentWindow.type : 'inventory', total: win.slots.length, items }
+})
+registerCommand('close_window', (args, cmd) => {
+  if (bot.currentWindow) {
+    bot.closeWindow(bot.currentWindow)
+    return { ok: true }
+  }
+  return { ok: true, note: 'no window open' }
+})
+registerCommand('move_slot', (args, cmd) => {
+  // Move a stack within the bot's own inventory (no container open).
+  // args: { from, to } — both are mineflayer inventory slot numbers
+  // (main inv 9-35, hotbar 36-44). Works for modded `unknown` items
+  // because bot.moveSlotItem uses raw window clicks, not item lookups.
+  const from = Number(args.from)
+  const to = Number(args.to)
+  return bot.moveSlotItem(from, to)
+    .then(() => ({ ok: true, from, to }))
+    .catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('click_window', (args, cmd) => {
+  const slot = Number(args.slot)
+  const mouseButton = args.mouseButton ?? 0
+  const mode = args.mode ?? 0
+  return bot.clickWindow(slot, mouseButton, mode)
+    .then(() => ({ ok: true, slot, mouseButton, mode }))
+    .catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('deposit_one', (args, cmd) => {
+  const cx = Number(args.x), cy = Number(args.y), cz = Number(args.z)
+  const itemName = args.name
+  const containerSlot = args.containerSlot ?? 1
+  const block = bot.blockAt(new Vec3(cx, cy, cz))
+  if (!block) return { ok: false, error: 'block not loaded' }
+  return withContainer(block, async (win) => {
+    const containerSize = win.slots.length - 36
+    const playerSlots = win.slots.slice(containerSize)
+    const srcIdx = playerSlots.findIndex(s => s && s.name === itemName)
+    if (srcIdx === -1) return { ok: false, error: `no ${itemName} in inventory` }
+    const winSlot = containerSize + srcIdx
+    const count = playerSlots[srcIdx].count
+    await bot.clickWindow(winSlot, 1, 0)
+    await bot.clickWindow(containerSlot, 1, 0)
+    if (count > 2) await bot.clickWindow(winSlot, 0, 0)
+    else if (count === 2) {
+      const emptyIdx = playerSlots.findIndex((s, i) => i !== srcIdx && !s)
+      if (emptyIdx !== -1) await bot.clickWindow(containerSize + emptyIdx, 0, 0)
+      else await bot.clickWindow(winSlot, 0, 0)
+    }
+    return { ok: true, deposited: 1, item: itemName, into: containerSlot }
+  }).catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('unequip', (args, cmd) => {
+  // Empty the bot's hand (or other slot) so right-clicks don't use/eat
+  // whatever's held. Needed for modded GUIs that only open on bare-hand.
+  const dest = args.destination || 'hand'
+  return bot.unequip(dest)
+    .then(() => ({ ok: true, destination: dest }))
+    .catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('equip_slot', (args, cmd) => {
+  // Equip by inventory slot number (useful when items show as 'unknown').
+  const slot = Number(args.slot)
+  const item = bot.inventory.slots[slot]
+  if (!item) return { ok: false, error: `empty slot ${slot}` }
+  return bot.equip(item, args.destination || 'hand')
+    .then(() => ({ ok: true, equipped: item.name, count: item.count, slot }))
+    .catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('equip', (args, cmd) => {
+  // Put an item by name into a slot (default 'hand').
+  // args: { name, destination?: 'hand'|'off-hand'|'head'|'torso'|'legs'|'feet' }
+  const item = bot.inventory.items().find(i => i.name === args.name)
+  if (!item) return { ok: false, error: `item not in inventory: ${args.name}` }
+  return bot.equip(item, args.destination || 'hand')
+    .then(() => ({ ok: true, equipped: item.name, count: item.count }))
+    .catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('toss_trash', (args, cmd) => {
+  const trash = bot.inventory.items().filter(isTrash)
+  if (!trash.length) return { ok: true, tossed: [] }
+  return tossTrash().then(() => ({
+    ok: true,
+    tossed: trash.map(i => ({ name: i.name, count: i.count }))
+  })).catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('toss_slot', (args, cmd) => {
+  const slot = args?.slot
+  if (slot == null) return { ok: false, error: 'slot required' }
+  const item = bot.inventory.slots[slot]
+  if (!item) return { ok: false, error: `slot ${slot} is empty` }
+  return bot.tossStack(item).then(() => ({
+    ok: true, tossed: { name: item.name, count: item.count, slot }
+  })).catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('inventory', (args, cmd) => {
+  // type/metadata/nbt identify modded items that report name 'unknown'
+  // (Forestry bees keep their species in NBT, 2026-09-29).
+  const items = bot.inventory.items().map(i => {
+    const it = { name: i.name, count: i.count, slot: i.slot, type: i.type, metadata: i.metadata }
+    if (i.nbt) it.nbt = JSON.stringify(i.nbt).slice(0, 400)
+    return it
+  })
+  const held = bot.heldItem ? { name: bot.heldItem.name, count: bot.heldItem.count } : null
+  return { ok: true, held, items }
+})
+registerCommand('activate_entity', (args, cmd) => {
+  // Right-click on an entity (the held item is used). For shearing sheep,
+  // milking cows, breeding, etc.
+  // args: { id, mode? }
+  //   mode='single' (default) — one USE_ENTITY mouse=0 packet
+  //   mode='double'           — mouse=0 + mouse=2 (interact + interact_at),
+  //                             matching what a vanilla client sends per
+  //                             right-click. May be more reliable on
+  //                             moving entities since interact_at carries
+  //                             the hit position.
+  const id = Number(args.id)
+  if (!Number.isFinite(id)) return { ok: false, error: 'id required' }
+  const ent = bot.entities[id]
+  if (!ent) return { ok: false, error: `no entity ${id}` }
+  // Default to 'double' — A/B test 2026-05-14 showed ~3x wool yield
+  // vs single-packet, matching how vanilla clients send right-clicks.
+  const mode = args.mode === 'single' ? 'single' : 'double'
+  const promise = mode === 'double'
+    ? bot.activateEntity(ent).then(() => bot.activateEntityAt(ent, ent.position))
+    : bot.activateEntity(ent)
+  return promise
+    .then(() => ({ ok: true, mode, name: ent.name, id, x: ent.position.x, y: ent.position.y, z: ent.position.z }))
+    .catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('activate_block', (args, cmd) => {
+  // args: { x, y, z } — right-click the block at those absolute coords.
+  const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
+  if (!b) return { ok: false, error: 'no block at coords' }
+  return bot.activateBlock(b).then(() => ({ ok: true, name: b.name })).catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('find_blocks', (args, cmd) => {
+  // args: { names: [string], maxDistance?: number, count?: number }
+  const names = args.names || []
+  const maxDistance = Number(args.maxDistance ?? 32)
+  const count = Number(args.count ?? 10)
+  const mcData = require('minecraft-data')(bot.version)
+  const ids = names.map(n => mcData.blocksByName[n]?.id).filter(x => x !== undefined)
+  if (ids.length === 0) return { ok: false, error: `no known blocks for names: ${names.join(',')}` }
+  const positions = bot.findBlocks({ matching: ids, maxDistance, count })
+  const results = positions.map(p => {
+    const b = bot.blockAt(p)
+    return {
+      name: b?.name, x: p.x, y: p.y, z: p.z,
+      metadata: b?.metadata,
+      distance: +bot.entity.position.distanceTo(p).toFixed(2),
+    }
+  })
+  return { ok: true, blocks: results }
+})
+registerCommand('block_at', (args, cmd) => {
+  const b = bot.blockAt(bot.entity.position.offset(args.dx ?? 0, args.dy ?? 0, args.dz ?? 0))
+  if (!b) return { ok: false, error: 'no block' }
+  return { ok: true, name: b.name, displayName: b.displayName, metadata: b.metadata, type: b.type, x: b.position.x, y: b.position.y, z: b.position.z }
+})
+registerCommand('block_at_abs', (args, cmd) => {
+  const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
+  if (!b) return { ok: false, error: 'no block' }
+  return { ok: true, name: b.name, metadata: b.metadata, type: b.type, boundingBox: b.boundingBox, shapes: b.shapes, x: b.position.x, y: b.position.y, z: b.position.z }
+})
+registerCommand('recent_chat', (args, cmd) => {
+  return { ok: true, lines: recentChat.slice() }
+})
+registerCommand('time', (args, cmd) => {
+  const t = bot.time || {}
+  return { ok: true, timeOfDay: t.timeOfDay, day: t.day, age: t.age, isDay: t.isDay, raining: !!bot.isRaining, thunder: (bot.thunderState || 0) > 0 }
+})
+registerCommand('auto_sleep', (args, cmd) => {
+  if (typeof args.enabled === 'boolean') autoSleepEnabled = args.enabled
+  return { ok: true, enabled: autoSleepEnabled, busy: autoSleepBusy, bedtime: isBedtime(), inside: insideHouse(), sleeping: !!bot.isSleeping }
+})
+registerCommand('sleep', (args, cmd) => {
+  if (bot.isSleeping) return { ok: true, already: true }
+  if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+  if (sleepPlaceHere()?.name === 'igloo') {
+    iglooSleep().catch(e => logEvent('sleep', `igloo sleep failed: ${e.message}`))
+    return { ok: true, started: true, location: 'igloo' }
+  }
+  if (sleepPlaceHere()?.name === 'bee-cabin') {
+    beeCabinSleep().catch(e => logEvent('sleep', `bee cabin sleep failed: ${e.message}`))
+    return { ok: true, started: true, location: 'bee-cabin' }
+  }
+  if (!insideHouse() && !insideCabinBedroom()) return { ok: false, error: 'not inside' }
+  if (insideCabinBedroom()) {
+    cabinSleep().catch(e => logEvent('sleep', `cabin sleep failed: ${e.message}`))
+    return { ok: true, started: true, location: 'cabin' }
+  }
+  goToBed('sleep').catch(e => logEvent('sleep', `sleep failed: ${e.message}`))
+  return { ok: true, started: true, location: 'farm' }
+})
+registerCommand('auto_food', (args, cmd) => {
+  if (typeof args.enabled === 'boolean') foodSafetyEnabled = args.enabled
+  if (Number.isFinite(args.min)) foodSafetyMin = args.min
+  return { ok: true, enabled: foodSafetyEnabled, busy: foodSafetyBusy, min: foodSafetyMin, baked: countBakedPotatoes() }
+})
+registerCommand('collect_bake', (args, cmd) => {
+  // Force a collection on the next timer tick (also recovers an orphaned
+  // furnace batch after a restart, since pendingBake is in-memory only).
+  pendingBake.active = true
+  pendingBake.doneAt = 0
+  return { ok: true, pending: true, baked: countBakedPotatoes() }
+})
+registerCommand('idle_wander', (args, cmd) => {
+  // Programmatic equivalent of the "stand down" / "do your thing" chat
+  // commands. Disabling also cancels any in-progress wander and freezes the
+  // bot in place, so an experiment can position it without a wander yanking
+  // it away. Gates wandering and pen/field joins (idleWanderEnabled).
+  if (typeof args.enabled === 'boolean') {
+    idleWanderEnabled = args.enabled
+    if (!args.enabled) {
       abortGen++
-      stopKeepBees('stop')
-      cancelBeeFoodRun('stop')
-      if (activeTask.name) {
-        logEvent('task', `force-stopped: ${activeTask.name}`)
-        activeTask.name = null
-        activeTask.detail = null
-        activeTask.startedAt = null
-        activeTask.sleeping = false
-      }
       bot.pathfinder.setGoal(null)
       clearControlStates()
-      return { ok: true }
     }
-    case 'walk_until': {
-      // Walk forward until the bot's position reaches a target coordinate along one axis.
-      // args: { axis: 'x'|'z', target: number, direction: 'gte'|'lte', max_ms?: 8000 }
-      const axis = args.axis
-      const target = Number(args.target)
-      const direction = args.direction || 'gte'
-      const maxMs = Number(args.max_ms ?? 8000)
-      return new Promise((resolve) => {
-        const start = Date.now()
-        bot.setControlState('forward', true)
-        const timer = setInterval(() => {
-          const val = bot.entity?.position?.[axis] ?? 0
-          const reached = direction === 'gte' ? val >= target : val <= target
-          if (reached || Date.now() - start > maxMs) {
-            bot.setControlState('forward', false)
-            clearInterval(timer)
-            const p = bot.entity.position
-            resolve({
-              ok: true, reached,
-              x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2),
-              elapsed_ms: Date.now() - start,
-            })
-          }
-        }, 50)
-      })
-    }
-    case 'goto': {
-      const dx = Number(args.dx ?? 0), dy = Number(args.dy ?? 0), dz = Number(args.dz ?? 0)
-      rawState.x += dx; rawState.y += dy; rawState.z += dz
-      client.write('position_look', {
-        x: rawState.x, y: rawState.y, z: rawState.z,
-        yaw: rawState.yaw * 180 / Math.PI, pitch: rawState.pitch * 180 / Math.PI, onGround: true,
-      })
-      return { ok: true, x: rawState.x, y: rawState.y, z: rawState.z }
-    }
-    case 'pathfind': {
-      // Routes through pathTo() so all safety guards apply automatically:
-      // cabin corridor exit, pen exit, occupied-block avoidance.
-      const { x, y, z, range } = args
-      const px = Number(x), py = Number(y), pz = Number(z)
-      const pfRange = range !== undefined ? Number(range) : 1
-      pathTo({ x: px, y: py, z: pz }, pfRange, Number(args.timeout ?? 30000))
-        .then(ok => logEvent('pathfind', `pathTo (${px},${py},${pz}) range=${pfRange} → ${ok ? 'reached' : 'stopped'}`))
-        .catch(e => logEvent('pathfind', `pathTo (${px},${py},${pz}) failed: ${e.message}`))
-      return { ok: true, goal: `(${px},${py},${pz}) range=${pfRange}` }
-    }
-    case 'pathfind_status': {
-      const g = bot.pathfinder.goal
-      return {
-        ok: true,
-        isMoving: bot.pathfinder.isMoving(),
-        isBuilding: bot.pathfinder.isBuilding?.() ?? false,
-        goal: g ? { x: g.x, y: g.y, z: g.z } : null,
-        pos: bot.entity ? { x: +bot.entity.position.x.toFixed(2), y: +bot.entity.position.y.toFixed(2), z: +bot.entity.position.z.toFixed(2) } : null,
-      }
-    }
-    case 'pathfind_stop': {
-      bot.pathfinder.setGoal(null)
-      return { ok: true }
-    }
-    case 'walk_blocks': {
-      // Smooth walk: sends many small position packets over time so server accepts it as walking.
-      // args: { dx, dz, speed? (blocks/sec, default 4) }
-      const dx = Number(args.dx ?? 0), dz = Number(args.dz ?? 0)
-      const speed = Number(args.speed ?? 4)
-      const dist = Math.sqrt(dx * dx + dz * dz)
-      const tickMs = 50 // 20 ticks/sec
-      const steps = Math.max(1, Math.ceil((dist / speed) * (1000 / tickMs)))
-      const stepX = dx / steps, stepZ = dz / steps
-      const startX = bot.entity?.position?.x ?? rawState.x
-      const startY = bot.entity?.position?.y ?? rawState.y
-      const startZ = bot.entity?.position?.z ?? rawState.z
-      let i = 0
-      const timer = setInterval(() => {
-        i++
-        const nx = startX + stepX * i
-        const nz = startZ + stepZ * i
-        client.write('position', { x: nx, y: startY, z: nz, onGround: true })
-        if (i >= steps) clearInterval(timer)
-      }, tickMs)
-      return { ok: true, steps, dist: +dist.toFixed(2) }
-    }
-    case 'nearby_entities': {
-      const p = bot.entity.position
-      const radius = Number(args.radius ?? 16)
-      const list = Object.values(bot.entities)
-        .filter(e => e !== bot.entity && e.position.distanceTo(p) <= radius)
-        .map(e => ({
-          id: e.id, name: e.name, username: e.username, type: e.type,
-          distance: +e.position.distanceTo(p).toFixed(2),
-          x: +e.position.x.toFixed(1), y: +e.position.y.toFixed(1), z: +e.position.z.toFixed(1),
-        }))
-        .sort((a, b) => a.distance - b.distance)
-        .slice(0, 30)
-      return { ok: true, entities: list }
-    }
-    case 'nearby_players': {
-      return { ok: true, players: Object.keys(bot.players).filter(n => n !== bot.username) }
-    }
-    case 'named_sheep': {
-      scanNamedSheep()
-      const sheep = [...namedSheepTracking.values()]
-      return { ok: true, sheep, registry: NAMED_SHEEP.map(s => s.name) }
-    }
-    case 'deposit': {
-      // Put items from bot inventory into a container.
-      // args: { x, y, z, names: [string] } — all items matching any name get deposited.
-      const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
-      if (!b) return { ok: false, error: 'no block' }
-      const wantedNames = new Set(args.names || [])
-      // Raw grain jams the bio-fuel intake (user rule, 2026-07-07). This path
-      // bypasses depositToHopper, so enforce the rule here too: strip
-      // wheat/seeds when the target is a hopper and report them refused.
-      const refusedGrain = []
-      if (b.name === 'hopper' || (b.position.x === HOPPER.x && b.position.y === HOPPER.y && b.position.z === HOPPER.z)) {
-        for (const g of HOPPER_FORBIDDEN) if (wantedNames.delete(g)) refusedGrain.push(g)
-        if (refusedGrain.length) logEvent('hopper-guard', `deposit: refused ${refusedGrain.join(', ')} into hopper — craft plantballs first`)
-        if (!wantedNames.size) return { ok: false, error: `${refusedGrain.join(', ')} jams the bio-fuel intake — craft plantballs first (use stash_wheat)` }
-      }
-      return bot.openContainer(b).then(async win => {
-        const deposited = {}
-        // Bot inventory items (not the window's first N slots)
-        const items = bot.inventory.items().filter(i => wantedNames.has(i.name))
-        for (const it of items) {
-          try {
-            await win.deposit(it.type, it.metadata, it.count)
-            deposited[it.name] = (deposited[it.name] || 0) + it.count
-          } catch (e) {
-            // Chest full or other — stop early
-            break
-          }
-        }
-        win.close()
-        return refusedGrain.length ? { ok: true, deposited, refused: refusedGrain } : { ok: true, deposited }
-      }).catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'open_container': {
-      const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
-      if (!b) return { ok: false, error: 'no block' }
-      return bot.openContainer(b).then(win => {
-        // Exclude player inventory (last 36 slots) — only report the container's own slots.
-        const containerSlotCount = win.slots.length - 36
-        const items = []
-        for (let i = 0; i < containerSlotCount; i++) {
-          const it = win.slots[i]
-          if (it) items.push({ slot: i, name: it.name, displayName: it.displayName, count: it.count })
-        }
-        win.close()
-        return { ok: true, block: b.name, containerSize: containerSlotCount, items }
-      }).catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'deposit_slot': {
-      // Put a stack from the bot's inventory into a specific container slot.
-      // args: { x, y, z, fromSlot, toSlot } — fromSlot is mineflayer inventory
-      // slot (main 9-35, hotbar 36-44); toSlot is container-relative (0-based).
-      // Uses raw two-click, so works for modded `unknown` items.
-      const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
-      if (!b) return { ok: false, error: 'no block' }
-      const fromSlot = Number(args.fromSlot)
-      const toSlot = Number(args.toSlot)
-      return bot.openContainer(b).then(async win => {
-        const containerSlotCount = win.slots.length - 36
-        if (toSlot < 0 || toSlot >= containerSlotCount) {
-          win.close()
-          return { ok: false, error: `toSlot ${toSlot} out of range (0..${containerSlotCount - 1})` }
-        }
-        // Player inventory slot N (mineflayer 9-44) maps to window slot
-        // containerSlotCount + (N - 9). Slots 36-44 (hotbar) map accordingly.
-        const winSrc = containerSlotCount + (fromSlot - 9)
-        if (winSrc < containerSlotCount || winSrc >= win.slots.length) {
-          win.close()
-          return { ok: false, error: `fromSlot ${fromSlot} maps out of window (${winSrc})` }
-        }
-        const srcItem = win.slots[winSrc]
-        if (!srcItem) { win.close(); return { ok: false, error: `inv slot ${fromSlot} is empty` } }
-        // Raw grain jams the bio-fuel intake (user rule, 2026-07-07) — this
-        // path also bypasses depositToHopper, so enforce the rule here too.
-        if (HOPPER_FORBIDDEN.has(srcItem.name) &&
-            (b.name === 'hopper' || (b.position.x === HOPPER.x && b.position.y === HOPPER.y && b.position.z === HOPPER.z))) {
-          win.close()
-          logEvent('hopper-guard', `deposit_slot: refused ${srcItem.name} into hopper — craft plantballs first`)
-          return { ok: false, error: `${srcItem.name} jams the bio-fuel intake — craft plantballs first (use stash_wheat)` }
-        }
-        if (win.slots[toSlot]) { win.close(); return { ok: false, error: `chest slot ${toSlot} already occupied` } }
-        try {
-          await bot.clickWindow(winSrc, 0, 0)
-          await bot.clickWindow(toSlot, 0, 0)
-          win.close()
-          return { ok: true, name: srcItem.name, count: srcItem.count, fromSlot, toSlot }
-        } catch (e) {
-          try { await bot.clickWindow(-999, 0, 0) } catch (_) {}
-          win.close()
-          return { ok: false, error: e.message }
-        }
-      }).catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'withdraw_slot': {
-      // Take a specific container slot into the bot's inventory, bypassing
-      // mineflayer's item registry (works for modded `unknown` items).
-      // args: { x, y, z, slot } — `slot` is the container-relative slot index
-      // as reported by open_container. Picks up the stack and drops it into
-      // the first empty player-inventory slot.
-      const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
-      if (!b) return { ok: false, error: 'no block' }
-      const srcSlot = Number(args.slot)
-      return bot.openContainer(b).then(async win => {
-        const containerSlotCount = win.slots.length - 36
-        if (srcSlot < 0 || srcSlot >= containerSlotCount) {
-          win.close()
-          return { ok: false, error: `slot ${srcSlot} out of range (0..${containerSlotCount - 1})` }
-        }
-        const srcItem = win.slots[srcSlot]
-        if (!srcItem) { win.close(); return { ok: false, error: `chest slot ${srcSlot} is empty` } }
-        let destSlot = -1
-        for (let j = containerSlotCount; j < win.slots.length; j++) {
-          if (!win.slots[j]) { destSlot = j; break }
-        }
-        if (destSlot < 0) { win.close(); return { ok: false, error: 'player inventory full' } }
-        try {
-          await bot.clickWindow(srcSlot, 0, 0)
-          await bot.clickWindow(destSlot, 0, 0)
-          win.close()
-          return { ok: true, name: srcItem.name, displayName: srcItem.displayName, count: srcItem.count, destSlot }
-        } catch (e) {
-          try { await bot.clickWindow(-999, 0, 0) } catch (_) {}
-          win.close()
-          return { ok: false, error: e.message }
-        }
-      }).catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'dig': {
-      // Left-click: break a block.
-      const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
-      if (!b) return { ok: false, error: 'no block at coords' }
-      return bot.dig(b).then(() => ({ ok: true, name: b.name })).catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'place_block': {
-      // Right-click: place the currently-held item onto a face of a reference block.
-      // args: { x, y, z, face: 'top'|'bottom'|'north'|'south'|'east'|'west' } — ref block coords
-      const faces = {
-        top: new Vec3(0, 1, 0), bottom: new Vec3(0, -1, 0),
-        north: new Vec3(0, 0, -1), south: new Vec3(0, 0, 1),
-        east: new Vec3(1, 0, 0), west: new Vec3(-1, 0, 0),
-      }
-      const face = faces[args.face || 'top']
-      if (!face) return { ok: false, error: `bad face: ${args.face}` }
-      const ref = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
-      if (!ref) return { ok: false, error: 'no reference block' }
-      return bot.placeBlock(ref, face)
-        .then(() => ({ ok: true, on: ref.name }))
-        .catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'activate_item': {
-      // Right-click air: use held item (eat, drink, bow-draw, etc.).
-      // args: { offhand?: bool }
-      try {
-        bot.activateItem(!!args.offhand)
-        return { ok: true }
-      } catch (e) { return { ok: false, error: e.message } }
-    }
-    case 'deactivate_item': {
-      try { bot.deactivateItem(); return { ok: true } }
-      catch (e) { return { ok: false, error: e.message } }
-    }
-    case 'activate_and_read': {
-      // Right-click a block, wait for a window to open, dump its contents.
-      // For modded containers that mineflayer's openContainer doesn't recognize
-      // (empty-name blocks). args: { x, y, z, waitMs? }
-      const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
-      if (!b) return { ok: false, error: 'no block' }
-      const waitMs = args.waitMs != null ? Number(args.waitMs) : 1500
-      return new Promise(async resolve => {
-        let settled = false
-        const finish = (result) => {
-          if (settled) return
-          settled = true
-          resolve(result)
-        }
-        const onOpen = (win) => {
-          setTimeout(() => {
-            try {
-              const items = []
-              for (let i = 0; i < win.slots.length; i++) {
-                const it = win.slots[i]
-                if (it) items.push({ slot: i, name: it.name, displayName: it.displayName, count: it.count })
-              }
-              const summary = { ok: true, windowType: win.type, windowId: win.id, totalSlots: win.slots.length, items }
-              win.close()
-              finish(summary)
-            } catch (e) {
-              finish({ ok: false, error: `read failed: ${e.message}` })
-            }
-          }, 300)
-        }
-        bot.once('windowOpen', onOpen)
-        setTimeout(() => {
-          bot.removeListener('windowOpen', onOpen)
-          finish({ ok: false, error: `no window opened within ${waitMs}ms`, currentWindow: bot.currentWindow ? { type: bot.currentWindow.type, id: bot.currentWindow.id } : null })
-        }, waitMs)
-        try {
-          await bot.activateBlock(b)
-        } catch (e) {
-          finish({ ok: false, error: `activate failed: ${e.message}` })
-        }
-      })
-    }
-    case 'tend_apiary': {
-      // One hive, once. args: { x, y, z, dry_run? }. See tendApiary().
-      return tendApiary(Number(args.x), Number(args.y), Number(args.z), !!args.dry_run)
-    }
-    case 'keep_bees': {
-      // Start the bee keeper (see runKeepBees). Refused away from the bee cross.
-      return startKeepBees({ intervalMs: args.interval_ms })
-    }
-    case 'bee_voyage': {
-      // "Tend the bees" from wherever she is: farm → boat → bee dock → cross,
-      // then the keeper. args: { force?: true to sail after BEE_VOYAGE_LATEST_START }
-      return runBeeVoyage({ force: !!args.force })
-    }
-    case 'bee_voyage_home': {
-      // Bees → farm: stop the keeper, dock → boat → port → wheat field.
-      // args: { force?: true to sail after BEE_VOYAGE_LATEST_START }
-      return runBeeVoyageHome({ force: !!args.force })
-    }
-    case 'bee_chores': {
-      // Run one pass of the bee cabin chores now (birch, potato patch, furnaces).
-      // args: { force?: true to visit the furnaces even if not due }
-      if (taskBusy()) return { ok: false, error: `busy with ${activeTask.name}` }
-      if (beeState.inRound) return { ok: false, error: 'a keeper round is running' }
-      return runBeeCabinChores({ force: !!args.force })
-    }
-    case 'bee_chores_status': {
-      return { ok: true, ...beeChoresStatus() }
-    }
-    case 'keep_bees_stop': {
-      return stopKeepBees(args.reason || 'ctl')
-    }
-    case 'keep_bees_status': {
-      return { ok: true, ...keepBeesStatus() }
-    }
-    case 'dump_drones': {
-      if (taskBusy() || beeState.inRound || beeFoodRun.busy) return { ok: false, error: 'busy' }
-      if (!nearBeeCross()) return { ok: false, error: 'not at the bee cross' }
-      if (insideBeeCabin()) return { ok: false, error: 'inside the bee cabin' }
-      return dumpDronesBehindCabin()
-    }
-    case 'furnace_state': {
-      // Open a furnace and report what's in each slot. Slots: 0=input,
-      // 1=fuel, 2=output. Assumes fuel is already present.
-      const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
-      if (!b) return { ok: false, error: 'no block' }
-      return bot.openFurnace(b).then(f => {
-        const slots = ['inputItem', 'fuelItem', 'outputItem'].map(fn => {
-          const it = f[fn]()
-          return it ? { name: it.name, displayName: it.displayName, count: it.count } : null
-        })
-        f.close()
-        return { ok: true, input: slots[0], fuel: slots[1], output: slots[2] }
-      }).catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'furnace_put': {
-      // Put items from bot inventory into the furnace input slot. Works for
-      // vanilla items (potato, beef, iron ore, etc.).
-      // args: { x,y,z, name, count, slot?: 'input'|'fuel', metadata? }
-      const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
-      if (!b) return { ok: false, error: 'no block' }
-      const wantName = String(args.name)
-      const wantCount = Number(args.count)
-      const wantMeta = args.metadata != null ? Number(args.metadata) : null
-      const it = bot.inventory.items().find(i => i.name === wantName && (wantMeta == null || i.metadata === wantMeta))
-      if (!it) return { ok: false, error: `no ${wantName} in inventory` }
-      const n = Math.min(wantCount, it.count)
-      const toFuel = args.slot === 'fuel'
-      return bot.openFurnace(b).then(async f => {
-        try {
-          if (toFuel) await f.putFuel(it.type, it.metadata, n)
-          else await f.putInput(it.type, it.metadata, n)
-          f.close()
-          return { ok: true, put: n, name: wantName, slot: toFuel ? 'fuel' : 'input' }
-        } catch (e) {
-          f.close()
-          return { ok: false, error: e.message }
-        }
-      }).catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'furnace_take': {
-      // Take the output of the furnace into the bot's inventory.
-      // args: { x,y,z, slot?: 'output'|'fuel' } — 'fuel' pulls the fuel stack
-      // (e.g. charcoal moved to the potato furnace before saplings go in).
-      const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
-      if (!b) return { ok: false, error: 'no block' }
-      const fromFuel = args.slot === 'fuel'
-      return bot.openFurnace(b).then(async f => {
-        const out = fromFuel ? f.fuelItem() : f.outputItem()
-        if (!out) { f.close(); return { ok: false, error: `${fromFuel ? 'fuel' : 'output'} slot empty` } }
-        try {
-          const got = fromFuel ? await f.takeFuel() : await f.takeOutput()
-          f.close()
-          return { ok: true, name: got?.name, count: got?.count }
-        } catch (e) {
-          f.close()
-          return { ok: false, error: e.message }
-        }
-      }).catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'click_slot': {
-      // Raw clickWindow on whichever window is currently open (defaults to
-      // the player's own inventory window if no container is open). Used for
-      // modded mechanics that mineflayer's recipe system can't see — e.g.
-      // 2x2 inventory crafting with modded ingredients/outputs.
-      // args: { slot, button=0, mode=0 }  (mode 1 = shift-click)
-      const slot = Number(args.slot)
-      const button = args.button != null ? Number(args.button) : 0
-      const mode = args.mode != null ? Number(args.mode) : 0
-      return bot.clickWindow(slot, button, mode)
-        .then(() => {
-          const win = bot.currentWindow || bot.inventory
-          const it = win.slots[slot]
-          return { ok: true, slot, button, mode, slotNow: it ? { name: it.name, count: it.count } : null }
-        })
-        .catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'window_slots': {
-      // Dump the current window's slot contents (defaults to player inventory
-      // if no container open). Handy for watching crafting grid state.
-      const win = bot.currentWindow || bot.inventory
-      const items = []
-      for (let i = 0; i < win.slots.length; i++) {
-        const it = win.slots[i]
-        if (it) items.push({ slot: i, name: it.name, displayName: it.displayName, count: it.count })
-      }
-      return { ok: true, windowType: bot.currentWindow ? bot.currentWindow.type : 'inventory', total: win.slots.length, items }
-    }
-    case 'close_window': {
-      if (bot.currentWindow) {
-        bot.closeWindow(bot.currentWindow)
-        return { ok: true }
-      }
-      return { ok: true, note: 'no window open' }
-    }
-    case 'move_slot': {
-      // Move a stack within the bot's own inventory (no container open).
-      // args: { from, to } — both are mineflayer inventory slot numbers
-      // (main inv 9-35, hotbar 36-44). Works for modded `unknown` items
-      // because bot.moveSlotItem uses raw window clicks, not item lookups.
-      const from = Number(args.from)
-      const to = Number(args.to)
-      return bot.moveSlotItem(from, to)
-        .then(() => ({ ok: true, from, to }))
-        .catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'click_window': {
-      const slot = Number(args.slot)
-      const mouseButton = args.mouseButton ?? 0
-      const mode = args.mode ?? 0
-      return bot.clickWindow(slot, mouseButton, mode)
-        .then(() => ({ ok: true, slot, mouseButton, mode }))
-        .catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'deposit_one': {
-      const cx = Number(args.x), cy = Number(args.y), cz = Number(args.z)
-      const itemName = args.name
-      const containerSlot = args.containerSlot ?? 1
-      const block = bot.blockAt(new Vec3(cx, cy, cz))
-      if (!block) return { ok: false, error: 'block not loaded' }
-      return (async () => {
-        const win = await bot.openContainer(block)
-        const containerSize = win.slots.length - 36
-        const playerSlots = win.slots.slice(containerSize)
-        const srcIdx = playerSlots.findIndex(s => s && s.name === itemName)
-        if (srcIdx === -1) { win.close(); return { ok: false, error: `no ${itemName} in inventory` } }
-        const winSlot = containerSize + srcIdx
-        const count = playerSlots[srcIdx].count
-        await bot.clickWindow(winSlot, 1, 0)
-        await bot.clickWindow(containerSlot, 1, 0)
-        if (count > 2) await bot.clickWindow(winSlot, 0, 0)
-        else if (count === 2) {
-          const emptyIdx = playerSlots.findIndex((s, i) => i !== srcIdx && !s)
-          if (emptyIdx !== -1) await bot.clickWindow(containerSize + emptyIdx, 0, 0)
-          else await bot.clickWindow(winSlot, 0, 0)
-        }
-        win.close()
-        return { ok: true, deposited: 1, item: itemName, into: containerSlot }
-      })().catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'unequip': {
-      // Empty the bot's hand (or other slot) so right-clicks don't use/eat
-      // whatever's held. Needed for modded GUIs that only open on bare-hand.
-      const dest = args.destination || 'hand'
-      return bot.unequip(dest)
-        .then(() => ({ ok: true, destination: dest }))
-        .catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'equip_slot': {
-      // Equip by inventory slot number (useful when items show as 'unknown').
-      const slot = Number(args.slot)
-      const item = bot.inventory.slots[slot]
-      if (!item) return { ok: false, error: `empty slot ${slot}` }
-      return bot.equip(item, args.destination || 'hand')
-        .then(() => ({ ok: true, equipped: item.name, count: item.count, slot }))
-        .catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'equip': {
-      // Put an item by name into a slot (default 'hand').
-      // args: { name, destination?: 'hand'|'off-hand'|'head'|'torso'|'legs'|'feet' }
-      const item = bot.inventory.items().find(i => i.name === args.name)
-      if (!item) return { ok: false, error: `item not in inventory: ${args.name}` }
-      return bot.equip(item, args.destination || 'hand')
-        .then(() => ({ ok: true, equipped: item.name, count: item.count }))
-        .catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'toss_trash': {
-      const trash = bot.inventory.items().filter(isTrash)
-      if (!trash.length) return { ok: true, tossed: [] }
-      return tossTrash().then(() => ({
-        ok: true,
-        tossed: trash.map(i => ({ name: i.name, count: i.count }))
-      })).catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'toss_slot': {
-      const slot = args?.slot
-      if (slot == null) return { ok: false, error: 'slot required' }
-      const item = bot.inventory.slots[slot]
-      if (!item) return { ok: false, error: `slot ${slot} is empty` }
-      return bot.tossStack(item).then(() => ({
-        ok: true, tossed: { name: item.name, count: item.count, slot }
-      })).catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'inventory': {
-      // type/metadata/nbt identify modded items that report name 'unknown'
-      // (Forestry bees keep their species in NBT, 2026-09-29).
-      const items = bot.inventory.items().map(i => {
-        const it = { name: i.name, count: i.count, slot: i.slot, type: i.type, metadata: i.metadata }
-        if (i.nbt) it.nbt = JSON.stringify(i.nbt).slice(0, 400)
-        return it
-      })
-      const held = bot.heldItem ? { name: bot.heldItem.name, count: bot.heldItem.count } : null
-      return { ok: true, held, items }
-    }
-    case 'activate_entity': {
-      // Right-click on an entity (the held item is used). For shearing sheep,
-      // milking cows, breeding, etc.
-      // args: { id, mode? }
-      //   mode='single' (default) — one USE_ENTITY mouse=0 packet
-      //   mode='double'           — mouse=0 + mouse=2 (interact + interact_at),
-      //                             matching what a vanilla client sends per
-      //                             right-click. May be more reliable on
-      //                             moving entities since interact_at carries
-      //                             the hit position.
-      const id = Number(args.id)
-      if (!Number.isFinite(id)) return { ok: false, error: 'id required' }
-      const ent = bot.entities[id]
-      if (!ent) return { ok: false, error: `no entity ${id}` }
-      // Default to 'double' — A/B test 2026-05-14 showed ~3x wool yield
-      // vs single-packet, matching how vanilla clients send right-clicks.
-      const mode = args.mode === 'single' ? 'single' : 'double'
-      const promise = mode === 'double'
-        ? bot.activateEntity(ent).then(() => bot.activateEntityAt(ent, ent.position))
-        : bot.activateEntity(ent)
-      return promise
-        .then(() => ({ ok: true, mode, name: ent.name, id, x: ent.position.x, y: ent.position.y, z: ent.position.z }))
-        .catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'activate_block': {
-      // args: { x, y, z } — right-click the block at those absolute coords.
-      const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
-      if (!b) return { ok: false, error: 'no block at coords' }
-      return bot.activateBlock(b).then(() => ({ ok: true, name: b.name })).catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'find_blocks': {
-      // args: { names: [string], maxDistance?: number, count?: number }
-      const names = args.names || []
-      const maxDistance = Number(args.maxDistance ?? 32)
-      const count = Number(args.count ?? 10)
-      const mcData = require('minecraft-data')(bot.version)
-      const ids = names.map(n => mcData.blocksByName[n]?.id).filter(x => x !== undefined)
-      if (ids.length === 0) return { ok: false, error: `no known blocks for names: ${names.join(',')}` }
-      const positions = bot.findBlocks({ matching: ids, maxDistance, count })
-      const results = positions.map(p => {
-        const b = bot.blockAt(p)
-        return {
-          name: b?.name, x: p.x, y: p.y, z: p.z,
-          metadata: b?.metadata,
-          distance: +bot.entity.position.distanceTo(p).toFixed(2),
-        }
-      })
-      return { ok: true, blocks: results }
-    }
-    case 'block_at': {
-      const b = bot.blockAt(bot.entity.position.offset(args.dx ?? 0, args.dy ?? 0, args.dz ?? 0))
-      if (!b) return { ok: false, error: 'no block' }
-      return { ok: true, name: b.name, displayName: b.displayName, metadata: b.metadata, type: b.type, x: b.position.x, y: b.position.y, z: b.position.z }
-    }
-    case 'block_at_abs': {
-      const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
-      if (!b) return { ok: false, error: 'no block' }
-      return { ok: true, name: b.name, metadata: b.metadata, type: b.type, boundingBox: b.boundingBox, shapes: b.shapes, x: b.position.x, y: b.position.y, z: b.position.z }
-    }
-    case 'recent_chat': {
-      return { ok: true, lines: recentChat.slice() }
-    }
-    case 'time': {
-      const t = bot.time || {}
-      return { ok: true, timeOfDay: t.timeOfDay, day: t.day, age: t.age, isDay: t.isDay, raining: !!bot.isRaining, thunder: (bot.thunderState || 0) > 0 }
-    }
-    case 'auto_sleep': {
-      if (typeof args.enabled === 'boolean') autoSleepEnabled = args.enabled
-      return { ok: true, enabled: autoSleepEnabled, busy: autoSleepBusy, bedtime: isBedtime(), inside: insideHouse(), sleeping: !!bot.isSleeping }
-    }
-    case 'sleep': {
-      if (bot.isSleeping) return { ok: true, already: true }
-      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
-      if (sleepPlaceHere()?.name === 'igloo') {
-        iglooSleep().catch(e => logEvent('sleep', `igloo sleep failed: ${e.message}`))
-        return { ok: true, started: true, location: 'igloo' }
-      }
-      if (sleepPlaceHere()?.name === 'bee-cabin') {
-        beeCabinSleep().catch(e => logEvent('sleep', `bee cabin sleep failed: ${e.message}`))
-        return { ok: true, started: true, location: 'bee-cabin' }
-      }
-      if (!insideHouse() && !insideCabinBedroom()) return { ok: false, error: 'not inside' }
-      if (insideCabinBedroom()) {
-        cabinSleep().catch(e => logEvent('sleep', `cabin sleep failed: ${e.message}`))
-        return { ok: true, started: true, location: 'cabin' }
-      }
-      goToBed('sleep').catch(e => logEvent('sleep', `sleep failed: ${e.message}`))
-      return { ok: true, started: true, location: 'farm' }
-    }
-    case 'auto_food': {
-      if (typeof args.enabled === 'boolean') foodSafetyEnabled = args.enabled
-      if (Number.isFinite(args.min)) foodSafetyMin = args.min
-      return { ok: true, enabled: foodSafetyEnabled, busy: foodSafetyBusy, min: foodSafetyMin, baked: countBakedPotatoes() }
-    }
-    case 'collect_bake': {
-      // Force a collection on the next timer tick (also recovers an orphaned
-      // furnace batch after a restart, since pendingBake is in-memory only).
-      pendingBake.active = true
-      pendingBake.doneAt = 0
-      return { ok: true, pending: true, baked: countBakedPotatoes() }
-    }
-    case 'idle_wander': {
-      // Programmatic equivalent of the "stand down" / "do your thing" chat
-      // commands. Disabling also cancels any in-progress wander and freezes the
-      // bot in place, so an experiment can position it without a wander yanking
-      // it away. Gates wandering and pen/field joins (idleWanderEnabled).
-      if (typeof args.enabled === 'boolean') {
-        idleWanderEnabled = args.enabled
-        if (!args.enabled) {
-          abortGen++
-          bot.pathfinder.setGoal(null)
-          clearControlStates()
-        }
-      }
-      return { ok: true, enabled: idleWanderEnabled, busy: idleWanderBusy() }
-    }
-    case 'auto_greet': {
-      if (typeof args.enabled === 'boolean') autoGreetEnabled = args.enabled
-      return { ok: true, enabled: autoGreetEnabled, greet: getGreetText(), radius: GREET_RADIUS, recent: Object.fromEntries([...greetHistory].map(([k, v]) => [k, new Date(v).toISOString()])) }
-    }
-    case 'auto_eat': {
-      if (typeof args.enabled === 'boolean') {
-        if (args.enabled) bot.autoEat?.enableAuto()
-        else bot.autoEat?.disableAuto()
-      }
-      return {
-        ok: true,
-        enabled: bot.autoEat?.isEating === undefined ? null : !!bot.autoEat?.opts?.eatingTimeout || true,
-        opts: bot.autoEat?.opts || null,
-      }
-    }
-    case 'look_at': {
-      // Toggle the continuous lookAt-nearest-player behavior, or query it.
-      if (typeof args.enabled === 'boolean') lookAtEnabled = args.enabled
-      return { ok: true, enabled: lookAtEnabled }
-    }
-    case 'routes': {
-      // List known overland routes and their leg counts.
-      return {
-        ok: true,
-        routes: Object.entries(ROUTES).map(([name, r]) => ({
-          name, label: r.label, legs: r.legs.length,
-          from: r.legs[0].note, to: r.legs[r.legs.length - 1].note,
-        })),
-      }
-    }
-    case 'walk_route': {
-      // args: { route, reverse?, legs? } — walk a named route leg by leg.
-      // `legs` limits how many legs to attempt, for testing a prefix of the
-      // chain without committing to the whole walk.
-      const name = args.route || 'farm_to_igloo'
-      if (!ROUTES[name]) return { ok: false, error: `unknown route: ${name}`, known: Object.keys(ROUTES) }
-      let maxLegs = 0
-      if (args.legs !== undefined) {
-        maxLegs = Number(args.legs)
-        if (!Number.isFinite(maxLegs) || maxLegs < 1) return { ok: false, error: 'legs must be a positive number' }
-      }
-      return runWalkRoute(name, { reverse: !!args.reverse, maxLegs, fromNearest: !!args.from_nearest })
-    }
-    case 'follow': {
-      // args: { username }  — start following named player. Omit username to stop.
-      if (!args.username) {
-        followTarget = null; followEntity = null; followChainPos = 0
-        bot.pathfinder.setGoal(null)
-        sustainResume('follow ended (ctl)')
-        return { ok: true, following: null }
-      }
-      const target = findPlayerEntity(args.username)
-      if (!target) return { ok: false, error: `can't see player: ${args.username}` }
-      if (taskBusy()) {
-        logEvent('follow', `aborting active task: ${activeTask.name}`)
-        abortGen++
-        bot.pathfinder.setGoal(null)
-      }
-      sustainPause('follow') // F2: fire duty resumes when the follow ends
-      followTarget = args.username
-      followEntity = null; followChainPos = 0; lastChainEval = 0
-      return { ok: true, following: followTarget }
-    }
-    case 'chat_rules': {
-      return { ok: true, rules: CHAT_HANDLERS.map(r => ({ name: r.name, pattern: r.pattern.source })) }
-    }
-    case 'harvest_status': {
-      return { ok: true, busy: activeTask.name?.startsWith('harvest') ?? false }
-    }
-    case 'task_status': {
-      return { ok: true, ...taskStatus() }
-    }
-    case 'wheat_status': {
-      const scan = scanKnownWheatFields()
-      return { ok: true, ...scan, alertReady: wheatReadyState.ready, snoozed: wheatReadyState.snoozed, alertEveryMs: WHEAT_READY_ALERT_MS }
-    }
-    case 'wheat_snooze': {
-      return { ok: true, snoozed: snoozeWheatReadyAlerts('ctl') }
-    }
-    case 'potato_status': {
-      const scan = scanKnownPotatoField()
-      return { ok: true, ...scan, keepRaw: SUSTAIN_KEEP_RAW_POTATO, onHand: countOnHand('potato'), baked: countBakedPotatoes() }
-    }
-    case 'craft_plant_balls': {
-      const ingredient = args.ingredient || 'wheat_seeds'
-      const keepCount = args.keep ?? 0
-      craftPlantBalls({ ingredient, keepCount, maxBalls: Infinity })
-        .then(r => logEvent('craft-ctl', `done: crafted=${r.crafted}`))
-        .catch(e => logEvent('craft-ctl-error', e.message))
-      return { ok: true, started: true, ingredient, keepCount }
-    }
-    case 'harvest_potatoes': {
-      // Right-click is the default. For the legacy left-click brute method,
-      // use action 'harvest_potatoes_brute'.
-      runHarvestPotatoesRightClick({ user: 'ctl' }).catch(e => logEvent('harvest-potato-rc-error', e.message))
-      return { ok: true, started: true }
-    }
-    case 'harvest_potatoes_brute': {
-      runHarvestPotatoes({ user: 'ctl' }).catch(e => logEvent('harvest-potato-error', e.message))
-      return { ok: true, started: true }
-    }
-    case 'bake_potatoes': {
-      runBakePotatoes({ user: 'ctl' }).catch(e => logEvent('bake-potato-error', e.message))
-      return { ok: true, started: true }
-    }
-    case 'eat': {
-      return eatSomething()
-        .then(msg => ({ ok: true, msg, food: bot.food }))
-        .catch(e => ({ ok: false, error: e.message }))
-    }
-    case 'bake': {
-      const mode = 'both'
-      runBake(mode).catch(e => logEvent('bake-error', e.message))
-      return { ok: true, started: true, mode }
-    }
-    case 'stash_unknown': {
-      runStashUnknown().catch(e => logEvent('stash-error', e.message))
-      return { ok: true, started: true }
-    }
-    case 'stash_junk': {
-      const filterNames = Array.isArray(args && args.items) ? args.items : null
-      runStashJunk(filterNames).catch(e => logEvent('stash-junk-error', e.message))
-      return { ok: true, started: true }
-    }
-    case 'stash_wheat': {
-      runStashWheat().catch(e => logEvent('stash-wheat-error', e.message))
-      return { ok: true, started: true }
-    }
-    case 'unjam_hopper': {
-      if (countOnHand('potato') < 1) return { ok: false, error: 'no raw potatoes on hand' }
-      clearJammedHopper()
-        .then(ok => logEvent('sustain-hopper', `unjam_hopper (ctl): ${ok ? 'cleared' : 'still jammed'}`))
-        .catch(e => logEvent('sustain-hopper', `unjam_hopper (ctl) error: ${e.message}`))
-      return { ok: true, started: true }
-    }
-    case 'harvest_right_click': {
-      const half = (args && args.half) || 'all'
-      const keepSeeds = !!(args && args.keepSeeds)
-      runHarvestRightClick({ half, keepSeeds }).catch(e => logEvent('harvest-rc-error', e.message))
-      return { ok: true, started: true, half, keepSeeds }
-    }
-    case 'keep_fire': {
-      runSustainFarm(args && args.user).catch(e => logEvent('sustain-error', e.message))
-      return { ok: true, started: true, sustaining: true }
-    }
-    case 'sustain_status': {
-      return { ok: true, active: sustainState.active, cycles: sustainState.cycles, startedBy: sustainState.startedBy, role: sustainState.role, paused: sustainState.paused, pauseReason: sustainState.pauseReason, duties: [...myDuties()], pendingWork: [...sustainState.pendingWork], crew: Object.fromEntries([...fireCrew].map(([n, c]) => [n, [...c.fields].join('+')])) }
-    }
-    case 'sustain_stop': {
-      const was = sustainState.active
-      sustainState.active = false
-      if (was) announceFireStandDown()
-      abortGen++
-      return { ok: true, stopped: was }
-    }
-    case 'rps_fun': {
-      runFunRpsChallenger().catch(e => logEvent('rps-fun-error', e.message))
-      return { ok: true, started: true }
-    }
-    case 'deposit_named': {
-      const names = Array.isArray(args && args.names) ? args.names : []
-      if (!names.length) return { ok: false, error: 'names array required' }
-      runDepositNamed(names).catch(e => logEvent('deposit-named-error', e.message))
-      return { ok: true, started: true, names }
-    }
-    case 'deposit_item': // generic: deposit any item by name
-    case 'deposit_wheat': {
-      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
-      const depositItemName = (args && args.item) || 'wheat'
-      const target = (args && args.target === 'chest') ? HARVEST_WAYPOINTS.kitchen_chest : HOPPER
-      // Raw grain jams the bio-fuel intake (user rule, 2026-07-07). Refuse
-      // up front — depositToHopper would throw anyway, but only into the log.
-      if (target === HOPPER && HOPPER_FORBIDDEN.has(depositItemName)) {
-        return { ok: false, error: `${depositItemName} jams the bio-fuel intake — use stash_wheat (crafts plantballs first) or pass target:"chest"` }
-      }
-      const keep = Number.isFinite(args && args.keep) ? args.keep : 0
-      ;(async () => {
-        try {
-          let r
-          if (target === HOPPER) {
-            r = await depositToHopper(depositItemName, { keep })
-          } else {
-            await ensureInsideHouse()
-            await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
-            r = await depositQuickMove(depositItemName, target, { keep })
-          }
-          logEvent('deposit-qm', `deposit_item(${depositItemName}): deposited=${r.deposited} remaining=${r.remaining} rounds=${r.rounds} backedUp=${r.backedUp}`)
-        } catch (e) { logEvent('deposit-qm', `deposit_item(${depositItemName}) error: ${e.message}`) }
-      })()
-      return { ok: true, started: true, item: depositItemName, target: target === HOPPER ? 'hopper' : 'chest', keep }
-    }
-    case 'play_record': {
-      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
-      runPlayRecord({ title: args.title, color: args.color }).catch(e => logEvent('jukebox-error', e.message))
-      return { ok: true, started: true, title: args.title || null, color: args.color || null }
-    }
-    case 'stop_record': {
-      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
-      runStopRecord().catch(e => logEvent('jukebox-error', e.message))
-      return { ok: true, started: true }
-    }
-    case 'go_outside': {
-      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
-      runGoOutside().catch(e => logEvent('go-outside-error', e.message))
-      return { ok: true, started: true }
-    }
-    case 'come_inside': {
-      const wasTask = taskBusy() ? activeTask.name : null
-      if (wasTask) {
-        logEvent('come-inside', `aborting active task: ${wasTask}`)
-        abortGen++
-        bot.pathfinder.setGoal(null)
-      }
-      if (sustainState.active) {
-        sustainState.active = false
-        logEvent('sustain', 'stopped — come-inside takes priority')
-      }
-      if (followTarget) {
-        logEvent('come-inside', `skipping — follow (${followTarget}) takes priority`)
-        return { ok: false, error: 'following', following: followTarget }
-      }
-      ;(async () => {
-        if (wasTask) await sleep(300)
-        if (nearCabin() || insideCabinBedroom()) { await cabinEnterBedroom(); return }
-        if (inPen()) await runLeavePen()
-        await runGoInside()
-      })().catch(e => logEvent('go-inside-error', e.message))
-      return { ok: true, started: true, aborted: wasTask }
-    }
-    case 'cabin_exit': {
-      if (!insideCabinBedroom()) return { ok: true, inside: false }
-      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
-      cabinExitBedroom().catch(e => logEvent('cabin-exit-error', e.message))
-      return { ok: true, started: true }
-    }
-    case 'go_boating': {
-      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
-      runIdleBoating().catch(e => logEvent('go-boating-error', e.message))
-      return { ok: true, started: true }
-    }
-    case 'shear_sheep': {
-      // Same routine as the "shear the sheep" chat reflex, which helm mode
-      // switches off along with the rest of chat.
-      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
-      abortGen++
-      runShearSheep().catch(e => {
-        if (e.name === 'AbortError') return
-        logEvent('shear-error', e.message)
-      })
-      return { ok: true, started: true }
-    }
-    case 'go_into_pen': {
-      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
-      runGoIntoPen().catch(e => logEvent('go-into-pen-error', e.message))
-      return { ok: true, started: true }
-    }
-    case 'go_out_of_pen': {
-      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
-      runGoOutOfPen().catch(e => logEvent('go-out-of-pen-error', e.message))
-      return { ok: true, started: true }
-    }
-    case 'bleu_paddle_home': {
-      // Off the Bleu de Paris by the gangplank, then paddle the boat we came in
-      // back to the farm port. args: { boat_id? } (default: the last boat boarded)
-      return bleuPaddleHome({ boatId: args.boat_id != null ? Number(args.boat_id) : null })
-    }
-    case 'board_bleu': {
-      // Shore → Bleu de Paris deck via the gangplank corridor.
-      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
-      if (onBleu()) return { ok: true, aboard: true, already: true }
-      // From the west bank, go by paddle boat (Dad) — only walk if already on
-      // the east shore near the gangplank.
-      const pb = bot.entity.position
-      if (bot.vehicle || Math.hypot(pb.x - (GANGPLANK_SHORE.x + 0.5), pb.z - GANGPLANK_LINE_Z) > 16) return bleuPaddleOver()
-      return gangplankBoard().catch(e => { logEvent('gangplank-error', e.message); return { ok: false, error: e.message } })
-    }
-    case 'leave_bleu': {
-      // Bleu de Paris deck → shore pad via the gangplank corridor.
-      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
-      if (!onBleu()) return { ok: true, aboard: false, already: true }
-      return gangplankLeave().catch(e => { logEvent('gangplank-error', e.message); return { ok: false, error: e.message } })
-    }
-    case 'cabin_to_bed': {
-      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
-      cabinSleep().catch(e => logEvent('cabin-error', e.message))
-      return { ok: true, started: true }
-    }
-    case 'cabin_to_dock': {
-      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
-      cabinBedroomToDock().catch(e => logEvent('cabin-error', e.message))
-      return { ok: true, started: true }
-    }
-    case 'cabin_enter_bedroom': {
-      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
-      cabinEnterBedroom().catch(e => logEvent('cabin-error', e.message))
-      return { ok: true, started: true }
-    }
-    case 'cabin_exit_bedroom': {
-      if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
-      cabinExitBedroom().catch(e => logEvent('cabin-error', e.message))
-      return { ok: true, started: true }
-    }
-    case 'door_strafe': {
-      // Tune door-traversal strafe without restarting.
-      // args: { exit?, enter? (each 'left'|'right'|null); exit_ms?, enter_ms? }
-      if (args.exit !== undefined) EXIT_STRAFE = args.exit || null
-      if (args.enter !== undefined) ENTER_STRAFE = args.enter || null
-      if (args.exit_ms !== undefined) EXIT_STRAFE_MS = Number(args.exit_ms)
-      if (args.enter_ms !== undefined) ENTER_STRAFE_MS = Number(args.enter_ms)
-      return { ok: true, exit: EXIT_STRAFE, enter: ENTER_STRAFE, exit_ms: EXIT_STRAFE_MS, enter_ms: ENTER_STRAFE_MS }
-    }
-    case 'ride_boat': {
-      const p = bot.entity.position
-      const radius = Number(args.radius ?? 8)
-      const boats = Object.values(bot.entities)
-        .filter(e => e !== bot.entity && e.name === 'boat' && e.position.distanceTo(p) <= radius)
-        .sort((a, b) => a.position.distanceTo(p) - b.position.distanceTo(p))
-      if (!boats.length) return { ok: false, error: `no boat within ${radius} blocks` }
-      const target = boats[0]
-      const dist = target.position.distanceTo(p)
-      const doMount = () => bot.activateEntity(target)
-        .then(() => sleep(500))
-        .then(() => {
-          const mounted = !!bot.vehicle
-          if (mounted && bot.entity?.position) {
-            const gap = bot.entity.position.distanceTo(target.position)
-            // The server's passenger list is the truth: a mount from ~4.3 blocks
-            // is real but our position lags, so trust set_passengers over the gap
-            // (2026-10-03 — a real mount was cleared, stranding Roz seated).
-            const listed = Array.isArray(target.passengers) && target.passengers.includes(bot.entity)
-            if (gap > 4 && !listed) {
-              logEvent('ride-boat', `phantom mount — bot is ${gap.toFixed(1)} blocks from boat ${target.id}, clearing vehicle ref`)
-              bot.vehicle = null
-              return { ok: false, error: `mount appeared to succeed but bot is ${gap.toFixed(1)} blocks from boat — likely a phantom mount` }
-            }
-          }
-          if (mounted) lastBoardedBoatId = target.id
-          logEvent('ride-boat', `${mounted ? 'mounted' : 'mount unclear'} boat ${target.id} at ${posStr(target.position)}`)
-          return { ok: true, mounted, boat_id: target.id, x: +target.position.x.toFixed(1), y: +target.position.y.toFixed(1), z: +target.position.z.toFixed(1) }
-        })
-        .catch(e => ({ ok: false, error: `activate failed: ${e.message}` }))
-      if (args.walk !== false && dist > 2.5) {
-        const { x, y, z } = target.position
-        return bot.pathfinder.goto(new goals.GoalNear(x, y, z, 2))
-          .catch(e => logEvent('ride-boat', `pathfind failed: ${e.message} — trying activate anyway`))
-          .then(() => doMount())
-      }
-      return doMount()
-    }
-    case 'boat_pilot': {
-      // Pilot by feel, not coordinates. args (all optional):
-      //   heading: compass degrees (0=N, 90=E) or a word ("north", "sw")
-      //   turn: degrees relative to the current heading (+right / -left)
-      //   ms: how long to paddle; throttle: 0..1 (default 1 when paddling)
-      //   rate: turn degrees per tick (default 3 ≈ 60°/s; lower = wider sweep)
-      //   assume_heading: tell me which way the bow REALLY points (calibration)
-      //   hold: true = don't ease off at the end (keep momentum for the next command)
-      // With only heading/turn, I turn in place; add ms to paddle.
-      if (!pilotSync()) return { ok: false, error: 'not in a vehicle' }
-      if (args.assume_heading != null) {
-        const a = parseCompass(args.assume_heading)
-        if (a == null) return { ok: false, error: `bad assume_heading: ${args.assume_heading}` }
-        pilot.yaw = compassToMcYaw(a)
-      }
-      let goal = null
-      if (args.heading != null) {
-        const h = parseCompass(args.heading)
-        if (h == null) return { ok: false, error: `bad heading: ${args.heading}` }
-        goal = compassToMcYaw(h)
-      } else if (args.turn != null) {
-        goal = normDeg(pilot.yaw + Number(args.turn))
-      }
-      const ms = args.ms != null ? Number(args.ms) : null
-      if (goal == null && ms == null) return { ok: true, calibrated: args.assume_heading != null, ...pilotReport() }
-      const throttle = Number(args.throttle ?? (ms != null ? 1 : 0))
-      const rate = Number(args.rate ?? BOAT_TURN_RATE)
-      return runPilot('pilot', (elapsed) => {
-        const aligned = goal == null || Math.abs(wrapDeg(goal - pilot.yaw)) < 0.5
-        if ((ms == null || elapsed >= ms) && aligned) return { done: 'done' }
-        return { goalYaw: goal, throttle: ms != null && elapsed < ms ? throttle : 0, rate }
-      }, { hold: !!args.hold })
-    }
-    case 'boat_coast': {
-      // Ease off: stop paddling and drift to a stop on the current heading.
-      if (!pilotSync()) return { ok: false, error: 'not in a vehicle' }
-      return runPilot('coast', () => ({ done: 'eased off' }))
-    }
-    case 'steer_boat': {
-      // Legacy: direction forward|left|right for duration_ms. Now a thin
-      // wrapper on the pilot (turns gradually, correct heading sign).
-      if (!pilotSync()) return { ok: false, error: 'not in a vehicle' }
-      const dir = args.direction || 'forward'
-      const dur = Number(args.duration_ms ?? 3000)
-      const rate = dir === 'left' ? -2 : dir === 'right' ? 2 : 0
-      return runPilot(`steer ${dir}`, (elapsed) => elapsed >= dur
-        ? { done: 'done' }
-        : { goalYaw: normDeg(pilot.yaw + rate), throttle: dir === 'forward' ? 1 : 0.5, rate: Math.abs(rate) })
-    }
-    case 'steer_boat_to': {
-      // Pilot to a coordinate: turn toward it gradually, paddle when aligned,
-      // ease in over the last few blocks. args: { x, z, throttle?: 1, range?: 3, rate?: 3 }
-      if (!pilotSync()) return { ok: false, error: 'not in a vehicle' }
-      return boatSeek([{ x: Number(args.x), z: Number(args.z) }], {
-        throttle: Number(args.throttle ?? 1), range: Number(args.range ?? 3), rate: Number(args.rate ?? BOAT_TURN_RATE), label: `to (${args.x}, ${args.z})`
-      })
-    }
-    case 'steer_boat_route': {
-      // args: { waypoints: [{x, z}, ...], throttle?: 1, range?: 5, rate?: 3 }
-      if (!pilotSync()) return { ok: false, error: 'not in a vehicle' }
-      const waypoints = args.waypoints
-      if (!Array.isArray(waypoints) || waypoints.length === 0) return { ok: false, error: 'waypoints must be a non-empty array of {x, z}' }
-      return boatSeek(waypoints.map(w => ({ x: Number(w.x), z: Number(w.z) })), {
-        throttle: Number(args.throttle ?? 1), range: Number(args.range ?? 5), rate: Number(args.rate ?? BOAT_TURN_RATE), label: `route (${waypoints.length} wp)`
-      })
-    }
-    case 'exit_boat': {
-      // Dismount and step onto dry land. args: { to?: {x,y,z} landing block
-      // (default: nearest dry standing spot within 4), land?: false to just get out }
-      return disembark({ to: args.to || null, land: args.land !== false })
-    }
-    case 'sail_home': {
-      // Ocean cabin → farm by boat, ending at the wheat field center.
-      // args: { force?: true to start after VOYAGE_LATEST_START }
-      return runRiverVoyage(true, { force: !!args.force })
-    }
-    case 'sail_to_cabin': {
-      // Farm → ocean cabin by boat, ending on the cabin dock.
-      return runRiverVoyage(false, { force: !!args.force })
-    }
-    case 'boat_status': {
-      const v = bot.vehicle
-      if (!v) return { ok: true, in_boat: false }
-      pilotSync()
-      return { ok: true, in_boat: true, vehicle_id: v.id, vehicle_name: v.name, piloting: !!pilot.session, ...pilotReport() }
-    }
-    case 'quit':
-      bot.quit()
-      return { ok: true }
-    default:
-      return { ok: false, error: `unknown action: ${action}` }
   }
+  return { ok: true, enabled: idleWanderEnabled, busy: idleWanderBusy() }
+})
+registerCommand('auto_greet', (args, cmd) => {
+  if (typeof args.enabled === 'boolean') autoGreetEnabled = args.enabled
+  return { ok: true, enabled: autoGreetEnabled, greet: getGreetText(), radius: GREET_RADIUS, recent: Object.fromEntries([...greetHistory].map(([k, v]) => [k, new Date(v).toISOString()])) }
+})
+registerCommand('auto_eat', (args, cmd) => {
+  if (typeof args.enabled === 'boolean') {
+    if (args.enabled) bot.autoEat?.enableAuto()
+    else bot.autoEat?.disableAuto()
+  }
+  return {
+    ok: true,
+    enabled: bot.autoEat?.isEating === undefined ? null : !!bot.autoEat?.opts?.eatingTimeout || true,
+    opts: bot.autoEat?.opts || null,
+  }
+})
+registerCommand('look_at', (args, cmd) => {
+  // Toggle the continuous lookAt-nearest-player behavior, or query it.
+  if (typeof args.enabled === 'boolean') lookAtEnabled = args.enabled
+  return { ok: true, enabled: lookAtEnabled }
+})
+registerCommand('routes', (args, cmd) => {
+  // List known overland routes and their leg counts.
+  return {
+    ok: true,
+    routes: Object.entries(ROUTES).map(([name, r]) => ({
+      name, label: r.label, legs: r.legs.length,
+      from: r.legs[0].note, to: r.legs[r.legs.length - 1].note,
+    })),
+  }
+})
+registerCommand('walk_route', (args, cmd) => {
+  // args: { route, reverse?, legs? } — walk a named route leg by leg.
+  // `legs` limits how many legs to attempt, for testing a prefix of the
+  // chain without committing to the whole walk.
+  const name = args.route || 'farm_to_igloo'
+  if (!ROUTES[name]) return { ok: false, error: `unknown route: ${name}`, known: Object.keys(ROUTES) }
+  let maxLegs = 0
+  if (args.legs !== undefined) {
+    maxLegs = Number(args.legs)
+    if (!Number.isFinite(maxLegs) || maxLegs < 1) return { ok: false, error: 'legs must be a positive number' }
+  }
+  return runWalkRoute(name, { reverse: !!args.reverse, maxLegs, fromNearest: !!args.from_nearest })
+})
+registerCommand('follow', (args, cmd) => {
+  // args: { username }  — start following named player. Omit username to stop.
+  if (!args.username) {
+    followTarget = null; followEntity = null; followChainPos = 0
+    bot.pathfinder.setGoal(null)
+    sustainResume('follow ended (ctl)')
+    return { ok: true, following: null }
+  }
+  const target = findPlayerEntity(args.username)
+  if (!target) return { ok: false, error: `can't see player: ${args.username}` }
+  if (taskBusy()) {
+    logEvent('follow', `aborting active task: ${activeTask.name}`)
+    abortGen++
+    bot.pathfinder.setGoal(null)
+  }
+  sustainPause('follow') // F2: fire duty resumes when the follow ends
+  followTarget = args.username
+  followEntity = null; followChainPos = 0; lastChainEval = 0
+  return { ok: true, following: followTarget }
+})
+registerCommand('chat_rules', (args, cmd) => {
+  return { ok: true, rules: CHAT_HANDLERS.map(r => ({ name: r.name, pattern: r.pattern.source })) }
+})
+registerCommand('harvest_status', (args, cmd) => {
+  return { ok: true, busy: activeTask.name?.startsWith('harvest') ?? false }
+})
+registerCommand('task_status', (args, cmd) => {
+  return { ok: true, ...taskStatus() }
+})
+registerCommand('wheat_status', (args, cmd) => {
+  const scan = scanKnownWheatFields()
+  return { ok: true, ...scan, alertReady: wheatReadyState.ready, snoozed: wheatReadyState.snoozed, alertEveryMs: WHEAT_READY_ALERT_MS }
+})
+registerCommand('wheat_snooze', (args, cmd) => {
+  return { ok: true, snoozed: snoozeWheatReadyAlerts('ctl') }
+})
+registerCommand('potato_status', (args, cmd) => {
+  const scan = scanKnownPotatoField()
+  return { ok: true, ...scan, keepRaw: SUSTAIN_KEEP_RAW_POTATO, onHand: countOnHand('potato'), baked: countBakedPotatoes() }
+})
+registerCommand('craft_plant_balls', (args, cmd) => {
+  const ingredient = args.ingredient || 'wheat_seeds'
+  const keepCount = args.keep ?? 0
+  craftPlantBalls({ ingredient, keepCount, maxBalls: Infinity })
+    .then(r => logEvent('craft-ctl', `done: crafted=${r.crafted}`))
+    .catch(e => logEvent('craft-ctl-error', e.message))
+  return { ok: true, started: true, ingredient, keepCount }
+})
+registerCommand('harvest_potatoes', (args, cmd) => {
+  // Right-click is the default. For the legacy left-click brute method,
+  // use action 'harvest_potatoes_brute'.
+  return startAsync('harvest-potato-rc-error', () => runHarvestPotatoesRightClick({ user: 'ctl' }))
+})
+registerCommand('harvest_potatoes_brute', (args, cmd) => {
+  return startAsync('harvest-potato-error', () => runHarvestPotatoes({ user: 'ctl' }))
+})
+registerCommand('bake_potatoes', (args, cmd) => {
+  return startAsync('bake-potato-error', () => runBakePotatoes({ user: 'ctl' }))
+})
+registerCommand('eat', (args, cmd) => {
+  return eatSomething()
+    .then(msg => ({ ok: true, msg, food: bot.food }))
+    .catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('bake', (args, cmd) => {
+  const mode = 'both'
+  startAsync('bake-error', () => runBake(mode))
+  return { ok: true, started: true, mode }
+})
+registerCommand('stash_unknown', (args, cmd) => {
+  return startAsync('stash-error', () => runStashUnknown())
+})
+registerCommand('stash_junk', (args, cmd) => {
+  const filterNames = Array.isArray(args && args.items) ? args.items : null
+  return startAsync('stash-junk-error', () => runStashJunk(filterNames))
+})
+registerCommand('stash_wheat', (args, cmd) => {
+  return startAsync('stash-wheat-error', () => runStashWheat())
+})
+registerCommand('unjam_hopper', (args, cmd) => {
+  if (countOnHand('potato') < 1) return { ok: false, error: 'no raw potatoes on hand' }
+  clearJammedHopper()
+    .then(ok => logEvent('sustain-hopper', `unjam_hopper (ctl): ${ok ? 'cleared' : 'still jammed'}`))
+    .catch(e => logEvent('sustain-hopper', `unjam_hopper (ctl) error: ${e.message}`))
+  return { ok: true, started: true }
+})
+registerCommand('harvest_right_click', (args, cmd) => {
+  const half = (args && args.half) || 'all'
+  const keepSeeds = !!(args && args.keepSeeds)
+  startAsync('harvest-rc-error', () => runHarvestRightClick({ half, keepSeeds }))
+  return { ok: true, started: true, half, keepSeeds }
+})
+registerCommand('keep_fire', (args, cmd) => {
+  startAsync('sustain-error', () => runSustainFarm(args && args.user))
+  return { ok: true, started: true, sustaining: true }
+})
+registerCommand('sustain_status', (args, cmd) => {
+  return { ok: true, active: sustainState.active, cycles: sustainState.cycles, startedBy: sustainState.startedBy, role: sustainState.role, paused: sustainState.paused, pauseReason: sustainState.pauseReason, duties: [...myDuties()], pendingWork: [...sustainState.pendingWork], crew: Object.fromEntries([...fireCrew].map(([n, c]) => [n, [...c.fields].join('+')])) }
+})
+registerCommand('sustain_stop', (args, cmd) => {
+  const was = sustainState.active
+  sustainState.active = false
+  if (was) announceFireStandDown()
+  abortGen++
+  return { ok: true, stopped: was }
+})
+registerCommand('rps_fun', (args, cmd) => {
+  return startAsync('rps-fun-error', () => runFunRpsChallenger())
+})
+registerCommand('deposit_named', (args, cmd) => {
+  const names = Array.isArray(args && args.names) ? args.names : []
+  if (!names.length) return { ok: false, error: 'names array required' }
+  startAsync('deposit-named-error', () => runDepositNamed(names))
+  return { ok: true, started: true, names }
+})
+registerCommand(['deposit_item', 'deposit_wheat'], (args, cmd) => { // generic: deposit any item by name
+  if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+  const depositItemName = (args && args.item) || 'wheat'
+  const target = (args && args.target === 'chest') ? HARVEST_WAYPOINTS.kitchen_chest : HOPPER
+  // Raw grain jams the bio-fuel intake (user rule, 2026-07-07). Refuse
+  // up front — depositToHopper would throw anyway, but only into the log.
+  if (target === HOPPER && HOPPER_FORBIDDEN.has(depositItemName)) {
+    return { ok: false, error: `${depositItemName} jams the bio-fuel intake — use stash_wheat (crafts plantballs first) or pass target:"chest"` }
+  }
+  const keep = Number.isFinite(args && args.keep) ? args.keep : 0
+  ;(async () => {
+    try {
+      let r
+      if (target === HOPPER) {
+        r = await depositToHopper(depositItemName, { keep })
+      } else {
+        await ensureInsideHouse()
+        await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
+        r = await depositQuickMove(depositItemName, target, { keep })
+      }
+      logEvent('deposit-qm', `deposit_item(${depositItemName}): deposited=${r.deposited} remaining=${r.remaining} rounds=${r.rounds} backedUp=${r.backedUp}`)
+    } catch (e) { logEvent('deposit-qm', `deposit_item(${depositItemName}) error: ${e.message}`) }
+  })()
+  return { ok: true, started: true, item: depositItemName, target: target === HOPPER ? 'hopper' : 'chest', keep }
+})
+registerCommand('play_record', (args, cmd) => {
+  if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+  startAsync('jukebox-error', () => runPlayRecord({ title: args.title, color: args.color }))
+  return { ok: true, started: true, title: args.title || null, color: args.color || null }
+})
+registerCommand('stop_record', (args, cmd) => {
+  if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+  return startAsync('jukebox-error', () => runStopRecord())
+})
+registerCommand('go_outside', (args, cmd) => {
+  if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+  return startAsync('go-outside-error', () => runGoOutside())
+})
+registerCommand('come_inside', (args, cmd) => {
+  const wasTask = taskBusy() ? activeTask.name : null
+  if (wasTask) {
+    logEvent('come-inside', `aborting active task: ${wasTask}`)
+    abortGen++
+    bot.pathfinder.setGoal(null)
+  }
+  if (sustainState.active) {
+    sustainState.active = false
+    logEvent('sustain', 'stopped — come-inside takes priority')
+  }
+  if (followTarget) {
+    logEvent('come-inside', `skipping — follow (${followTarget}) takes priority`)
+    return { ok: false, error: 'following', following: followTarget }
+  }
+  ;(async () => {
+    if (wasTask) await sleep(300)
+    if (nearCabin() || insideCabinBedroom()) { await cabinEnterBedroom(); return }
+    if (inPen()) await runLeavePen()
+    await runGoInside()
+  })().catch(e => logEvent('go-inside-error', e.message))
+  return { ok: true, started: true, aborted: wasTask }
+})
+registerCommand('cabin_exit', (args, cmd) => {
+  if (!insideCabinBedroom()) return { ok: true, inside: false }
+  if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+  return startAsync('cabin-exit-error', () => cabinExitBedroom())
+})
+registerCommand('go_boating', (args, cmd) => {
+  if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+  return startAsync('go-boating-error', () => runIdleBoating())
+})
+registerCommand('shear_sheep', (args, cmd) => {
+  // Same routine as the "shear the sheep" chat reflex, which helm mode
+  // switches off along with the rest of chat.
+  if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+  abortGen++
+  runShearSheep().catch(e => {
+    if (e.name === 'AbortError') return
+    logEvent('shear-error', e.message)
+  })
+  return { ok: true, started: true }
+})
+registerCommand('go_into_pen', (args, cmd) => {
+  if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+  return startAsync('go-into-pen-error', () => runGoIntoPen())
+})
+registerCommand('go_out_of_pen', (args, cmd) => {
+  if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+  return startAsync('go-out-of-pen-error', () => runGoOutOfPen())
+})
+registerCommand('bleu_paddle_home', (args, cmd) => {
+  // Off the Bleu de Paris by the gangplank, then paddle the boat we came in
+  // back to the farm port. args: { boat_id? } (default: the last boat boarded)
+  return bleuPaddleHome({ boatId: args.boat_id != null ? Number(args.boat_id) : null })
+})
+registerCommand('board_bleu', (args, cmd) => {
+  // Shore → Bleu de Paris deck via the gangplank corridor.
+  if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+  if (onBleu()) return { ok: true, aboard: true, already: true }
+  // From the west bank, go by paddle boat (Dad) — only walk if already on
+  // the east shore near the gangplank.
+  const pb = bot.entity.position
+  if (bot.vehicle || Math.hypot(pb.x - (GANGPLANK_SHORE.x + 0.5), pb.z - GANGPLANK_LINE_Z) > 16) return bleuPaddleOver()
+  return gangplankBoard().catch(e => { logEvent('gangplank-error', e.message); return { ok: false, error: e.message } })
+})
+registerCommand('leave_bleu', (args, cmd) => {
+  // Bleu de Paris deck → shore pad via the gangplank corridor.
+  if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+  if (!onBleu()) return { ok: true, aboard: false, already: true }
+  return gangplankLeave().catch(e => { logEvent('gangplank-error', e.message); return { ok: false, error: e.message } })
+})
+registerCommand('cabin_to_bed', (args, cmd) => {
+  if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+  return startAsync('cabin-error', () => cabinSleep())
+})
+registerCommand('cabin_to_dock', (args, cmd) => {
+  if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+  return startAsync('cabin-error', () => cabinBedroomToDock())
+})
+registerCommand('cabin_enter_bedroom', (args, cmd) => {
+  if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+  return startAsync('cabin-error', () => cabinEnterBedroom())
+})
+registerCommand('cabin_exit_bedroom', (args, cmd) => {
+  if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
+  return startAsync('cabin-error', () => cabinExitBedroom())
+})
+registerCommand('door_strafe', (args, cmd) => {
+  // Tune door-traversal strafe without restarting.
+  // args: { exit?, enter? (each 'left'|'right'|null); exit_ms?, enter_ms? }
+  if (args.exit !== undefined) EXIT_STRAFE = args.exit || null
+  if (args.enter !== undefined) ENTER_STRAFE = args.enter || null
+  if (args.exit_ms !== undefined) EXIT_STRAFE_MS = Number(args.exit_ms)
+  if (args.enter_ms !== undefined) ENTER_STRAFE_MS = Number(args.enter_ms)
+  return { ok: true, exit: EXIT_STRAFE, enter: ENTER_STRAFE, exit_ms: EXIT_STRAFE_MS, enter_ms: ENTER_STRAFE_MS }
+})
+registerCommand('ride_boat', (args, cmd) => {
+  const p = bot.entity.position
+  const radius = Number(args.radius ?? 8)
+  const boats = Object.values(bot.entities)
+    .filter(e => e !== bot.entity && e.name === 'boat' && e.position.distanceTo(p) <= radius)
+    .sort((a, b) => a.position.distanceTo(p) - b.position.distanceTo(p))
+  if (!boats.length) return { ok: false, error: `no boat within ${radius} blocks` }
+  const target = boats[0]
+  const dist = target.position.distanceTo(p)
+  const doMount = () => bot.activateEntity(target)
+    .then(() => sleep(500))
+    .then(() => {
+      const mounted = !!bot.vehicle
+      if (mounted && bot.entity?.position) {
+        const gap = bot.entity.position.distanceTo(target.position)
+        // The server's passenger list is the truth: a mount from ~4.3 blocks
+        // is real but our position lags, so trust set_passengers over the gap
+        // (2026-10-03 — a real mount was cleared, stranding Roz seated).
+        const listed = Array.isArray(target.passengers) && target.passengers.includes(bot.entity)
+        if (gap > 4 && !listed) {
+          logEvent('ride-boat', `phantom mount — bot is ${gap.toFixed(1)} blocks from boat ${target.id}, clearing vehicle ref`)
+          bot.vehicle = null
+          return { ok: false, error: `mount appeared to succeed but bot is ${gap.toFixed(1)} blocks from boat — likely a phantom mount` }
+        }
+      }
+      if (mounted) lastBoardedBoatId = target.id
+      logEvent('ride-boat', `${mounted ? 'mounted' : 'mount unclear'} boat ${target.id} at ${posStr(target.position)}`)
+      return { ok: true, mounted, boat_id: target.id, x: +target.position.x.toFixed(1), y: +target.position.y.toFixed(1), z: +target.position.z.toFixed(1) }
+    })
+    .catch(e => ({ ok: false, error: `activate failed: ${e.message}` }))
+  if (args.walk !== false && dist > 2.5) {
+    const { x, y, z } = target.position
+    return bot.pathfinder.goto(new goals.GoalNear(x, y, z, 2))
+      .catch(e => logEvent('ride-boat', `pathfind failed: ${e.message} — trying activate anyway`))
+      .then(() => doMount())
+  }
+  return doMount()
+})
+registerCommand('boat_pilot', (args, cmd) => {
+  // Pilot by feel, not coordinates. args (all optional):
+  //   heading: compass degrees (0=N, 90=E) or a word ("north", "sw")
+  //   turn: degrees relative to the current heading (+right / -left)
+  //   ms: how long to paddle; throttle: 0..1 (default 1 when paddling)
+  //   rate: turn degrees per tick (default 3 ≈ 60°/s; lower = wider sweep)
+  //   assume_heading: tell me which way the bow REALLY points (calibration)
+  //   hold: true = don't ease off at the end (keep momentum for the next command)
+  // With only heading/turn, I turn in place; add ms to paddle.
+  if (!pilotSync()) return { ok: false, error: 'not in a vehicle' }
+  if (args.assume_heading != null) {
+    const a = parseCompass(args.assume_heading)
+    if (a == null) return { ok: false, error: `bad assume_heading: ${args.assume_heading}` }
+    pilot.yaw = compassToMcYaw(a)
+  }
+  let goal = null
+  if (args.heading != null) {
+    const h = parseCompass(args.heading)
+    if (h == null) return { ok: false, error: `bad heading: ${args.heading}` }
+    goal = compassToMcYaw(h)
+  } else if (args.turn != null) {
+    goal = normDeg(pilot.yaw + Number(args.turn))
+  }
+  const ms = args.ms != null ? Number(args.ms) : null
+  if (goal == null && ms == null) return { ok: true, calibrated: args.assume_heading != null, ...pilotReport() }
+  const throttle = Number(args.throttle ?? (ms != null ? 1 : 0))
+  const rate = Number(args.rate ?? BOAT_TURN_RATE)
+  return runPilot('pilot', (elapsed) => {
+    const aligned = goal == null || Math.abs(wrapDeg(goal - pilot.yaw)) < 0.5
+    if ((ms == null || elapsed >= ms) && aligned) return { done: 'done' }
+    return { goalYaw: goal, throttle: ms != null && elapsed < ms ? throttle : 0, rate }
+  }, { hold: !!args.hold })
+})
+registerCommand('boat_coast', (args, cmd) => {
+  // Ease off: stop paddling and drift to a stop on the current heading.
+  if (!pilotSync()) return { ok: false, error: 'not in a vehicle' }
+  return runPilot('coast', () => ({ done: 'eased off' }))
+})
+registerCommand('steer_boat', (args, cmd) => {
+  // Legacy: direction forward|left|right for duration_ms. Now a thin
+  // wrapper on the pilot (turns gradually, correct heading sign).
+  if (!pilotSync()) return { ok: false, error: 'not in a vehicle' }
+  const dir = args.direction || 'forward'
+  const dur = Number(args.duration_ms ?? 3000)
+  const rate = dir === 'left' ? -2 : dir === 'right' ? 2 : 0
+  return runPilot(`steer ${dir}`, (elapsed) => elapsed >= dur
+    ? { done: 'done' }
+    : { goalYaw: normDeg(pilot.yaw + rate), throttle: dir === 'forward' ? 1 : 0.5, rate: Math.abs(rate) })
+})
+registerCommand('steer_boat_to', (args, cmd) => {
+  // Pilot to a coordinate: turn toward it gradually, paddle when aligned,
+  // ease in over the last few blocks. args: { x, z, throttle?: 1, range?: 3, rate?: 3 }
+  if (!pilotSync()) return { ok: false, error: 'not in a vehicle' }
+  return boatSeek([{ x: Number(args.x), z: Number(args.z) }], {
+    throttle: Number(args.throttle ?? 1), range: Number(args.range ?? 3), rate: Number(args.rate ?? BOAT_TURN_RATE), label: `to (${args.x}, ${args.z})`
+  })
+})
+registerCommand('steer_boat_route', (args, cmd) => {
+  // args: { waypoints: [{x, z}, ...], throttle?: 1, range?: 5, rate?: 3 }
+  if (!pilotSync()) return { ok: false, error: 'not in a vehicle' }
+  const waypoints = args.waypoints
+  if (!Array.isArray(waypoints) || waypoints.length === 0) return { ok: false, error: 'waypoints must be a non-empty array of {x, z}' }
+  return boatSeek(waypoints.map(w => ({ x: Number(w.x), z: Number(w.z) })), {
+    throttle: Number(args.throttle ?? 1), range: Number(args.range ?? 5), rate: Number(args.rate ?? BOAT_TURN_RATE), label: `route (${waypoints.length} wp)`
+  })
+})
+registerCommand('exit_boat', (args, cmd) => {
+  // Dismount and step onto dry land. args: { to?: {x,y,z} landing block
+  // (default: nearest dry standing spot within 4), land?: false to just get out }
+  return disembark({ to: args.to || null, land: args.land !== false })
+})
+registerCommand('sail_home', (args, cmd) => {
+  // Ocean cabin → farm by boat, ending at the wheat field center.
+  // args: { force?: true to start after VOYAGE_LATEST_START }
+  return runRiverVoyage(true, { force: !!args.force })
+})
+registerCommand('sail_to_cabin', (args, cmd) => {
+  // Farm → ocean cabin by boat, ending on the cabin dock.
+  return runRiverVoyage(false, { force: !!args.force })
+})
+registerCommand('boat_status', (args, cmd) => {
+  const v = bot.vehicle
+  if (!v) return { ok: true, in_boat: false }
+  pilotSync()
+  return { ok: true, in_boat: true, vehicle_id: v.id, vehicle_name: v.name, piloting: !!pilot.session, ...pilotReport() }
+})
+registerCommand('quit', (args, cmd) => {
+  bot.quit()
+  return { ok: true }
+})
+
+function handleCommand (cmd) {
+  const { action, args = {} } = cmd
+  const handler = COMMANDS[action]
+  if (!handler) return { ok: false, error: `unknown action: ${action}` }
+  return handler(args, cmd)
 }
 
 const server = net.createServer((sock) => {

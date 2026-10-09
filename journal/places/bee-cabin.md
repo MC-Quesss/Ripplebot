@@ -25,6 +25,11 @@ Near the bee cross ([[../procedures/apiary-tending]], (-404, 68, 256)), reached 
   here, but `walk_until` plus a jump worked first try.
 - **This doorway is the ONLY way in and out of the cabin** (Quesss). Never path around it or through a wall.
   To leave, reverse the entry: face due south (yaw π), walk to z ≥ 242.7, drop down the lip, then walk to z ≥ 244.7.
+- **Wedged at the lip (2026-10-08):** if she stops at z 243.3 against the lip, a standing start
+  never climbs it, even with jump held and perfectly centred. Back out south to z ≈ 245.5, line up
+  on x ≈ -402.5 (the opening is one block wide, jambs at x -404 and -402; more than about 0.2 off
+  centre catches a shoulder), then walk north with jump held. `beeCabinEnter` now does both:
+  it backs out first and re-centres at the doorstep.
 - Walk from the dock: shore orientation point (-415.5, 63, 280.5) → north up the slope via about
   (-413, 67, 265), (-410, 68, 253.5), (-404, 67, 247) → front door. Roz followed Quesss the whole
   way, about 15 s with no hazards.
@@ -149,6 +154,10 @@ Dad asked for the birch/charcoal/potato routine to run on its own. It runs after
   (d) **Always the very top first, then down (Dad).** Reach rule: a dig works when (eyeY − (y+0.5))² + h² < 36, with the eyes 1.5 above the feet. From the ground stand
   that's up to y 71, a full 7-log birch. If a trunk is taller, she steps up onto the base log *first* (reaches y 72), cuts top-down, steps off, and cuts the base last.
 - **Patch rests while the chest is stocked (Dad, 2026-10-07):** no potato harvest while Roz's chest holds 64+ baked potatoes (the count is read on each furnace visit). Bare tiles still get sown.
+- **Poison potatoes go behind the cabin (Dad, 2026-10-09):** the patch harvest had been keeping them; Dad found one in the pack Roz dropped when she died at the bee cross. Now after each patch pass, any `poisonous_potato` is thrown behind the cabin by the same east-lane route as the drones (`dumpTrashBehindCabin` → `throwBehindCabin`). See [[../procedures/apiary-tending]]. Not yet seen live.
+- **Charcoal is stored as blocks (Dad, 2026-10-09) — verified live the same day.** On a furnace visit with charcoal left after fueling, Roz takes the chest's loose charcoal, crafts each nine into a **charcoal block (unknown item, type 9703)** at the cabin crafting table (-404, 66, 238), one charcoal per grid space, and puts the blocks plus any remainder back. First run: 10 new + 8 loose = 18 → 2 blocks, 0 left over (chest 42 → 44 blocks). Charcoal still fuels the furnaces first, so a hungry south furnace can leave nothing to compress (that's what happened on the first try).
+- **Balls of fur → chest at 64 (Dad, 2026-10-09):** [[../items/ball-of-fur]] (type 9809) are picked up during beekeeping; once the pack holds 64 they go into the chest on the next furnace visit. Not yet seen live.
+- Modded items (charcoal blocks, fur) are moved by shift-click (`quickMoveType`): mineflayer's `win.deposit` asserts the item type is in its registry and throws for unknown ids. A "server rejected" log line on the shift-click is benign; the block still moved.
   (e) Live, the same day: **y 71 failed from the ground on the first try**, so the computed reach edge isn't dependable. Any trunk reaching y 71 (every full 7-log birch) now
   gets the step-up onto the base log, and each log is retried up to 3 times *before* she moves lower. If one still won't come down she stops (the tree stays whole, no floating logs)
   and the next round tries again.
