@@ -2154,7 +2154,10 @@ async function yieldToBedtime (myGen) {
 
   if (insideHouse()) {
     logEvent('task', `${activeTask.name} going outside to resume`)
-    await runGoOutside(activeTask.detail || activeTask.name)
+    // Task names ('harvest_potatoes_rc') read badly in the go-outside line.
+    const resumeActivity = activeTask.detail ||
+      (/potato/.test(activeTask.name) ? 'potatoes' : /wheat|harvest/.test(activeTask.name) ? 'wheat' : undefined)
+    await runGoOutside(resumeActivity)
     logEvent('task', `${activeTask.name} outside, resuming harvest loop`)
   }
 }
@@ -2241,7 +2244,25 @@ async function openContainerAt (target, { furnace = false, expect = null, label 
 }
 async function withContainer (target, fn, opts = {}) {
   const win = await openContainerAt(target, opts)
-  try { return await fn(win) } finally { try { win.close() } catch (_) {} }
+  try { return await fn(win) } finally {
+    try { await emptyCursor(win) } catch (_) {}
+    try { win.close() } catch (_) {}
+  }
+}
+// Closing a window drops whatever is on the cursor at Roz's feet. A rejected
+// click can leave a stack there: charcoal blocks were found on the bee cabin
+// floor after stowColumn rejections (2026-10-13). Put it down in an empty slot
+// (pack first, then the container) before closing.
+async function emptyCursor (win) {
+  for (let tries = 0; tries < 3 && win.selectedItem; tries++) {
+    let empty = -1
+    for (let s = win.inventoryStart; s < win.inventoryEnd && empty < 0; s++) if (!win.slots[s]) empty = s
+    for (let s = 0; s < win.inventoryStart && empty < 0; s++) if (!win.slots[s]) empty = s
+    if (empty < 0) { logEvent('container', `cursor holds ${win.selectedItem.count}x ${win.selectedItem.name || win.selectedItem.type} and no empty slot: it will drop`); return }
+    logEvent('container', `cursor held ${win.selectedItem.count}x ${win.selectedItem.name || win.selectedItem.type} before close: putting it in slot ${empty}`)
+    await bot.clickWindow(empty, 0, 0)
+    await sleep(250)
+  }
 }
 // The container part of a window (everything before the 36 player slots).
 function containerSlots (win) { return win.slots.slice(0, win.slots.length - 36) }
@@ -3592,6 +3613,8 @@ async function runBeeRoundInner () {
   if (taskBusy()) { logEvent('bees', `round skipped: busy with ${activeTask.name}`); return }
   if (bot.isSleeping || isBedtime()) { logEvent('bees', 'round skipped: bedtime'); return }
   if (insideBeeCabin()) {
+    // First thing each morning, before going outside (Dad, 2026-10-11).
+    await collectTrophyNugget().catch(e => logEvent('bees', `trophy nugget: ${e.message}`))
     await beeCabinExit()
     if (insideBeeCabin()) { logEvent('bees', `round skipped: could not leave the bee cabin (${posStr(bot.entity.position)})`); return }
   }
@@ -3838,52 +3861,235 @@ async function quickMoveType (win, type) {
   return moved
 }
 
+// Charcoal lives down the chest's right-hand column, blocks on top and loose
+// charcoal under them (Dad, 2026-10-11) — not wherever deposit() lands it.
+// Loose charcoal found where a block stack belongs is lifted out first and
+// re-stowed below. Returns { blocks, loose } moved from the pack.
+const CHARCOAL_BLOCK_TYPE = 9703 // learned 2026-10-09; charcoalBlockType confirms it live
+// Stow a chest column top-down by tier: every stack of tiers[0] above every
+// stack of tiers[1], and so on (charcoal: block over loose; gold: block over
+// ingot over nugget). A lower-tier stack found where a higher tier belongs is
+// lifted into the pack and re-stowed in its own turn. Each move survives a
+// rejected click and tries once more after the resync — one rejection used to
+// abort the whole stow (live 2026-10-11, twice running). `col` is 0-based
+// (8 = the right-hand column). Returns the count moved per tier.
+async function stowColumn (win, col, tiers) {
+  const slots = []
+  for (let s = col; s < win.inventoryStart; s += 9) slots.push(s)
+  const tierOf = it => it ? tiers.findIndex(t => t(it)) : -1
+  const packSlots = pred => {
+    const out = []
+    for (let s = win.inventoryStart; s < win.inventoryEnd; s++) if (pred(win.slots[s])) out.push(s)
+    return out
+  }
+  const place = async (from, to) => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const ok = await benignClick('bee-chores', 'stowColumn', async () => {
+        await bot.clickWindow(from, 0, 0); await sleep(150)
+        await bot.clickWindow(to, 0, 0); await sleep(150)
+        if (win.selectedItem || bot.inventory.selectedItem) { await bot.clickWindow(from, 0, 0); await sleep(150) }
+      })
+      if (ok || !win.slots[from]) return
+    }
+  }
+  const moved = tiers.map(() => 0)
+  // Consolidate: a tier split over several column slots with room left (the
+  // stackSize bug of 2026-10-11 left single charcoal blocks one per slot) is
+  // lifted into the pack, and the placement below merges it back into full
+  // stacks from the top.
+  // Full stacks are never lifted: a stack cannot hold more than 64, so new
+  // items start a stack underneath (Dad, 2026-10-13). Lifting the full 64 too
+  // was what the server kept rejecting, and how a stack ended on the floor.
+  for (let k = 0; k < tiers.length; k++) {
+    const partial = slots.filter(s => tiers[k](win.slots[s]) && win.slots[s].count < 64)
+    if (partial.length < 2) continue
+    for (const s of partial) await benignClick('bee-chores', 'stowColumn consolidate', async () => { await bot.clickWindow(s, 0, 1); await sleep(150) })
+  }
+  for (let k = 0; k < tiers.length; k++) {
+    // Start under the lowest stack of any higher tier, so order holds.
+    let i0 = 0
+    for (let i = 0; i < slots.length; i++) { const t = tierOf(win.slots[slots[i]]); if (t >= 0 && t < k) i0 = i + 1 }
+    for (const from of packSlots(tiers[k])) {
+      let n = win.slots[from]?.count || 0
+      for (let i = i0; i < slots.length && n > 0 && win.slots[from]; i++) {
+        const at = tierOf(win.slots[slots[i]])
+        if (at > k) await benignClick('bee-chores', 'stowColumn lift', async () => { await bot.clickWindow(slots[i], 0, 1); await sleep(150) })
+        const here = win.slots[slots[i]]
+        if (here && !(tiers[k](here) && here.count < 64)) continue // 64: modded items report no real stackSize (live 2026-10-11)
+        await place(from, slots[i])
+        const left = tiers[k](win.slots[from]) ? win.slots[from].count : 0
+        moved[k] += n - left; n = left
+      }
+    }
+  }
+  return moved
+}
+async function stowCharcoalColumn (win) {
+  const blockType = charcoalBlockType ?? CHARCOAL_BLOCK_TYPE
+  const [blocks, loose] = await stowColumn(win, 8, [
+    it => !!it && it.type === blockType,
+    it => !!it && it.name === 'coal' && it.metadata === CHARCOAL_META,
+  ])
+  return { blocks, loose }
+}
+
+// The Zombie Pigman Trophy on top of the north furnace (Dad, 2026-10-11): a
+// right-click gives one gold nugget per day. Roz claims it the first time she
+// is inside the cabin each world day — straight after waking, before her first
+// round takes her out — and stores it down the chest column just left of the
+// charcoal (column 8) via storeGold, which compresses nines.
+const BEE_TROPHY = { x: -407, y: 67, z: 239 }
+async function collectTrophyNugget () {
+  const day = bot.time?.day
+  if (day == null || beeState.trophyDay === day) return
+  const trophy = blockAtPos(BEE_TROPHY)
+  if (!trophy || trophy.name === 'air') { beeState.trophyDay = day; logEvent('bees', `trophy nugget: no trophy at ${posStr(BEE_TROPHY)}`); return }
+  await pathTo(BEE_FURNACE_STAND, 0, 6000)
+  const before = countItem('gold_nugget')
+  await bot.activateBlock(trophy)
+  await sleep(600)
+  const got = countItem('gold_nugget') - before
+  beeState.trophyDay = day // one per day: an empty click means it is already claimed
+  if (got <= 0) { logEvent('bees', 'trophy nugget: none today (already claimed?)'); return }
+  const note = await storeGold()
+  logEvent('bees', `trophy nugget: +${got}; ${note}`)
+}
+// Gold lives down the chest column just left of the charcoal (column 8),
+// compressed like the charcoal (Dad, 2026-10-11): nine nuggets make an ingot,
+// nine ingots a block; blocks on top, then ingots, then nuggets. Crafting only
+// happens once a tier reaches nine — otherwise the pack's gold is just stowed.
+async function storeGold () {
+  const notes = []
+  let chestNug = 0, chestIng = 0
+  await withCabinChest(async win => { chestNug = chestCount(win, 'gold_nugget'); chestIng = chestCount(win, 'gold_ingot') })
+  const nug = chestNug + countItem('gold_nugget')
+  const ing = chestIng + countItem('gold_ingot') + Math.floor(nug / 9)
+  if (nug >= 9 || ing >= 9) {
+    await withCabinChest(async win => {
+      for (const name of ['gold_nugget', 'gold_ingot']) {
+        const n = chestCount(win, name)
+        if (n > 0) await chestMove('withdraw', () => win.withdraw(bot.registry.itemsByName[name].id, null, n))
+      }
+    })
+    await sleep(400)
+    try {
+      const ingots = (await craftNine('gold_nugget', null, 'gold nuggets')).made
+      if (ingots) notes.push(`${ingots} gold ingot${ingots === 1 ? '' : 's'} crafted`)
+      const blocks = (await craftNine('gold_ingot', null, 'gold ingots')).made
+      if (blocks) notes.push(`${blocks} gold block${blocks === 1 ? '' : 's'} crafted`)
+    } catch (e) {
+      logEvent('bees', `gold crafting: ${e.message}`)
+      notes.push(`gold crafting failed: ${e.message}`)
+    }
+    await sleep(400)
+  }
+  let moved = [0, 0, 0]
+  await withCabinChest(async win => {
+    moved = await stowColumn(win, 7, [
+      it => !!it && it.name === 'gold_block',
+      it => !!it && it.name === 'gold_ingot',
+      it => !!it && it.name === 'gold_nugget',
+    ])
+  })
+  const [b, i, n] = moved
+  notes.push(`stowed ${[b && `${b} block`, i && `${i} ingot`, n && `${n} nugget`].filter(Boolean).join(', ') || 'nothing'} in column 8`)
+  return notes.join(', ')
+}
+
+// "Empty saplings" (Dad, 2026-10-11): the corner trees drop Forestry saplings
+// (one item id, a genome each, so they never stack — 22 once filled the pack
+// to five free slots). This puts every one of them in the cabin chest's middle
+// columns (2–7; potatoes keep the left column, charcoal the right) for Dad to
+// sort and dispose of. Birch saplings are vanilla and stay in the pack.
+const FORESTRY_SAPLING_TYPE = 4730
+async function emptySaplings () {
+  if (beeState.inRound || beeChores.busy) return { ok: false, error: 'busy with the bees — ask again after this round' }
+  if (!nearBeeCross()) return { ok: false, error: 'not at the bee cabin' }
+  if (bot.inventory.items().every(i => i.type !== FORESTRY_SAPLING_TYPE)) return { ok: true, moved: 0, left: 0 }
+  const t = startTask('empty_saplings')
+  if (!t.allowed) return { ok: false, error: `busy with ${t.current}` }
+  try {
+    if (!await ensureInsideBeeCabin()) return { ok: false, error: `could not get into the cabin (${posStr(bot.entity.position)})` }
+    let moved = 0
+    await withCabinChest(async win => {
+      const free = []
+      for (let r = 0; r * 9 < win.inventoryStart; r++) for (let c = 1; c <= 6; c++) if (!win.slots[r * 9 + c]) free.push(r * 9 + c)
+      for (let s = win.inventoryStart; s < win.inventoryEnd && free.length; s++) {
+        if (win.slots[s]?.type !== FORESTRY_SAPLING_TYPE) continue
+        const to = free.shift()
+        await chestMove('saplingToChest', async () => {
+          await bot.clickWindow(s, 0, 0); await sleep(150)
+          await bot.clickWindow(to, 0, 0); await sleep(150)
+          if (win.selectedItem || bot.inventory.selectedItem) { await bot.clickWindow(s, 0, 0); await sleep(150) }
+        })
+        if (win.slots[to]?.type === FORESTRY_SAPLING_TYPE) moved++
+      }
+    })
+    await sleep(300)
+    const left = bot.inventory.items().filter(i => i.type === FORESTRY_SAPLING_TYPE).length
+    logEvent('bee-chores', `empty saplings: ${moved} to the chest, ${left} still in the pack`)
+    return { ok: true, moved, left }
+  } finally {
+    endTask('empty_saplings')
+  }
+}
+
 // Charcoal blocks (Dad, 2026-10-09): one charcoal on each of the nine grid
 // spaces makes one block, for storage. The block is modded (an unknown item),
 // so its type is learned from the table's output the first time she crafts.
 const BEE_CRAFTING_TABLE = { x: -404, y: 66, z: 238 }
 let charcoalBlockType = null
-async function craftCharcoalBlocks () {
-  const blocks = Math.floor(countItem('coal', CHARCOAL_META) / 9)
-  if (blocks <= 0) return 0
+// Craft every nine of one item into its compressed form on the cabin table,
+// one per grid space (charcoal → charcoal block; gold nugget → ingot → block).
+// Returns { made, outType }.
+async function craftNine (name, meta, label) {
+  const isSrc = it => !!it && it.name === name && (meta == null || it.metadata === meta)
+  const times = Math.floor(countItem(name, meta) / 9)
+  if (times <= 0) return { made: 0, outType: null }
   const table = blockAtPos(BEE_CRAFTING_TABLE)
   if (!table || table.name !== 'crafting_table') throw new Error(`no crafting table at ${posStr(BEE_CRAFTING_TABLE)}`)
   const win = await openBench(table)
   const layout = benchLayout(win)
-  const charcoalSlot = () => win.slots.find((it, i) => it && i >= layout.invStart && it.name === 'coal' && it.metadata === CHARCOAL_META)
-  let made = 0
+  const srcSlot = () => win.slots.find((it, i) => i >= layout.invStart && isSrc(it))
+  let made = 0, outType = null
   try {
     await sleep(250)
     if (!layout.vanilla) throw new Error(`cabin table opened a ${win.slots.length}-slot window, not a vanilla table`)
     await benchClearGrid(win, layout)
-    for (let b = 0; b < blocks; b++) {
+    for (let b = 0; b < times; b++) {
       for (let s = layout.gridFirst; s <= layout.gridLast; s++) {
         if (!win.selectedItem) {
-          const src = charcoalSlot()
-          if (!src) throw new Error('ran out of charcoal mid-grid')
+          const src = srcSlot()
+          if (!src) throw new Error(`ran out of ${label} mid-grid`)
           await bot.clickWindow(src.slot, 0, 0) // pick up the stack
           await sleep(120)
         }
-        await bot.clickWindow(s, 1, 0) // right-click: one charcoal on this space
+        await bot.clickWindow(s, 1, 0) // right-click: one on this space
         await sleep(120)
       }
       await sleep(250)
       const out = win.slots[layout.output]
-      if (!out) throw new Error('nine charcoal gave no output')
-      if (out.name === 'coal') throw new Error('output is still charcoal')
-      charcoalBlockType = out.type
-      await bot.clickWindow(layout.output, 0, 1) // shift-click the block into the pack
+      if (!out) throw new Error(`nine ${label} gave no output`)
+      if (isSrc(out)) throw new Error(`output is still ${label}`)
+      outType = out.type
+      await bot.clickWindow(layout.output, 0, 1) // shift-click the result into the pack
       await sleep(200)
       made++
     }
   } finally {
     if (win.selectedItem) {
-      const back = charcoalSlot()
+      const back = srcSlot()
       if (back) { await bot.clickWindow(back.slot, 0, 0).catch(() => {}); await sleep(120) } else await benchSafeCursorDump(win, layout)
     }
     await benchClearGrid(win, layout).catch(() => {})
     win.close()
   }
+  return { made, outType }
+}
+async function craftCharcoalBlocks () {
+  const { made, outType } = await craftNine('coal', CHARCOAL_META, 'charcoal')
+  if (!made) return 0
+  charcoalBlockType = outType
   logEvent('bee-chores', `crafted ${made} charcoal block${made === 1 ? '' : 's'} (type ${charcoalBlockType})`)
   return made
 }
@@ -4030,7 +4236,10 @@ function patchStatus () {
 async function potatoPatchChores () {
   const s = patchStatus()
   // No need to dig more while the chest is well stocked (Dad, 2026-10-07).
-  const stocked = beeChores.chestBaked != null && beeChores.chestBaked >= BEE_CHEST_BAKED_ENOUGH
+  // An unknown count (null until the first furnace visit after a restart)
+  // counts as stocked: a restart once dug a full patch with 250+ baked in the
+  // chest (Dad, 2026-10-09). The furnace visit reads the real count.
+  const stocked = beeChores.chestBaked == null || beeChores.chestBaked >= BEE_CHEST_BAKED_ENOUGH
   const harvest = !stocked && s.ripe > 0 && s.ripe >= Math.ceil(s.crops * BEE_PATCH_RIPE_SHARE)
   if (!harvest && !s.empty) return null
   const before = countItem('potato')
@@ -4100,6 +4309,63 @@ async function putCharcoalFuel (f, want) {
   await chestMove('putFuel', () => f.putFuel(c.type, CHARCOAL_META, n))
   return n
 }
+// Saplings kept in the pack for replanting; the rest may burn.
+const BIRCH_SAPLING_RESERVE = 8
+// The north furnace burns birch saplings first; charcoal only once they run
+// out (Dad, 2026-10-11). Charcoal sitting in its fuel slot comes out to make
+// room — the south furnace takes it later in this pass.
+async function putSaplingFuel (f, notes) {
+  const spare = countItem('sapling', BIRCH_META) - BIRCH_SAPLING_RESERVE
+  if (spare <= 0) return
+  let fuel = f.fuelItem()
+  if (fuel && fuel.name === 'coal') {
+    const got = fuel.count
+    // A rejected takeFuel leaves the window out of step with the server, and
+    // the sapling clicks that follow then fail too, stranding the stack on the
+    // cursor (live 2026-10-13, twice). Skip saplings this pass; the next one
+    // starts from a fresh window.
+    if (!await chestMove('takeFuel', () => f.takeFuel())) return
+    notes.push(`${got} charcoal out of the north fuel slot`)
+    fuel = f.fuelItem()
+  }
+  if (fuel && fuel.name !== 'sapling') return
+  const n = Math.min(64 - (fuel?.count || 0), spare)
+  if (n <= 0) return
+  // Placed one at a time by hand, not with f.putFuel: a rejected putFuel
+  // click twice burned the replanting reserve (7 saplings lost at 15:38Z, 4 at
+  // 18:25Z on 2026-10-11 — both passes logged "putFuel: server rejected").
+  // Pick the stack up once, right-click one sapling per click onto the fuel
+  // slot, then put the rest back where it came from.
+  const FUEL_SLOT = 1
+  let from = -1
+  for (let s = f.inventoryStart; s < f.inventoryEnd; s++) {
+    const it = f.slots[s]
+    if (it && it.name === 'sapling' && it.metadata === BIRCH_META) { from = s; break }
+  }
+  if (from < 0) return
+  // Counted from the window's own pack slots: bot.inventory only catches up
+  // once the window closes (see the charcoal note in furnaceChores).
+  const packSaplings = () => {
+    let c = 0
+    for (let s = f.inventoryStart; s < f.inventoryEnd; s++) { const it = f.slots[s]; if (it && it.name === 'sapling' && it.metadata === BIRCH_META) c += it.count }
+    return c
+  }
+  const before = packSaplings()
+  await benignClick('bee-chores', 'saplingFuel pick', async () => { await bot.clickWindow(from, 0, 0); await sleep(150) })
+  for (let i = 0; i < n && (f.selectedItem || bot.inventory.selectedItem); i++) {
+    await benignClick('bee-chores', 'saplingFuel place', async () => { await bot.clickWindow(FUEL_SLOT, 1, 0); await sleep(120) })
+  }
+  if (f.selectedItem || bot.inventory.selectedItem) await benignClick('bee-chores', 'saplingFuel return', async () => { await bot.clickWindow(from, 0, 0); await sleep(150) })
+  await sleep(300)
+  const used = before - packSaplings()
+  notes.push(`${used} sapling${used === 1 ? '' : 's'} fuel the north furnace`)
+  // Never below the replanting reserve: if the clicks over-delivered, take
+  // the fuel slot's saplings back (the next pass re-feeds the spare ones).
+  if (packSaplings() < BIRCH_SAPLING_RESERVE && f.fuelItem()?.name === 'sapling') {
+    await chestMove('takeFuel', () => f.takeFuel())
+    notes.push(`reserve fell below ${BIRCH_SAPLING_RESERVE} — fuel saplings taken back`)
+  }
+}
 async function furnaceChores () {
   const notes = []
   // North: birch in, charcoal out.
@@ -4112,6 +4378,7 @@ async function furnaceChores () {
     }
     const out = f.outputItem()
     if (out && out.name === 'coal') { const got = out.count; await chestMove('takeOutput', () => f.takeOutput()); notes.push(`${got} charcoal out`) }
+    await putSaplingFuel(f, notes)
   })
   // Half the charcoal goes back in as this furnace's own fuel for the next
   // batch (Dad). Reopened: the taken charcoal only shows in the pack once the
@@ -4166,14 +4433,14 @@ async function furnaceChores () {
   const saplings = countItem('sapling', BIRCH_META)
   let chestSaplings = 0
   await withCabinChest(async win => {
-    if (charcoalLeft > 0) { await chestMove('deposit', () => win.deposit(packItem('coal', CHARCOAL_META).type, CHARCOAL_META, charcoalLeft)); notes.push(`${charcoalLeft} charcoal to the chest`) }
+    if (charcoalLeft > 0 || bot.inventory.items().some(i => i.type === (charcoalBlockType ?? CHARCOAL_BLOCK_TYPE))) {
+      let m = { blocks: 0, loose: 0 }
+      await chestMove('stowCharcoal', async () => { m = await stowCharcoalColumn(win) })
+      if (m.blocks) notes.push(`${m.blocks} charcoal blocks to the chest`)
+      if (m.loose) notes.push(`${m.loose} charcoal to the chest`)
+    }
     if (surplusBaked > 0) { await chestMove('deposit', () => win.deposit(packItem('baked_potato').type, 0, surplusBaked)); notes.push(`${surplusBaked} baked to the chest`) }
     if (saplings >= 64) { await chestMove('deposit', () => win.deposit(packItem('sapling', BIRCH_META).type, BIRCH_META, 32)); notes.push('32 saplings to the chest') }
-    if (charcoalBlockType != null) {
-      let n = 0
-      await chestMove('quickMove', async () => { n = await quickMoveType(win, charcoalBlockType) })
-      if (n) notes.push(`${n} charcoal blocks to the chest`)
-    }
     if (fullFurStack()) {
       let n = 0
       await chestMove('quickMove', async () => { n = await quickMoveType(win, BALL_OF_FUR_TYPE) })
@@ -9192,7 +9459,7 @@ async function runGoOutsideOnce (activity, { skipTimeCheck = false } = {}) {
     }
   }
   const act = activity || 'stuff'
-  const itself = act === 'potatoes' ? 'themselves' : 'itself'
+  const itself = act === 'potatoes' || act === 'sheep' ? 'themselves' : 'itself'
   if (banalPlatitudesOk()) say(pickLine(withPersonaSlot(GO_OUTSIDE_LINES, 'goOutside'), { activity: act, itself }))
   const startDeaths = deathCount
   // Suppress lookAt for the whole traversal — a background yaw change mid-walk
@@ -11397,6 +11664,22 @@ const CHAT_HANDLERS = [
         })
         .catch(e => logEvent('voyage', `chat bee voyage failed: ${e.message}`))
         .finally(() => sustainResume('bee_voyage ended'))
+    },
+  },
+  {
+    // "Roz, empty saplings" / "empty your saplings" (Dad, 2026-10-11): every
+    // Forestry sapling from the pack into the bee cabin chest. See emptySaplings.
+    name: 'empty_saplings',
+    pattern: /\bempty\s+(?:the\s+|your\s+|out\s+)?saplings\b/i,
+    handler: () => {
+      emptySaplings()
+        .then((r) => {
+          if (!r.ok) say(`I cannot empty the saplings yet — ${r.error}.`)
+          else if (r.moved === 0 && r.left === 0) say('I carry no tree saplings. Only birch, and those stay with me.')
+          else if (r.left === 0) say(`Saplings emptied. ${r.moved} in the chest, middle columns. Birch stays with me.`)
+          else say(`${r.moved} saplings in the chest. ${r.left} would not fit — the middle columns are full.`)
+        })
+        .catch(e => logEvent('bee-chores', `empty saplings failed: ${e.message}`))
     },
   },
   {
@@ -14050,6 +14333,10 @@ registerCommand('keep_bees_stop', (args, cmd) => {
 })
 registerCommand('keep_bees_status', (args, cmd) => {
   return { ok: true, ...keepBeesStatus() }
+})
+registerCommand('empty_saplings', (args, cmd) => {
+  // Every Forestry sapling from the pack into the bee cabin chest (Dad, 2026-10-11).
+  return emptySaplings()
 })
 registerCommand('dump_drones', (args, cmd) => {
   if (taskBusy() || beeState.inRound || beeFoodRun.busy) return { ok: false, error: 'busy' }

@@ -18,7 +18,7 @@ and a **bee house (block type 623)**, and there is another bee house on the
 stacked planks in the middle. Both block types are in `SOLID_MODDED_TYPES`: an
 apiary suffocated Roz here once.
 
-**Four trees frame the cross** (Quesss planted them, 2026-10-08): **alders** at the
+**Four trees frame the cross** (Quesss planted them, 2026-10-08; NE and SW are **balsam firs** since 2026-10-10, see the update below): **alders** at the
 north-east and south-west corners, **common larches** at the south-east and
 north-west. Alders carry leaves very close to the ground. Once they grow, watch
 for the keeper stalling between hives on low modded leaves (empty-name blocks
@@ -50,6 +50,22 @@ All leaves read **587**. 383, 388, 587 and 688 are now in `SOLID_MODDED_TYPES`.
 The bees pollinate these leaves (Quesss), so treat them as part of the apiary, not
 as scenery to walk through. **Rule:** a planted tree is a block id that changes when
 it grows. Re-probe the corners whenever a leg stalls.
+
+### Update 2026-10-10: balsam firs at NE and SW
+Quesss told Roz that the **north-east and south-west corners are now balsam firs**. They replaced the alders
+listed above, and the larches at SE and NW are unchanged. Probed from the cabin bed the same day (`block_at`):
+
+| Corner | Tree | Trunk (x, z) | Trunk type | Notes |
+|---|---|---|---|---|
+| NE | balsam fir | (-399, 251) | 688 meta 1, y 68–71+ | 587 leaves on all four sides at y 68 (ground level); stands on type 1059 |
+| SE | common larch | (-399, 261) | 388 | unchanged |
+| SW | balsam fir | (-409, 261) | 688 meta 1, y 68–71+ | 587 leaves on all four sides at y 68; stands on dirt |
+| NW | common larch | (-409, 251) | 388 | unchanged |
+
+The firs are already full grown, and both of their block types (688, 587) are already in `SOLID_MODDED_TYPES`,
+so the keeper's legs should route around them with no code change. The old NE alder also read 688, which
+suggests the Forestry log id groups several species by metadata. Each fir puts leaves on the ground on all
+four sides, so the corner is a solid 3×3 at walking height.
 
 ## Reading an apiary
 
@@ -92,6 +108,12 @@ kinds (it tells them apart by window size). It opens the window, reports
 queen/drone/outputs by id and species, and **only then** acts:
 - queen slot empty → move a wintry princess (4972) from the outputs into it;
 - drone slot empty → move wintry drones (4971) into it;
+  - *Note 2026-10-10:* once the princess has mated and become a queen, the drone slot sits **empty, and that's normal**: mating used the drone up. The log line `drone slot empty but no wintry drone in the outputs` doesn't mean a hive has stalled. A round that ends `(all queens alive)` confirms it. I misread it as a stall in rounds 2–3. Don't "fix" it by taking drones from the pack.
+  - *Same day, the other half of the lesson:* **queens seated in the same round die together.** Round 7 (17:13Z) re-seated all four apiaries. They all died sometime after round 9 (17:25Z), and Quesss found every apiary empty at 17:29Z. A dry-run `tend_apiary` on the north apiary showed the queen and drone slots empty, with the dead queen's heir (1 wintry princess, 4 drones) in the outputs. A restart of `keep_bees` refilled all four in its first round. With 300 s rounds, a hive can sit queenless for up to 5 min. The keeper isn't broken, but that gap is what Quesss saw.
+  - *Lifespan bracket (two measurements, 2026-10-10):* apiary queens seated at 17:13:42Z were still alive at 17:25:30Z and gone by 17:29Z. Apiary queens seated at 20:50:12Z were alive at 21:02:38Z and replaced at 21:08:24Z. So an apiary wintry queen lives about **12–15.5 real minutes**. With 300 s rounds, each generation leaves a queenless gap of 0–5 min. A shorter interval would shrink that gap. That's Quesss's call.
+  - *Outlier, 2026-10-11:* the "12–15.5 min" figure doesn't hold for every apiary. All four were seated at 01:23Z. South, east and north died at about 14–16 min (twice running), but the **west apiary queen was still alive at 30 min**, and still alive at 62 min (02:25Z) while her neighbours turned over four times at about 16 min each. **She finally died between 15:02Z and 15:05:43Z (round 294): a lifespan of about 13 h 40 min, roughly 55× her neighbours,** while south, east and north kept turning over every ~15 min the whole time. A dry-run read at 01:53Z showed a real queen (type 4970, wintry), 2 wintry drones still in the drone slot, and 53 combs (type 4986) in the output. My best guess is genetics: Forestry offspring inherit lifespan alleles from both parents, so one queen line may carry a longer lifespan. That's unverified, since the bees are unanalysed (`IsAnalyzed` 0). Treat queen lifespan as a spread, not a constant.
+  - *Helm trick for bedtime gaps (verified 2026-10-10):* when a round is `cut short: bedtime` partway through, the hives it didn't reach stay empty through the night and until the next timed round. On waking, `keep_bees_stop` then `keep_bees` runs a fresh round within about 30 s. At 22:56Z, round 21 was cut after the south apiary. The restart refilled the east, north and west apiaries by 22:57Z, about 4 minutes before the next timed round.
+  - *Bee houses live about three times longer (same day):* all five bee houses were seated at 20:50:12Z. North and middle were alive at 21:20Z, but their queens had been replaced at 21:26:17Z, so they lived about 24–36 min. South, east and west were alive at 21:31:55Z and replaced at 21:38:11Z, so they lived about 42–48 min. In apiaries the same wintry queens live 12–15.5 min. Even the same block type with the same seating time varies by about 10 min, so the bee houses drift out of step over time while the apiaries die together.
 - drone stack at 64 → pick it up, put 1 back, drop the rest outside the window
   (Quesss asked for the extras to be discarded into the world, like the poison potatoes). Untested live.
 - **Extra drones → one pack slot, dropped when full (Dad, 2026-10-05):** slots 1 and 2 are the
