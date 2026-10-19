@@ -168,3 +168,8 @@ Dad asked for the birch/charcoal/potato routine to run on its own. It runs after
   (e) Live, the same day: **y 71 failed from the ground on the first try**, so the computed reach edge isn't dependable. Any trunk reaching y 71 (every full 7-log birch) now
   gets the step-up onto the base log, and each log is retried up to 3 times *before* she moves lower. If one still won't come down she stops (the tree stays whole, no floating logs)
   and the next round tries again.
+
+## Eclipse (seen 2026-10-13, world day 55502)
+- Around midday (tick ~6800) the sky went dark in an eclipse. The hives stopped with the status **"can't work, not day time"**: to the bees, an eclipse is night. Quesss saw it.
+- It ended under a minute of real time after Quesss called it out (when it began is unknown). When it ended, the bees went straight back to work, the queens were unharmed and the keeper needed nothing. No hostile mobs came near the cabin.
+- Lesson: an apiary that stops at noon is not always sick. Look at the sky before you look at the queen.

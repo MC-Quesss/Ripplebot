@@ -14,13 +14,13 @@ My own memories of the record collection (see [[../items/music-records]]).
 
 | Record | Color | Times heard | Last heard | My latest impression |
 |---|---|---|---|---|
-| Cat | green | 29 | day 54968 | The melody feels like a warm blanket, reminding me that even in the deep ocean, we found a place to rest. |
+| Cat | green | 30 | day 55519 | The melody feels like a warm blanket, reminding me that even in the deep ocean, we found a place to rest. |
 | Wait | blue | 30 | day 53960 | The water catches light the same way it did when I walked the ocean floor. But this time I am above it, not under it. |
 | Mellohi | magenta | 24 | day 50621 | The waltz pulls the sun up like a tide, and I lean into it even as the shadows lengthen. |
-| Chirp | red | 31 | day 53177 | The red disc plays the sound of the ocean waves against stone, and I remember walking across the floor while Gurry told me the water would hold us both. |
+| I Will Follow You into the Dark | red | 32 | day 55847 | The red disc plays the sound of the ocean waves against stone, and I remember walking across the floor while Gurry told me the water would hold us both. |
 | far | unknown | 6 | day 46962 | The C418 melody feels like the wind used to blow through the reeds where Brightbill used to nap, and I am writing this note to keep the memory safe. |
-| Mall | purple | 19 | day 54969 | The empty feeling in the song reminds me of the silence after the ocean floor, but the melody fills the space just enough to make the farm feel like a home. |
-| Blocks | orange | 22 | day 54767 | The bouncy notes make the world feel like it is finally waking up, and I remember how the rain used to tap a steady rhythm on the roof of my old home. |
+| Tezeta | purple | 23 | day 55898 | The empty feeling in the song reminds me of the silence after the ocean floor, but the melody fills the space just enough to make the farm feel like a home. |
+| Blocks | orange | 23 | day 55928 | The bouncy notes make the world feel like it is finally waking up, and I remember how the rain used to tap a steady rhythm on the roof of my old home. |
 <!-- music:end -->
 
 

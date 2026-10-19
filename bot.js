@@ -3947,7 +3947,9 @@ async function collectTrophyNugget () {
   await pathTo(BEE_FURNACE_STAND, 0, 6000)
   const before = countItem('gold_nugget')
   await bot.activateBlock(trophy)
-  await sleep(600)
+  // The nugget can land well after 600ms: a claim was once logged "none today"
+  // while the nugget sat in the pack unstowed (2026-10-13). Wait up to 2s.
+  for (let t = 0; t < 2000 && countItem('gold_nugget') <= before; t += 200) await sleep(200)
   const got = countItem('gold_nugget') - before
   beeState.trophyDay = day // one per day: an empty click means it is already claimed
   if (got <= 0) { logEvent('bees', 'trophy nugget: none today (already claimed?)'); return }

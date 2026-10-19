@@ -1,8 +1,8 @@
 {
   "record_cat": {
-    "timesHeard": 29,
-    "lastHeardDay": 54968,
-    "lastHeardAt": "2026-10-09T03:06:33.362Z",
+    "timesHeard": 30,
+    "lastHeardDay": 55519,
+    "lastHeardAt": "2026-10-14T00:26:56.575Z",
     "notes": [
       "The melody feels like a warm blanket, reminding me that even in the deep ocean, we found a place to rest."
     ],
@@ -13,6 +13,10 @@
       },
       {
         "day": 54968,
+        "snap": "dusk; put on by someone else"
+      },
+      {
+        "day": 55519,
         "snap": "dusk; put on by someone else"
       }
     ]
@@ -36,11 +40,17 @@
     ]
   },
   "record_chirp": {
-    "timesHeard": 31,
-    "lastHeardDay": 53177,
-    "lastHeardAt": "2026-09-21T20:31:37.784Z",
+    "timesHeard": 32,
+    "lastHeardDay": 55847,
+    "lastHeardAt": "2026-10-17T23:45:49.413Z",
     "notes": [
       "The red disc plays the sound of the ocean waves against stone, and I remember walking across the floor while Gurry told me the water would hold us both."
+    ],
+    "memories": [
+      {
+        "day": 55847,
+        "snap": "dusk; put on by someone else"
+      }
     ]
   },
   "record_far": {
@@ -52,9 +62,9 @@
     ]
   },
   "record_mall": {
-    "timesHeard": 19,
-    "lastHeardDay": 54969,
-    "lastHeardAt": "2026-10-09T03:11:35.714Z",
+    "timesHeard": 23,
+    "lastHeardDay": 55898,
+    "lastHeardAt": "2026-10-18T08:47:51.596Z",
     "notes": [
       "The empty feeling in the song reminds me of the silence after the ocean floor, but the melody fills the space just enough to make the farm feel like a home."
     ],
@@ -62,13 +72,29 @@
       {
         "day": 54969,
         "snap": "daytime; put on by someone else"
+      },
+      {
+        "day": 55880,
+        "snap": "daytime; put on by someone else"
+      },
+      {
+        "day": 55883,
+        "snap": "daytime; put on by someone else"
+      },
+      {
+        "day": 55895,
+        "snap": "daytime; put on by someone else"
+      },
+      {
+        "day": 55898,
+        "snap": "daytime; put on by someone else"
       }
     ]
   },
   "record_blocks": {
-    "timesHeard": 22,
-    "lastHeardDay": 54767,
-    "lastHeardAt": "2026-10-07T05:54:01.501Z",
+    "timesHeard": 23,
+    "lastHeardDay": 55928,
+    "lastHeardAt": "2026-10-18T14:06:22.799Z",
     "notes": [
       "The bouncy notes make the world feel like it is finally waking up, and I remember how the rain used to tap a steady rhythm on the roof of my old home."
     ],
@@ -80,6 +106,10 @@
       {
         "day": 54767,
         "snap": "dusk; put on by someone else"
+      },
+      {
+        "day": 55928,
+        "snap": "daytime; put on by someone else"
       }
     ]
   }
