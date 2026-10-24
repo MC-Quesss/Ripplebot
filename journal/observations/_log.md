@@ -11,6 +11,29 @@ Reverse-chronological. Raw observations land here first; canonical facts get pro
 
 ## Recent sessions
 
+## 2026-10-24 — home from the bees, the MTAC, the grass path (days 56408–56414)
+
+- Start: bee cross (-404.5, 66, 240.3), HP 20, food 20, deaths 0, day 56408 tick 3753. Helm mode. No deaths all session.
+- **Bee dock boarding:** the boat had drifted to about 6.5 blocks past the dock end, beyond the voyage's 4-block boarding reach. Then a `walk_until` on x kept Roz's south yaw and walked her off the dock into the cove. From the water she mounted (server confirmed), but the client's 2 s vehicle check cleared the mount as "too far": 1.12 doesn't move passengers. **Fix (bot.js, uncommitted):** `checkVehicleStateChange` trusts the server's passenger list. A restart re-seated her, and the forced voyage at dusk worked; Quesss slept and the night skipped mid-voyage.
+- **Lesson: always `look` before `walk_until`.** It keeps the current yaw. That went wrong twice today (into the cove, then 13 blocks up the boardwalk).
+- **[[../places/mtac|MTAC]]** (Mike Tomlin Aquatic Center): Quesss's new build beside the port, mocked up in dirt. Surveyed at about 19 × 16, up to y 75. Plans include a hot tub, an Olympic pool, and a resort hotel.
+- **Grass path, port → front door:** Quesss's rule is to stay on the path and not cut corners. Walked and written up in [[../places/farm-port]], including the corner waypoint (-256, 546) and a birch-stair step that needs a jump. **Code (uncommitted, untested):** `walkFarmPath()`; the voyages now use it between the door and the port.
+- Unknown items (4 stacks, including 44 Wintry drones): `deposit_named` fails on modded items ("Invalid itemType"). Moved them with `deposit_slot` into kitchen chest slots 1–4.
+- The food-safety restock started a potato harvest unasked and fought my steering. Disabled it, then later re-enabled it. On Quesss's word, harvested 202 potatoes and baked 64; she now carries 128 baked.
+- Wool: two shearing runs, 10 wool then 13. The second run got stuck at the pen gate on the way out (`didn't clear gate`, z 574.4), so I stashed the 13 by hand.
+- **New bee cross, [[../places/meadow-bee-cross]]:** NW of the farmhouse in BoP meadow (temperature 0.4), so silver fir is possible there. Nine bee houses, pines and balsam firs at the corners.
+- Open: confirm the MTAC outline with Quesss. Test `walkFarmPath` live after a restart. Look into the pen gate exit failure.
+
+### 2026-10-22 — Helm: back at the hives after the lossy-route outage (days 56288–56295)
+- The route to the server was clean again (0% loss over 30 pings, ~33 ms; it was ~12% on 10-20). Launched in helm at the hive cross (-407, 68, 258) at 22:38Z: HP 20, food 20, deaths 0. The login held well past the old 30-second keep-alive death. `keep_bees` was resumed straight away ([[../places/bee-cabin]]).
+- Round 1 re-queened six hives, and round 2 two more. All of them had died out during the ~2.5 days offline. Lifespans this session: apiaries exactly 3 rounds every time; bee houses 7–9 rounds. Roz threw the surplus drones (64) behind the cabin on her own.
+- Quesss went AFK and asked Roz to sleep through the nights. Auto-sleep took her to the bee cabin bed every evening, and her one sleep (1/2 = 50%) skipped each night. The first try at ~12550 sometimes bounces ("only sleep at night"); the retry two seconds later lands.
+- Trophy nugget, **settled**: the 24,000-tick cooldown is ruled out (a 17.4 min gap on 10-19). With Quesss's go-ahead Roz skipped the claim on day 56313 (new `trophy_skip` ctl, one restart) and clicked on **even** day 56314: +1. So it is a **~15.4–17.4 min real-time cooldown**, not odd days. Across 2026-10-22/23 that was 13 nuggets and 1 ingot crafted. Details in [[../places/bee-cabin]].
+- Tree breeding with Quesss: Roz reads every sapling's genome (`ground_items` ctl). The mutation rules, read out of the jars, are in [[../recipes/forestry-tree-mutations]]. Sequoia = Larch × Pine (Forestry). Cedar = (Pine × Balsam → Silver Fir) × Larch (Extra Trees). Extra Trees mutations **can't happen at the cove**, because BoP snowy_forest sits at temperature −0.25. Non-cedar saplings get thrown behind the cabin (`dump_saplings`).
+- Birch: the full pack and about 6 birch saplings that vanished left both furnace birches unreplanted. They were replanted with Quesss's 2 chest spares. New rules: reserve 16 and no sapling fuel (`BIRCH_SAPLING_FUEL = false`). Also fixed: a replant-only chore pass left her at the far birch, and the keeper stopped itself. Chores now walk her back to the cross.
+- **Sapling drop, root-caused (10-23 10:14Z):** mineflayer's `unequip('hand')` (`equipEmpty`) **tosses the held stack** when the pack has no empty slot. The pack was full of single Forestry saplings, so the `clearHand()` after a replant dropped 61 birch saplings at the far birch. The ~6 that vanished on 10-22 were probably lost the same way. All 63 on the ground were picked back up within a minute (`ground_items`). `clearHand` now keeps holding the item when the pack is full (one restart). At 13:13Z the full pack stopped the chores ("Unable to withdraw"). The 22 single Forestry saplings she had picked up around the cove (genomes not read yet) went into the cabin chest, columns 3–6, which freed the pack.
+- Queen life tracks time, not rounds: a bedtime-skipped round doesn't increment the round counter. Apiary queens live ≈15 real min. Bee houses lived 6–10 rounds, apart from one east-bee-house queen at 13.
+
 ### 2026-10-14 — Helm: quiet nights and a wool run (days 55588–55591)
 - Launched in helm at the farm house (-268.5, 65, 570.5), HP 20, food 20, deaths 0, day 55588 tick 2279. The keeper was not resumed: there was no sign it was running at shutdown.
 - Three nights skipped cleanly through auto-sleep. Roz waited for the others, then took the primary or left bed. Her `[server-sleep]` count sometimes lands about 3s after `[auto-sleep] in … bed`, which is lag, not a miss.

@@ -2191,7 +2191,11 @@ function waitForChatReply (testFn, timeoutMs = 60000) {
   })
 }
 
+// mineflayer's unequip('hand') tosses the held stack on the ground when the
+// pack has no empty slot (equipEmpty → tossStack): 61 birch saplings dropped
+// at the far birch on 2026-10-23. With a full pack, keep holding it instead.
 async function clearHand () {
+  if (!bot.heldItem || bot.inventory.firstEmptyInventorySlot() == null) return
   try { await bot.unequip('hand') } catch (_) {}
 }
 
@@ -3560,7 +3564,7 @@ async function throwBehindCabin (what, pick) {
   }
 }
 
-const beeState = { active: false, gen: 0, timer: null, rounds: 0, moves: 0, startedAt: null, lastRoundAt: null, lastError: null, inRound: false }
+const beeState = { active: false, gen: 0, timer: null, rounds: 0, moves: 0, startedAt: null, lastRoundAt: null, lastError: null, inRound: false, trophySkipDay: null }
 
 function keepBeesStatus () {
   const { timer, ...rest } = beeState
@@ -3592,6 +3596,238 @@ function startKeepBees ({ intervalMs } = {}) {
     if (!beeState.active || beeState.gen !== gen) return
     try { await runBeeRound() } catch (e) { beeState.lastError = e.message; logEvent('bees', `round error: ${e.message}`) }
     if (beeState.active && beeState.gen === gen) beeState.timer = setTimeout(tick, every)
+  }
+  tick()
+  return { ok: true, started: true, intervalMs: every }
+}
+
+// ── Nueve Reinas: the meadow bee cross by the farm (Dad, 2026-10-24) ──────
+// Nine bee houses NW of the farmhouse, pine + balsam fir in BoP meadow. A
+// simplified keeper any bot can run (no boat, no cabin chores): check each
+// queen and drone slot, refill from that house's own outputs, and discard full
+// drone stacks in the potato patch like the poison potatoes. Species are kept
+// separate (Dad): nothing comes in from outside a house, and a refill prefers
+// the house's own species. Starts on request only ("nueve reinas" in chat or
+// the `nueve_reinas` ctl); a round every 5 min until stopped. Procedure:
+// journal/places/meadow-bee-cross.md.
+const MEADOW_HOUSES = [
+  { name: 'west outer', x: -308, y: 64, z: 540 }, { name: 'west inner', x: -307, y: 64, z: 540 },
+  { name: 'centre', x: -303, y: 64, z: 540 },
+  { name: 'north inner', x: -303, y: 64, z: 536 }, { name: 'north outer', x: -303, y: 64, z: 535 },
+  { name: 'east inner', x: -299, y: 64, z: 540 }, { name: 'east outer', x: -298, y: 64, z: 540 },
+  { name: 'south inner', x: -303, y: 64, z: 544 }, { name: 'south outer', x: -303, y: 64, z: 545 },
+]
+// Two grass spots between the arms reach every house (≤3.6 blocks), clear of
+// the corner trees (solid 388/688 trunks — a 388 trunk suffocated Roz at the cove).
+const MEADOW_STAND_NW = { x: -305, y: 63, z: 538 } // west arm, centre, north arm
+const MEADOW_STAND_SE = { x: -301, y: 63, z: 542 } // east arm, south arm
+const meadowStandFor = (h) => (h.x > -303 || h.z > 540) ? MEADOW_STAND_SE : MEADOW_STAND_NW
+const BEE_PRINCESS_TYPE = 4972
+const reinasState = { active: false, gen: 0, timer: null, rounds: 0, moves: 0, lastRoundAt: null, lastError: null, inRound: false, lastNote: null }
+
+// The active species is the first UID0 in the genome NBT (chromosome 0).
+function beeSpecies (it) {
+  const m = it && it.nbt && JSON.stringify(it.nbt).match(/"UID0":\{"type":"string","value":"([^"]+)"\}/)
+  return m ? m[1].replace(/^forestry\.species/, '') : null
+}
+
+// One bee house: refill an empty queen/drone slot from its own outputs, and lift
+// full drone stacks (64, or the drone slot at 64 minus the one kept) into the pack
+// for the potato-patch discard. Bee house window: 9 tile slots after the 36
+// pack slots (queen, drone, 7 outputs). Pack resync as in tendApiary.
+async function tendMeadowHouse (h, dryRun = false) {
+  const b = bot.blockAt(new Vec3(h.x, h.y, h.z))
+  if (!b || b.type !== 623) return { ok: false, error: `no bee house at (${h.x}, ${h.y}, ${h.z}) (type ${b?.type})` }
+  const openHouse = async () => {
+    const opened = new Promise((resolve, reject) => {
+      const t = setTimeout(() => { bot.removeListener('windowOpen', onOpen); reject(new Error('no window opened')) }, 2500)
+      const onOpen = (w) => { clearTimeout(t); resolve(w) }
+      bot.once('windowOpen', onOpen)
+    })
+    await bot.activateBlock(b)
+    const w = await opened
+    await sleep(400)
+    return w
+  }
+  let clicked = false
+  let firstWin = null
+  return (async () => {
+    const win = firstWin = await openHouse()
+    try {
+      if (win.slots.length - 36 !== 9) return { ok: false, error: `not a bee house window (${win.slots.length} slots)` }
+      const QUEEN = 36, DRONES = 37
+      const outputs = [38, 39, 40, 41, 42, 43, 44]
+      const queen = win.slots[QUEEN], drone = win.slots[DRONES]
+      const houseSpecies = beeSpecies(queen) || beeSpecies(drone)
+      const actions = []
+      const used = new Set()
+      const pick = (type) => {
+        const c = outputs.filter(s => !used.has(s) && win.slots[s] && win.slots[s].type === type)
+        return c.find(s => houseSpecies && beeSpecies(win.slots[s]) === houseSpecies) ?? c[0]
+      }
+      const move = async (from, to, label) => {
+        actions.push({ move: label })
+        used.add(from)
+        if (dryRun) return
+        clicked = true
+        await bot.clickWindow(from, 0, 0)
+        await sleep(150)
+        await bot.clickWindow(to, 0, 0)
+        await sleep(150)
+        if (win.selectedItem || bot.inventory.selectedItem) await bot.clickWindow(from, 0, 0)
+      }
+      if (!queen) {
+        const p = pick(BEE_PRINCESS_TYPE)
+        if (p != null) await move(p, QUEEN, `${beeSpecies(win.slots[p]) || '?'} princess -> queen slot`)
+        else actions.push({ note: 'queen slot empty, no princess in the outputs' })
+      }
+      if (!drone) {
+        const d = pick(BEE_DRONE_TYPE)
+        if (d != null) await move(d, DRONES, `${beeSpecies(win.slots[d]) || '?'} drone -> drone slot`)
+        else actions.push({ note: 'drone slot empty, no drone in the outputs' })
+      }
+      const emptyPack = () => [...Array(36).keys()].find(i => !win.slots[i])
+      // A full drone slot jams the house: keep 1, the rest go to the discard.
+      if (drone && drone.count >= 64) {
+        const to = emptyPack()
+        if (to == null) actions.push({ note: 'drone slot full but the pack has no empty slot' })
+        else {
+          actions.push({ discard: `drone slot full: kept 1, ${drone.count - 1} to the discard` })
+          if (!dryRun) {
+            clicked = true
+            await bot.clickWindow(DRONES, 0, 0) // pick up the stack
+            await sleep(150)
+            await bot.clickWindow(DRONES, 1, 0) // right-click: put one back
+            await sleep(150)
+            await bot.clickWindow(to, 0, 0) // the rest into an empty pack slot
+            await sleep(150)
+          }
+        }
+      }
+      // Full drone stacks in the outputs: shift-click them into the pack.
+      for (const s of outputs) {
+        const it = win.slots[s]
+        if (used.has(s) || !it || it.type !== BEE_DRONE_TYPE || it.count < 64) continue
+        actions.push({ discard: `full ${beeSpecies(it) || '?'} drone stack from the outputs` })
+        if (dryRun) continue
+        clicked = true
+        await bot.clickWindow(s, 0, 1)
+        await sleep(200)
+      }
+      logEvent('reinas', `${h.name} (${h.x}, ${h.y}, ${h.z})${dryRun ? ' [dry run]' : ''}: queen=${queen ? beeSpecies(queen) || queen.type : 'EMPTY'} drone=${drone ? `${beeSpecies(drone) || drone.type}x${drone.count}` : 'EMPTY'} actions=${actions.length}`)
+      return { ok: true, species: houseSpecies, actions }
+    } finally {
+      bot.closeWindow(win)
+    }
+  })().catch(e => ({ ok: false, error: e.message })).then(async (r) => {
+    try {
+      if (!firstWin || firstWin.slots.length - 36 !== 9) return r
+      if (!clicked) { resyncPackFromHiveWindow(firstWin); return r }
+      await sleep(300)
+      const fresh = await openHouse()
+      bot.closeWindow(fresh)
+      resyncPackFromHiveWindow(fresh)
+    } catch (e) { logEvent('reinas', `inventory resync failed: ${e.message}`) }
+    return r
+  })
+}
+
+// Drone stacks of 63+ are discards (a drone slot reset leaves 63). The cove
+// keeper's reserve slot is left alone.
+const reinasDiscards = () => bot.inventory.items().filter(i => i.type === BEE_DRONE_TYPE && i.count >= 63 && i.slot !== BEE_DRONE_PACK_SLOT + 9)
+async function reinasDiscardDrones () {
+  if (!reinasDiscards().length) return { ok: true, skipped: 'nothing to discard' }
+  // Throw where the work ends and walk off before the pickup delay runs out.
+  // Patch approach from the front door, the way the potato harvest goes.
+  await pathToSure({ x: -275, y: 64, z: 572 }, 1, 2, 3, 15000)
+  if (!await pathToSure(HARVEST_WAYPOINTS.potato_approach, 1, 2, 3, 12000)) return { ok: false, error: `did not reach the potato patch (${posStr(bot.entity.position)})` }
+  let n = 0
+  for (const it of reinasDiscards()) { await bot.tossStack(it); n += it.count }
+  logEvent('reinas', `discarded ${n} drones in the potato patch`)
+  await pathToSure({ x: -275, y: 64, z: 572 }, 1, 2, 3, 15000)
+  return { ok: true, discarded: n }
+}
+
+async function runReinasRound ({ once = false, live = null } = {}) {
+  if (reinasState.inRound) return { ok: false, error: 'a round is already running' }
+  reinasState.inRound = true
+  try { return await runReinasRoundInner(once, live) } finally { reinasState.inRound = false }
+}
+async function runReinasRoundInner (once, liveFn) {
+  const gen = reinasState.gen
+  const live = liveFn || (() => once || (reinasState.active && reinasState.gen === gen))
+  if (distanceFromHome() > HOME_RADIUS) { if (!once) stopReinas('away from the farm'); return { ok: false, error: 'not at the farm' } }
+  if (taskBusy()) { logEvent('reinas', `round skipped: busy with ${activeTask.name}`); return { ok: false, error: `busy with ${activeTask.name}` } }
+  if (bot.isSleeping) return { ok: false, error: 'asleep' }
+  // Bedtime: the cross is outside the farm's auto-sleep radius, so walk her
+  // in; auto-sleep takes it from the house. The first round after dawn walks out.
+  if (isBedtime()) {
+    if (!insideHouse()) { logEvent('reinas', 'bedtime: heading in'); await ensureInsideHouse().catch(e => logEvent('reinas', `heading in: ${e.message}`)) }
+    return { ok: false, error: 'bedtime' }
+  }
+  if ((bot.health ?? 0) < BEE_MIN_HP) { logEvent('reinas', `round skipped: HP ${bot.health}`); return { ok: false, error: `HP ${bot.health}` } }
+  if (insideHouse()) await runGoOutside('the bees')
+  reinasState.rounds++
+  const moves = []
+  let stand = null
+  for (const h of MEADOW_HOUSES) {
+    if (!live()) return { ok: false, error: 'stopped' }
+    if ((bot.health ?? 0) < BEE_MIN_HP || isBedtime()) { logEvent('reinas', `round ${reinasState.rounds} cut short`); break }
+    const s = meadowStandFor(h)
+    if (s !== stand) {
+      if (!await pathToSure(s, 0, 1, 3, 15000)) { logEvent('reinas', `could not reach the stand at (${s.x}, ${s.z}) (${posStr(bot.entity.position)})`); break }
+      stand = s
+    }
+    const r = await tendMeadowHouse(h)
+    if (!r.ok) { logEvent('reinas', `${h.name}: ${r.error}`); continue }
+    const did = r.actions.filter(a => a.move || a.discard)
+    if (did.length) { moves.push(`${h.name}: ${did.map(a => a.move || a.discard).join(', ')}`); reinasState.moves += did.length }
+    for (const a of r.actions) if (a.note) logEvent('reinas', `${h.name}: ${a.note}`)
+  }
+  reinasState.lastRoundAt = Date.now()
+  reinasState.lastNote = moves.length ? moves.join('; ') : 'all nine queens alive'
+  logEvent('reinas', `round ${reinasState.rounds} done: ${reinasState.lastNote}`)
+  if (live() && !isBedtime()) {
+    const d = await reinasDiscardDrones().catch(e => ({ ok: false, error: e.message }))
+    if (!d.ok) logEvent('reinas', `discard: ${d.error}`)
+  }
+  if ((bot.food ?? 20) <= 14) await eatSomething().catch(() => {})
+  return { ok: true, round: reinasState.rounds, note: reinasState.lastNote }
+}
+
+function reinasStatus () {
+  const { timer, ...rest } = reinasState
+  return rest
+}
+function stopReinas (reason) {
+  const was = reinasState.active
+  reinasState.active = false
+  reinasState.gen++
+  if (reinasState.timer) { clearTimeout(reinasState.timer); reinasState.timer = null }
+  if (was) logEvent('reinas', `keeper stopped (${reason}) after ${reinasState.rounds} rounds, ${reinasState.moves} moves`)
+  return { ok: true, wasActive: was }
+}
+function startReinas ({ intervalMs } = {}) {
+  if (reinasState.active) return { ok: false, error: 'already keeping the Nueve Reinas', ...reinasStatus() }
+  if (sustainState.active) return { ok: false, error: 'keeping the fire going already tends the bees' }
+  if (distanceFromHome() > HOME_RADIUS) return { ok: false, error: 'not at the farm' }
+  if (beeState.active) stopKeepBees('nueve reinas')
+  reinasState.active = true
+  reinasState.gen++
+  reinasState.rounds = 0
+  reinasState.moves = 0
+  reinasState.lastError = null
+  const every = Number(intervalMs) > 0 ? Number(intervalMs) : BEE_ROUND_MS
+  const gen = reinasState.gen
+  logEvent('reinas', `keeper started (round every ${Math.round(every / 1000)}s)`)
+  const tick = async () => {
+    if (!reinasState.active || reinasState.gen !== gen) return
+    try { await runReinasRound() } catch (e) {
+      if (e instanceof AbortError) { stopReinas('stop command'); return }
+      reinasState.lastError = e.message
+      logEvent('reinas', `round error: ${e.message}`)
+    }
+    if (reinasState.active && reinasState.gen === gen) reinasState.timer = setTimeout(tick, every)
   }
   tick()
   return { ok: true, started: true, intervalMs: every }
@@ -3942,6 +4178,9 @@ const BEE_TROPHY = { x: -407, y: 67, z: 239 }
 async function collectTrophyNugget () {
   const day = bot.time?.day
   if (day == null || beeState.trophyDay === day) return
+  // Odd-days-vs-cooldown experiment (Dad, 2026-10-23): leave one day's claim
+  // untouched so the next click lands on an even morning >30 min later.
+  if (beeState.trophySkipDay === day) { beeState.trophyDay = day; logEvent('bees', `trophy nugget: skipped day ${day} (experiment)`); return }
   const trophy = blockAtPos(BEE_TROPHY)
   if (!trophy || trophy.name === 'air') { beeState.trophyDay = day; logEvent('bees', `trophy nugget: no trophy at ${posStr(BEE_TROPHY)}`); return }
   await pathTo(BEE_FURNACE_STAND, 0, 6000)
@@ -4311,12 +4550,16 @@ async function putCharcoalFuel (f, want) {
   await chestMove('putFuel', () => f.putFuel(c.type, CHARCOAL_META, n))
   return n
 }
-// Saplings kept in the pack for replanting; the rest may burn.
-const BIRCH_SAPLING_RESERVE = 8
+// Saplings kept in the pack for replanting; the rest may burn. 16, not 8,
+// and no sapling fuel for now — wood and charcoal are plentiful (Quesss,
+// 2026-10-23, after both birches went unreplanted with an empty pack).
+const BIRCH_SAPLING_RESERVE = 16
+const BIRCH_SAPLING_FUEL = false
 // The north furnace burns birch saplings first; charcoal only once they run
 // out (Dad, 2026-10-11). Charcoal sitting in its fuel slot comes out to make
 // room — the south furnace takes it later in this pass.
 async function putSaplingFuel (f, notes) {
+  if (!BIRCH_SAPLING_FUEL) return
   const spare = countItem('sapling', BIRCH_META) - BIRCH_SAPLING_RESERVE
   if (spare <= 0) return
   let fuel = f.fuelItem()
@@ -4450,11 +4693,11 @@ async function furnaceChores () {
     }
     chestSaplings = chestCount(win, 'sapling', BIRCH_META)
     beeChores.chestBaked = chestCount(win, 'baked_potato', 0)
-    if (chestSaplings >= 64) await chestMove('withdraw', () => win.withdraw(packItem('sapling', BIRCH_META)?.type ?? 6, BIRCH_META, 64))
+    if (BIRCH_SAPLING_FUEL && chestSaplings >= 64) await chestMove('withdraw', () => win.withdraw(packItem('sapling', BIRCH_META)?.type ?? 6, BIRCH_META, 64))
   })
   // A full stack of saplings in the chest becomes north-furnace fuel; its
   // charcoal moves to the south furnace first, past a stack to the chest (Dad).
-  if (chestSaplings >= 64) {
+  if (BIRCH_SAPLING_FUEL && chestSaplings >= 64) {
     let moved = 0
     await withFurnace(BEE_NORTH_FURNACE, async f => {
       const fuel = f.fuelItem()
@@ -4529,6 +4772,9 @@ async function runBeeCabinChores ({ force = false } = {}) {
         notes.push(await furnaceChores())
       } else notes.push(`furnaces skipped: could not get into the cabin (${posStr(bot.entity.position)})`)
     }
+    // A replant-only pass (nothing cut, furnaces not due) once left her at the
+    // far birch, and the next round stopped the keeper as "carried away" (2026-10-23).
+    if (!nearBeeCross() && !insideBeeCabin()) await pathTo({ x: BEE_DUMP.laneX, y: 66, z: BEE_DUMP.frontZ }, 1, 12000)
     beeChores.lastNote = notes.join('; ') || 'nothing to do'
     beeChores.lastError = null
     logEvent('bee-chores', beeChores.lastNote)
@@ -4698,6 +4944,7 @@ async function runBeeVoyage ({ force = false } = {}) {
     if (where === 'farm') {
       if (insideHouse()) await runGoOutside('the boat')
       checkAbort(myGen)
+      await walkFarmPath(true)
       if (!await pathToSure(FARM_PORT_LANDING, 1, 2)) throw new Error('could not reach the farm port')
       voyageNote(`at the port ${voyagePosStr()}, boarding`)
       if (!await mountNearestBoat(10)) throw new Error('no boat at the farm port')
@@ -4830,6 +5077,7 @@ async function runBeeVoyageHome ({ force = false } = {}) {
     if (onBank()) voyageNote(`on the boardwalk at ${voyagePosStr()}`)
     if (!onBank()) throw new Error(`reached the port but did not land (${posStr(bot.entity.position)}, ${off.error || 'landing walk stopped short'})`)
     checkAbort(myGen)
+    await walkFarmPath(false)
     await pathTo(HARVEST_WAYPOINTS.field_center, 1, 30000).catch(() => false)
     res = deathCount !== startDeaths ? { ok: false, error: 'died on the way' } : { ok: true }
   } catch (e) {
@@ -4840,6 +5088,36 @@ async function runBeeVoyageHome ({ force = false } = {}) {
   }
   voyageNote(`home from the bees: ${res.ok ? 'home' : `stopped: ${res.error}`} at ${voyagePosStr()}`)
   return { where, ...res }
+}
+
+// Front door ↔ farm port by the vanilla grass path (Dad, 2026-10-24: "stay on
+// the path", "don't cut corners"). A free pathTo from the port to the field
+// stuck Roz on the corner by the MTAC. Each corner is a waypoint so the
+// pathfinder can't shortcut; (-256, 546) is the corner Dad marked. The birch
+// stair step at (-277, 63, 548) is left to the pathfinder.
+const FARM_PATH_DOOR_TO_PORT = [
+  { x: -275, y: 64, z: 572 }, // outside_orientation, at the front door
+  { x: -277, y: 63, z: 560 },
+  { x: -277, y: 63, z: 545 }, // corner: path turns east
+  { x: -260, y: 63, z: 545 },
+  { x: -256, y: 63, z: 546 }, // Dad's corner point
+  { x: -256, y: 63, z: 535 },
+  { x: -256, y: 63, z: 528 },
+  FARM_PORT_LANDING,
+]
+async function walkFarmPath (toPort) {
+  const pts = toPort ? FARM_PATH_DOOR_TO_PORT : [...FARM_PATH_DOOR_TO_PORT].reverse()
+  // Join at the nearest waypoint so a walk from mid-path doesn't double back.
+  const p = bot.entity.position
+  let from = 0
+  pts.forEach((pt, i) => { if (Math.hypot(p.x - pt.x, p.z - pt.z) < Math.hypot(p.x - pts[from].x, p.z - pts[from].z)) from = i })
+  for (const pt of pts.slice(from)) {
+    if (!await pathToSure(pt, 1, 1.5, 3, 15000)) {
+      logEvent('farm-path', `stuck short of (${pt.x}, ${pt.z}) at ${posStr(bot.entity.position)}`)
+      return false
+    }
+  }
+  return true
 }
 
 async function pathToSure (pt, range = 0, tol = 1.5, tries = 6, waitMs = 15000) {
@@ -4868,6 +5146,7 @@ async function bleuPaddleOver () {
     if (!bot.vehicle) {
       if (insideHouse()) await runGoOutside('the Bleu de Paris')
       checkAbort(myGen)
+      await walkFarmPath(true)
       if (!await pathToSure(FARM_PORT_LANDING, 1, 2)) return { ok: false, error: 'could not reach the farm port' }
       if (!await mountNearestBoat(10)) return { ok: false, error: 'no boat at the farm port' }
     }
@@ -4941,6 +5220,7 @@ async function runRiverVoyage (toFarm, { force = false } = {}) {
     if (!bot.vehicle) {
       if (toFarm && insideCabinBedroom()) await cabinExitBedroom()
       if (!toFarm && insideHouse()) await runGoOutside('the boat')
+      if (!toFarm) await walkFarmPath(true)
       checkAbort(myGen)
       await pathTo({ x: Math.floor(start.x), y: 63, z: Math.floor(start.z) }, 3, 60000)
       checkAbort(myGen)
@@ -4967,6 +5247,7 @@ async function runRiverVoyage (toFarm, { force = false } = {}) {
     if (!off.landed && !onDock) return { ok: false, error: 'reached the far side but did not land', ...off }
     if (toFarm) {
       checkAbort(myGen)
+      await walkFarmPath(false)
       await pathTo(HARVEST_WAYPOINTS.field_center, 1, 30000)
     }
     const p = bot.entity.position
@@ -5129,7 +5410,10 @@ function checkVehicleStateChange () {
     // 1.12.2 does not update bot.entity.position for boat passengers, so
     // the distance check always fires on a legitimate mount.  Skip it when
     // passenger-observe is active (set by ride_boat / startPassengerObserving).
-    const far = !gone && !passengerObserveTimer
+    // The server's passenger list is the truth (2026-10-24: a real mount from
+    // 4.9 blocks at the bee dock was cleared here, stranding Roz seated).
+    const listed = Array.isArray(v.passengers) && v.passengers.includes(bot.entity)
+    const far = !gone && !passengerObserveTimer && !listed
       && bot.entity?.position && v.position
       && bot.entity.position.distanceTo(v.position) > 4
     if (gone || far) {
@@ -7532,6 +7816,13 @@ const benchLock = makeChatLock('bench', '.b', '.f', 60_000)
 // Hopper TTL must outlast a full two-pass un-jam session held under one lock
 // (7 feeds × 20s + 7 × 30s waits + travel ≈ 6.5 min worst case).
 const hopperLock = makeChatLock('hopper', '.k', '.l', 8 * 60_000)
+// Hive lock (.h/.i, 2026-10-24): one Nueve Reinas round at a time across the
+// crew. A release also tells every keeper the round is done, so each pushes
+// its next round out by BEE_ROUND_MS: one round per 5 min for the whole crew,
+// done by whoever is idle. If that bot dies, the others' timers run out and
+// they take over; no claim or wellness check needed.
+const hiveLock = makeChatLock('hive', '.h', '.i', 3 * 60_000)
+let nextReinasRoundAt = 0
 
 function lockIsFree (lock) {
   if (!lock.holder) return true
@@ -7790,6 +8081,8 @@ function trackFireCoordination (username, message) {
   if (code === 'f') { trackLockRelease(benchLock, name, username); return }
   if (code === 'k') { trackLockClaim(hopperLock, name, username); return }
   if (code === 'l') { trackLockRelease(hopperLock, name, username); return }
+  if (code === 'h') { trackLockClaim(hiveLock, name, username); return }
+  if (code === 'i') { trackLockRelease(hiveLock, name, username); nextReinasRoundAt = Date.now() + BEE_ROUND_MS; return }
   if (code === 'j') {
     // .j is ONLY a fun challenge now; acceptance is .m (mirrors the .d/.e fix
     // that killed the duty-RPS echo chamber). If we're already challenging when
@@ -8037,6 +8330,34 @@ async function sustainHopperPatrol () {
   await clearJammedHopper({ requireSustain: true })
 }
 
+// Bee rung of the ladder (third, after wheat and potatoes): one Nueve Reinas
+// round when it's due and nothing above is waiting on this bot. The hive lock
+// keeps it to one bot at a time; a rival already on the hives means skip, not
+// wait. Returns true when a round ran.
+async function sustainBeeRung (canWork) {
+  if (!canWork() || !bot.time?.isDay || !sustainOutdoorOk() || Date.now() < nextReinasRoundAt) return false
+  const d = myDuties()
+  if (['north', 'south'].some(h => d.has(h) && (scanKnownWheatFields(h).maturePct >= 85 || sustainState.pendingWork.has(h)))) return false
+  if (d.has('potatoes')) {
+    const p = scanKnownPotatoField()
+    if (p.potatoes > 0 && (p.maturePct >= SUSTAIN_POTATO_MATURITY_PCT || sustainState.pendingWork.has('potatoes'))) return false
+  }
+  if (!lockIsFree(hiveLock)) return false
+  nextReinasRoundAt = Date.now() + BEE_ROUND_MS // also if the round fails, so a bad round doesn't spin
+  await acquireChatLock(hiveLock)
+  try {
+    const r = await runReinasRound({ once: true, live: () => sustainState.active && !sustainState.paused })
+    if (!r.ok) logEvent('sustain', `bee round: ${r.error}`)
+  } catch (e) {
+    if (e.name === 'AbortError' && !sustainState.active) throw e
+    logEvent('sustain', `bee round failed: ${e.message}`)
+  } finally {
+    releaseChatLock(hiveLock)
+    nextReinasRoundAt = Date.now() + BEE_ROUND_MS
+  }
+  return true
+}
+
 // One wheat cycle for a half ('north-field'|'south-field'|'all'): harvest with
 // replant, craft everything into plant balls at the bench, feed the balls to
 // the hopper. Wheat is rung 4 — the bonus tier; the hopper and potatoes are
@@ -8125,6 +8446,7 @@ async function runSustainFarm (user) {
   sustainState.extraDuties.clear()
   sustainState.pendingWork.clear()
   fireStandDownAnnounced = false
+  stopReinas('fire duty tends the bees now')
   logEvent('sustain', `started by ${user || 'someone'}`)
 
   // Crew handshake: ask who's already on fire duty, give existing keepers a
@@ -8187,6 +8509,8 @@ async function runSustainFarm (user) {
         if (freed.length) {
           logEvent('sustain', `duty freed — promoting from supervisor to ${freed[0]}`)
           announceFireClaim(freed[0])
+        } else if (await sustainBeeRung(canWork)) {
+          supervisePosted = false // the round walked us off the post
         } else if (!supervisePosted && canWork()) {
           try {
             if (insideHouse()) await runGoOutside()
@@ -8202,7 +8526,13 @@ async function runSustainFarm (user) {
         continue
       }
 
-      // ── The priority ladder (F3): the fire itself first, wheat is a bonus ──
+      // ── The priority ladder: hopper, then wheat, potatoes, bees ──
+      // Dad, 2026-10-24: "wheat first, potatoes second, bees third". The hopper
+      // stays on top (it IS the fire). Wheat keeps its rung below in the code;
+      // the potato rungs simply step aside on any poll where one of our wheat
+      // halves is due, so wheat runs first and potatoes come up next poll.
+      const myWheatDue = () => ['north', 'south'].some(h =>
+        myDuties().has(h) && (scanKnownWheatFields(h).maturePct >= 85 || sustainState.pendingWork.has(h)))
       // Rung 1: hopper health. The potato-duty holder patrols; when nobody
       // holds potatoes, any keeper may service it — the hopper lock arbitrates.
       const hopperUnclaimed = !activeFireClaims().has('potatoes') && !duties.has('potatoes')
@@ -8220,8 +8550,8 @@ async function runSustainFarm (user) {
       // finished batches (no longer gated behind wheat), and the potato cycle
       // below keeps the furnace loaded. Nothing extra to do per-poll.
 
-      // Rung 3: the potato field.
-      if (duties.has('potatoes') && canWork() && sustainOutdoorOk()) {
+      // Rung 3: the potato field (after our own due wheat).
+      if (duties.has('potatoes') && canWork() && sustainOutdoorOk() && !myWheatDue()) {
         const pScan = scanKnownPotatoField()
         const due = pScan.potatoes > 0 &&
           (pScan.maturePct >= SUSTAIN_POTATO_MATURITY_PCT || sustainState.pendingWork.has('potatoes'))
@@ -8249,7 +8579,7 @@ async function runSustainFarm (user) {
         if (pCheck.maturePct < SUSTAIN_POTATO_MATURITY_PCT) sustainState.potatoRole = null
       }
       const holdsWheat = duties.has('north') || duties.has('south')
-      if (holdsWheat && !duties.has('potatoes') && !sustainState.potatoRole && !activeFireClaims().has('potatoes') && canWork() && sustainOutdoorOk()) {
+      if (holdsWheat && !duties.has('potatoes') && !sustainState.potatoRole && !activeFireClaims().has('potatoes') && canWork() && sustainOutdoorOk() && !myWheatDue()) {
         if (rpsAccepted) {
           const challenger = rpsAccepted
           rpsAccepted = null
@@ -8304,7 +8634,7 @@ async function runSustainFarm (user) {
       // has 'potatoes'). Without this, the bot can harvest a field it no longer owns.
       duties = myDuties()
 
-      // Rung 4 (bonus): wheat — held halves at >=85%, or acquired mid-work
+      // Wheat (first in priority, see the ladder note) — held halves at >=85%, or acquired mid-work
       // via .q with the remainder still standing. One cycle per poll, then
       // re-evaluate the ladder from the top.
       if (canWork() && bot.time?.isDay && sustainOutdoorOk()) {
@@ -8348,6 +8678,9 @@ async function runSustainFarm (user) {
           foodSafetyWindowCooldownUntil = 0
         }
       }
+
+      // Bees (third): the Nueve Reinas round when nothing above is due.
+      await sustainBeeRung(canWork)
 
       polls++
       if (polls % 20 === 0) {
@@ -11631,12 +11964,36 @@ const CHAT_HANDLERS = [
     },
   },
   {
+    // "Roz, nueve reinas" / "start the nueve reinas routine" (Dad, 2026-10-24):
+    // the meadow bee cross by the farm, until told to stop. "stop the nueve
+    // reinas" stops it. Before stop_bees/tend_bees so the name wins.
+    name: 'nueve_reinas',
+    pattern: /\bnueve\s+reinas\b/i,
+    handler: (_user, msg) => {
+      // A question about the routine is not an order (2026-10-24: "is it
+      // possible for tending the nueve reinas to be part of keep the fire going?").
+      if (/\?\s*$/.test(msg || '')) { logEvent('reinas', 'question about the routine, not an order: no action'); return }
+      if (/\b(?:stop|quit|pause|break|enough)\b/i.test(msg || '')) {
+        const r = stopReinas('chat')
+        say(r.wasActive ? 'Resting from the Nueve Reinas. The queens can keep themselves a while.' : 'I am not tending the Nueve Reinas just now.')
+        return
+      }
+      if (reinasState.active) { say('I am already keeping the Nueve Reinas.'); return }
+      if (sustainState.active) { say('The Nueve Reinas are part of keeping the fire going now. I tend them between the wheat and the potatoes.'); return }
+      if (taskBusy()) { say(`I am in the middle of ${activeTask.name} — tell me to stop first.`); return }
+      const r = startReinas()
+      say(r.ok ? 'Nueve Reinas. Checking the queens now, and every few minutes until you say stop.' : `I cannot keep the Nueve Reinas from here — ${r.error}.`)
+    },
+  },
+  {
     // "Roz, take a break from the bees" / "stop tending the bees". Before
     // tend_bees: "take a break from tending the bees" matches both.
     name: 'stop_bees',
     pattern: /\b(?:(?:take\s+a\s+)?break\s+from|stop|quit|pause)\b[^.!?]{0,20}\bbees\b/i,
     handler: () => {
+      const reinas = stopReinas('chat')
       const r = stopKeepBees('chat')
+      if (reinas.wasActive && !r.wasActive) { say('Resting from the Nueve Reinas. The queens can keep themselves a while.'); return }
       say(r.wasActive ? 'Resting from the bees. The hives can keep themselves a while.' : 'I am not tending the bees just now.')
     },
   },
@@ -11768,6 +12125,7 @@ const CHAT_HANDLERS = [
     handler: (_user) => {
       abortGen++
       stopKeepBees('stop (chat)')
+      stopReinas('stop (chat)')
       cancelBeeFoodRun('stop (chat)')
       bot.pathfinder.setGoal(null)
       clearControlStates()
@@ -11795,6 +12153,7 @@ const CHAT_HANDLERS = [
     handler: (user) => {
       abortGen++
       stopKeepBees('stand down (chat)')
+      stopReinas('stand down (chat)')
       cancelBeeFoodRun('stand down (chat)')
       bot.pathfinder.setGoal(null)
       clearControlStates()
@@ -13994,6 +14353,7 @@ registerCommand('tread_water', (args, cmd) => {
 registerCommand('stop', (args, cmd) => {
   abortGen++
   stopKeepBees('stop')
+  stopReinas('stop')
   cancelBeeFoodRun('stop')
   if (activeTask.name) {
     logEvent('task', `force-stopped: ${activeTask.name}`)
@@ -14101,6 +14461,30 @@ registerCommand('nearby_entities', (args, cmd) => {
     .sort((a, b) => a.distance - b.distance)
     .slice(0, 30)
   return { ok: true, entities: list }
+})
+// Forestry/Binnie genomes as [{slot, active, inactive}] from an item's NBT.
+// The server sends them even for unanalyzed saplings and bees (2026-10-23).
+function genomeOf (item) {
+  if (!item?.nbt) return null
+  try {
+    const chrom = require('prismarine-nbt').simplify(item.nbt)?.Genome?.Chromosomes
+    return Array.isArray(chrom) ? chrom.map(c => ({ slot: c.Slot, active: c.UID0, inactive: c.UID1 })) : null
+  } catch { return null }
+}
+registerCommand('ground_items', (args, cmd) => {
+  // What the dropped items around the bot are, with genomes (Quesss's saplings, 2026-10-23).
+  const p = bot.entity.position
+  const radius = Number(args.radius ?? 16)
+  const list = Object.values(bot.entities)
+    .filter(e => e.name === 'item' && e.position.distanceTo(p) <= radius)
+    .map(e => {
+      const it = e.getDroppedItem?.()
+      return {
+        id: e.id, x: +e.position.x.toFixed(1), y: +e.position.y.toFixed(1), z: +e.position.z.toFixed(1),
+        type: it?.type, name: it?.name, count: it?.count, metadata: it?.metadata, genome: genomeOf(it)
+      }
+    })
+  return { ok: true, items: list }
 })
 registerCommand('nearby_players', (args, cmd) => {
   return { ok: true, players: Object.keys(bot.players).filter(n => n !== bot.username) }
@@ -14336,6 +14720,39 @@ registerCommand('keep_bees_stop', (args, cmd) => {
 registerCommand('keep_bees_status', (args, cmd) => {
   return { ok: true, ...keepBeesStatus() }
 })
+registerCommand('nueve_reinas', (args, cmd) => {
+  // Meadow bee cross keeper, a round every 5 min until stopped. args: { interval_ms? }
+  return startReinas({ intervalMs: args.interval_ms })
+})
+registerCommand('nueve_reinas_once', (args, cmd) => {
+  // One round now (no keeper loop). args: { dry_run?: true reads every house, moves nothing }
+  if (args.dry_run) {
+    return (async () => {
+      const out = []
+      let stand = null
+      for (const h of MEADOW_HOUSES) {
+        const s = meadowStandFor(h)
+        if (s !== stand) { await pathToSure(s, 0, 1, 3, 15000); stand = s }
+        const r = await tendMeadowHouse(h, true)
+        out.push({ house: h.name, ...r })
+      }
+      return { ok: true, dryRun: true, houses: out }
+    })()
+  }
+  return runReinasRound({ once: true })
+})
+registerCommand('nueve_reinas_stop', (args, cmd) => {
+  return stopReinas(args.reason || 'ctl')
+})
+registerCommand('nueve_reinas_status', (args, cmd) => {
+  return { ok: true, ...reinasStatus() }
+})
+registerCommand('trophy_skip', (args, cmd) => {
+  // Skip the trophy claim on one world day (default: tomorrow).
+  const day = args.day ?? ((bot.time?.day ?? 0) + 1)
+  beeState.trophySkipDay = day
+  return { ok: true, trophySkipDay: day }
+})
 registerCommand('empty_saplings', (args, cmd) => {
   // Every Forestry sapling from the pack into the bee cabin chest (Dad, 2026-10-11).
   return emptySaplings()
@@ -14345,6 +14762,14 @@ registerCommand('dump_drones', (args, cmd) => {
   if (!nearBeeCross()) return { ok: false, error: 'not at the bee cross' }
   if (insideBeeCabin()) return { ok: false, error: 'inside the bee cabin' }
   return dumpDronesBehindCabin()
+})
+registerCommand('dump_saplings', (args, cmd) => {
+  // Forestry saplings with no wanted genes go the way of the drones (Quesss, 2026-10-23).
+  if (taskBusy() || beeState.inRound || beeFoodRun.busy) return { ok: false, error: 'busy' }
+  if (!nearBeeCross()) return { ok: false, error: 'not at the bee cross' }
+  if (insideBeeCabin()) return { ok: false, error: 'inside the bee cabin' }
+  if (!bot.inventory.items().some(i => i.type === FORESTRY_SAPLING_TYPE)) return { ok: true, skipped: 'no forestry saplings' }
+  return throwBehindCabin('saplings', () => bot.inventory.items().filter(i => i.type === FORESTRY_SAPLING_TYPE))
 })
 registerCommand('furnace_state', (args, cmd) => {
   // Open a furnace and report what's in each slot. Slots: 0=input,
@@ -14589,7 +15014,8 @@ registerCommand('block_at', (args, cmd) => {
 registerCommand('block_at_abs', (args, cmd) => {
   const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
   if (!b) return { ok: false, error: 'no block' }
-  return { ok: true, name: b.name, metadata: b.metadata, type: b.type, boundingBox: b.boundingBox, shapes: b.shapes, x: b.position.x, y: b.position.y, z: b.position.z }
+  // biome: Extra Trees mutations need temperature/rainfall in range (2026-10-23).
+  return { ok: true, name: b.name, metadata: b.metadata, type: b.type, boundingBox: b.boundingBox, shapes: b.shapes, x: b.position.x, y: b.position.y, z: b.position.z, biome: b.biome }
 })
 registerCommand('recent_chat', (args, cmd) => {
   return { ok: true, lines: recentChat.slice() }
@@ -14788,7 +15214,7 @@ registerCommand('keep_fire', (args, cmd) => {
   return { ok: true, started: true, sustaining: true }
 })
 registerCommand('sustain_status', (args, cmd) => {
-  return { ok: true, active: sustainState.active, cycles: sustainState.cycles, startedBy: sustainState.startedBy, role: sustainState.role, paused: sustainState.paused, pauseReason: sustainState.pauseReason, duties: [...myDuties()], pendingWork: [...sustainState.pendingWork], crew: Object.fromEntries([...fireCrew].map(([n, c]) => [n, [...c.fields].join('+')])) }
+  return { ok: true, active: sustainState.active, cycles: sustainState.cycles, startedBy: sustainState.startedBy, role: sustainState.role, paused: sustainState.paused, pauseReason: sustainState.pauseReason, duties: [...myDuties()], pendingWork: [...sustainState.pendingWork], crew: Object.fromEntries([...fireCrew].map(([n, c]) => [n, [...c.fields].join('+')])), bees: { nextRoundInS: Math.max(0, Math.round((nextReinasRoundAt - Date.now()) / 1000)), hiveLock: hiveLock.holder, lastNote: reinasState.lastNote } }
 })
 registerCommand('sustain_stop', (args, cmd) => {
   const was = sustainState.active

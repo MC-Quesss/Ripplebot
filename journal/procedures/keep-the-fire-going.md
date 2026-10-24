@@ -28,6 +28,21 @@ this inverted the original wheat-first design.
 4. **Wheat (bonus)** — a held half ≥85% → harvest → craft plant balls at the
    [[project-bench-crafting|bench]] → balls to the hopper (`runWheatCycle`).
 
+### Update 2026-10-24: wheat first, potatoes second, bees third (Quesss)
+
+Quesss reordered the ladder below the hopper: **hopper → wheat → potatoes → bees**. The
+hopper stays on top because it *is* the fire. In code, wheat keeps its rung position, but
+the potato field rung and the potato RPS challenge both skip any poll where one of the bot's
+own wheat halves is due (`myWheatDue`). So wheat runs first, and potatoes come up on the
+next poll. **Bees (new, last):** a [[../places/meadow-bee-cross|Nueve Reinas]] round
+(`sustainBeeRung` → `runReinasRound`) runs when it's due and the bot has no wheat or potatoes
+waiting. Supervisors (bots with no duty) tend the bees too. It isn't a claimed duty: the
+**hive lock `.h`/`.i`** keeps it to one bot at a time, and hearing a `.i` release pushes every
+keeper's next round out 5 min. So the crew does one round per 5 min, by whoever is idle, and
+the work moves on by itself if that bot dies. Starting the fire stops a standalone
+`nueve_reinas` keeper. `sustain_status` → `bees: {nextRoundInS, hiveLock, lastNote}`.
+**Protocol change:** all bots must restart onto this bot.js together. Not yet tested live.
+
 Idle time between rungs is duty-flavored: hopper patrols and near-post wandering.
 **Exploring is disabled entirely while on fire duty.**
 
@@ -56,6 +71,7 @@ trailing core — `* Roz glances north — all golden. (.c n)`. One core per lin
 | `.q <f>` | **release with work pending** — handoff / orphaned duty up for grabs |
 | `.b` / `.f` | bench lock claim / release (60s TTL, tie-break on crossed claims) |
 | `.k` / `.l` | **hopper lock** claim / release (4 min TTL) — one bot feeds at a time, HARD invariant |
+| `.h` / `.i` | **hive lock** claim / release (3 min TTL, 2026-10-24) — one Nueve Reinas bee round at a time; a release resets every keeper's 5-min bee timer |
 | `.d` / `.e` / `.g` | RPS challenge / accept / at-the-spot-ready — challenge and accept are DISTINCT codes (when both were `.d`, stray acceptances after aborted matches read as fresh challenges and two bots ping-ponged phantom games forever; observed live 2026-07-03) |
 | `.t<round> @<tick>` | RPS chant: round + reveal tick on the shared server clock |
 | `shoots rock (.t<round>)` | round-tagged throw |

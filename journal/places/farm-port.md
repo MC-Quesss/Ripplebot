@@ -37,3 +37,17 @@ Related: [[boat-piloting]], [[gangplank-bleu-de-paris]]
 Come in **on the centre line z=524.5** from (-246, 524.5), slow (throttle 0.25). Arriving a block north
 (z≈523.4) grounds the boat on the z=522 pier. `exit_boat` tends to stop short here — walk the last
 blocks to the boardwalk (-254/-255, 63, 524).
+
+## Update — 2026-10-24: the walking path from the port to the front door (Quesss)
+
+Quesss: from the port, **stay on the vanilla grass path**. Cutting corners gets Roz stuck. Walked and verified the same day:
+
+1. From the boardwalk, go south along the path column **x -257/-256** to **(-256, 63, 546)**. That's the corner waypoint Quesss marked: she must pass through it.
+2. North a step onto the path row **z 545**, then **west** along z 544–545 to **x -276.5**.
+3. **South** down the path column x -277/-276. At **(-277, 63, 548)** there's a **birch-stair step** (an upside-down stair at y 62 under it). Hold **jump** while walking south, or `walk_until` stalls at z 547.7.
+4. Keep going south to **z 571.5**, which is the [[outside-orientation]] point (-275, 64, 572). `go_inside` works from here.
+
+Always `look` first: `walk_until` keeps whatever yaw she already has. On 2026-10-24 that sent her the wrong way twice: off the bee dock into the cove, and 13 blocks up the boardwalk.
+Unrelated to the path: the MTAC mock-up sits just west of the port. See [[mtac]].
+
+**Code (2026-10-24, uncommitted, not yet tested live):** `walkFarmPath(toPort)` in bot.js walks this path through corner waypoints (`FARM_PATH_DOOR_TO_PORT`), including Dad's corner (-256, 546). The bee voyage out and home, the Bleu paddle-over, and the river voyage now use it between the front door and the port, instead of a free `pathTo`.
