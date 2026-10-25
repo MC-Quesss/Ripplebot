@@ -2814,22 +2814,32 @@ function randomIdleWanderTarget () {
 // time"). Stand point is the land block Roz walked to on 2026-09-28.
 const FARM_PORT_STAND = { x: -255, y: 63, z: 524 }
 
+// Both legs walk the grass path (Dad, 2026-10-24: "STAY ON THE PATH") — a free
+// pathTo cuts the corner by the MTAC, and the next wander pick would path home
+// freely from the port, so the visit ends back at the front door.
 async function runIdleWanderToPort () {
   if (insideHouse()) await runGoOutside('the river')
   if (insideHouse()) return
-  logEvent('idle-wander', 'heading to the farm port')
-  await pathTo(FARM_PORT_STAND, 2, 20000)
+  const myGen = abortGen
+  // Someone else's goal (task, follow, stop) takes over at once; bedtime only
+  // ends the visit — the walk home still goes by the path.
+  const yielded = () => abortGen !== myGen || !idleWanderEnabled || idleWanderBusy()
+  logEvent('idle-wander', 'heading to the farm port by the path')
+  if (!await walkFarmPath(true, () => !yielded() && !isBedtime())) {
+    if (!yielded()) await walkFarmPath(false, () => !yielded())
+    return
+  }
+  await pathTo(FARM_PORT_STAND, 0, 8000)
   if (!bot.entity) return
   await bot.look(-Math.PI / 2, 0, true) // face east, across the river
   logEvent('idle-wander', `visiting the farm port at ${posStr(bot.entity.position)}`)
-  // Linger 20–40s, but give way at once to anything else (task, follow, stop,
-  // bedtime) so the wander's cleanup never clobbers someone else's goal.
-  const myGen = abortGen
-  const until = Date.now() + 20000 + Math.random() * 20000
-  while (Date.now() < until) {
-    if (abortGen !== myGen || !idleWanderEnabled || idleWanderBusy() || isBedtime()) return
+  const until = Date.now() + 20000 + Math.random() * 20000 // linger 20–40s
+  while (Date.now() < until && !yielded() && !isBedtime()) {
     await new Promise(resolve => setTimeout(resolve, 1000))
   }
+  if (yielded()) return
+  logEvent('idle-wander', 'leaving the farm port by the path')
+  await walkFarmPath(false, () => !yielded())
 }
 
 async function runIdleWanderToField ({ announce = true } = {}) {
@@ -5105,13 +5115,15 @@ const FARM_PATH_DOOR_TO_PORT = [
   { x: -256, y: 63, z: 528 },
   FARM_PORT_LANDING,
 ]
-async function walkFarmPath (toPort) {
+// live: checked before each waypoint; false stops the walk (returns false).
+async function walkFarmPath (toPort, live = () => true) {
   const pts = toPort ? FARM_PATH_DOOR_TO_PORT : [...FARM_PATH_DOOR_TO_PORT].reverse()
   // Join at the nearest waypoint so a walk from mid-path doesn't double back.
   const p = bot.entity.position
   let from = 0
   pts.forEach((pt, i) => { if (Math.hypot(p.x - pt.x, p.z - pt.z) < Math.hypot(p.x - pts[from].x, p.z - pts[from].z)) from = i })
   for (const pt of pts.slice(from)) {
+    if (!live()) return false
     if (!await pathToSure(pt, 1, 1.5, 3, 15000)) {
       logEvent('farm-path', `stuck short of (${pt.x}, ${pt.z}) at ${posStr(bot.entity.position)}`)
       return false
