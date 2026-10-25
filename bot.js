@@ -5104,7 +5104,8 @@ async function runBeeVoyageHome ({ force = false } = {}) {
 // the path", "don't cut corners"). A free pathTo from the port to the field
 // stuck Roz on the corner by the MTAC. Each corner is a waypoint so the
 // pathfinder can't shortcut; (-256, 546) is the corner Dad marked. The birch
-// stair step at (-277, 63, 548) is left to the pathfinder.
+// stair step at (-277, 63, 548) stalls a plain walk; when the pathfinder
+// stalls on a straight leg, walkFarmPath hops it (jump held, walk_until).
 const FARM_PATH_DOOR_TO_PORT = [
   { x: -275, y: 64, z: 572 }, // outside_orientation, at the front door
   { x: -277, y: 63, z: 560 },
@@ -5124,12 +5125,47 @@ async function walkFarmPath (toPort, live = () => true) {
   pts.forEach((pt, i) => { if (Math.hypot(p.x - pt.x, p.z - pt.z) < Math.hypot(p.x - pts[from].x, p.z - pts[from].z)) from = i })
   for (const pt of pts.slice(from)) {
     if (!live()) return false
-    if (!await pathToSure(pt, 1, 1.5, 3, 15000)) {
+    if (!await pathToSure(pt, 1, 1.5, 2, 15000) && !(live() && await hopFarmPathLeg(pt))) {
       logEvent('farm-path', `stuck short of (${pt.x}, ${pt.z}) at ${posStr(bot.entity.position)}`)
       return false
     }
   }
   return true
+}
+
+// Path legs run along x or z. When the pathfinder stalls (the birch stair step
+// on the x -277 leg), walk the leg's axis with jump held, as the journal's
+// path notes say, then let the pathfinder finish the waypoint.
+async function hopFarmPathLeg (pt) {
+  const p = bot.entity.position
+  const dx = pt.x + 0.5 - p.x
+  const dz = pt.z + 0.5 - p.z
+  const axis = Math.abs(dz) >= Math.abs(dx) ? 'z' : 'x'
+  const d = axis === 'z' ? dz : dx
+  // yaw 0 = north (-z), π = south (+z), π/2 = west (-x), -π/2 = east (+x)
+  const yaw = axis === 'z' ? (d > 0 ? Math.PI : 0) : (d > 0 ? -Math.PI / 2 : Math.PI / 2)
+  logEvent('farm-path', `hopping toward (${pt.x}, ${pt.z}) along ${axis} from ${posStr(p)}`)
+  suppressLookAt(8000)
+  bot.setControlState('jump', true)
+  try {
+    await walkUntilAxis({ axis, target: (axis === 'z' ? pt.z : pt.x) + 0.5, direction: d > 0 ? 'gte' : 'lte', maxMs: 6000, maintainYaw: yaw })
+  } finally {
+    if (!treadingWater) bot.setControlState('jump', false)
+  }
+  return pathToSure(pt, 1, 1.5, 1, 8000)
+}
+
+// The port and the MTAC side of the path: a free walk home from here cuts the
+// corner (Dad, 2026-10-24: "stay on the path" for all routes near the port).
+function nearFarmPort () {
+  const p = bot.entity?.position
+  if (!p) return false
+  return p.x >= -279 && p.x <= -249 && p.z >= 518 && p.z <= 548
+}
+async function leaveFarmPortByPath (live = () => true) {
+  if (!nearFarmPort()) return true
+  logEvent('farm-path', `near the farm port at ${posStr(bot.entity.position)} — walking home by the path`)
+  return walkFarmPath(false, live)
 }
 
 async function pathToSure (pt, range = 0, tol = 1.5, tries = 6, waitMs = 15000) {
@@ -6456,6 +6492,7 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
     }
 
     // Travel: detour around the tree, then to the target field center.
+    await leaveFarmPortByPath(() => abortGen === myGen)
     await pathTo(HARVEST_WAYPOINTS.field_east_approach, 1)
     const targetCenter = (half === 'north-field')
       ? HARVEST_WAYPOINTS.north_field_center
@@ -10149,6 +10186,7 @@ async function runGoInside ({ stillWanted = null } = {}) {
   try {
     const startHP = bot.health ?? 20
     const startDeaths = deathCount
+    await leaveFarmPortByPath(() => abortGen === myGen && (!stillWanted || stillWanted()))
     for (let attempt = 1; attempt <= 4; attempt++) {
       // Give way between attempts: a `stop`, or a caller that no longer needs
       // us inside (auto-sleep after the night skipped). The retries otherwise

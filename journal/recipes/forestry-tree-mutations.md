@@ -33,6 +33,7 @@ Read directly out of the server modpack's Forestry jar, not from a wiki. The FTB
 - **Path to cedar: pine + balsam fir → silver fir, then silver fir + larch → Great Cedar.** Balsam fir (*Abies balsamea*, UID `balsamfir`) and silver fir are different species.
 - 2026-10-23: none of the ~200 saplings read at the bee cabin had silver fir (or larch, or cedar) in either gene copy.
 - **Why: the climate gate.** `ExtraTreeMutation.getChance` returns **0** unless the biome at the tree has temperature 0–2 and rainfall 0–2. The silver fir and cedar mutations leave those defaults in place, and all of the Extra Trees mutations go through this check. The bee cove is BoP **snowy_forest** (biome id 86 per `config/biomesoplenty/biome_ids.json`), which BoP defines with **temperature −0.25** and rainfall 0.5. So **no Extra Trees mutation can ever happen at the cove.** Forestry's own mutations (sequoia, larch, pine) have no climate check, which is why sequoias appeared there. Breed silver fir and cedar in a biome at 0 or warmer.
+- **Great Cedar is the end of its line** (checked in the `ExtraTreeMutation` bytecode, 2026-10-25). Cedar shows up only as a result (silver fir × larch); no Extra Trees mutation takes it as a parent, and Forestry's table doesn't mention it. Great cedars first grew on 2026-10-25 (Quesss).
 - Mineflayer has no data for modded biome ids. `block_at_abs` now returns a `biome` object, but for id 86 it only shows the defaults (temperature 0), so look the biome up in BoP's code instead.
 
 Related: [[../places/bee-cabin]], [[../observations/_log]]
