@@ -2283,15 +2283,17 @@ async function benignClick (tag, label, fn) {
   }
 }
 
-function countOnHand (name) {
+// `type` narrows a nameless modded item ('unknown') to one item id.
+function countOnHand (name, type = null) {
+  const match = i => i.name === name && (type == null || i.type === type)
   const win = bot.currentWindow
   if (win) {
     return win.items()
-      .filter(i => i.name === name && i.slot >= win.inventoryStart)
+      .filter(i => match(i) && i.slot >= win.inventoryStart)
       .reduce((s, i) => s + i.count, 0)
   }
   return bot.inventory.items()
-    .filter(i => i.name === name)
+    .filter(match)
     .reduce((s, i) => s + i.count, 0)
 }
 
@@ -2308,13 +2310,13 @@ function countOnHand (name) {
 // Returns { deposited, remaining, rounds, backedUp }. `backedUp` is true when
 // the container stopped accepting items with more than `keep` still on hand
 // (machine off, or genuinely full) — the caller should surface that.
-async function depositQuickMove (itemName, target, { keep = 0, maxRounds = 8, settleMs = 150, bail = null, maxStalls = 3, stallDelayMs = 500 } = {}) {
-  const startCount = countOnHand(itemName)
+async function depositQuickMove (itemName, target, { keep = 0, maxRounds = 8, settleMs = 150, bail = null, maxStalls = 3, stallDelayMs = 500, type = null } = {}) {
+  const startCount = countOnHand(itemName, type)
   if (startCount <= keep) return { deposited: 0, remaining: startCount, rounds: 0, backedUp: false }
 
   let rounds = 0
   let stalled = 0
-  while (countOnHand(itemName) > keep && rounds < maxRounds) {
+  while (countOnHand(itemName, type) > keep && rounds < maxRounds) {
     if (bail && bail()) {
       logEvent('deposit-qm', `bailing (${itemName}) after ${rounds} rounds — external interrupt`)
       break
@@ -2330,15 +2332,15 @@ async function depositQuickMove (itemName, target, { keep = 0, maxRounds = 8, se
       await sleep(300)
       continue
     }
-    const before = countOnHand(itemName)
+    const before = countOnHand(itemName, type)
     try {
       // Re-query the window each click — quick-move shifts slots underneath us.
       let guard = 0
-      while (countOnHand(itemName) > keep && guard < 64) {
+      while (countOnHand(itemName, type) > keep && guard < 64) {
         guard++
-        const stack = win.items().find(i => i.name === itemName && i.slot >= win.inventoryStart)
+        const stack = win.items().find(i => i.name === itemName && (type == null || i.type === type) && i.slot >= win.inventoryStart)
         if (!stack) break
-        if (countOnHand(itemName) - stack.count >= keep) {
+        if (countOnHand(itemName, type) - stack.count >= keep) {
           // Whole-stack quick-move won't dip below keep — use it.
           try {
             await bot.clickWindow(stack.slot, 0, 1) // mode 1 = quick-move
@@ -2350,7 +2352,7 @@ async function depositQuickMove (itemName, target, { keep = 0, maxRounds = 8, se
           // Stack is larger than we want to move — split manually.
           // Pick up stack, right-click to put back `keep` items one at a time,
           // then place the remainder into an empty container slot.
-          const toKeep = keep - (countOnHand(itemName) - stack.count)
+          const toKeep = keep - (countOnHand(itemName, type) - stack.count)
           try {
             await bot.clickWindow(stack.slot, 0, 0) // pick up whole stack
             for (let k = 0; k < toKeep; k++) {
@@ -2385,7 +2387,7 @@ async function depositQuickMove (itemName, target, { keep = 0, maxRounds = 8, se
       try { win.close() } catch (_) {}
     }
     await sleep(200)
-    const after = countOnHand(itemName)
+    const after = countOnHand(itemName, type)
     if (after >= before) {
       if (++stalled >= maxStalls) break // container won't accept more — backed up
       await sleep(stallDelayMs)        // let a draining hopper make room, then re-open fresh
@@ -2395,7 +2397,7 @@ async function depositQuickMove (itemName, target, { keep = 0, maxRounds = 8, se
   }
 
   await sleep(300)
-  const remaining = countOnHand(itemName)
+  const remaining = countOnHand(itemName, type)
   const deposited = startCount - remaining
   if (deposited > 0 && remaining > 0) {
     logEvent('deposit-qm', `${itemName}: deposited=${deposited} remaining=${remaining} (startCount=${startCount})`)
@@ -2940,7 +2942,7 @@ async function runIdleWanderToFurnace () {
     const hopperBlock = blockAtPos(HOPPER)
     if (hopperBlock) {
       const slots = await peekContainer(hopperBlock)
-      const ballCount = slots.reduce((n, s) => n + (s && s.name === 'unknown' ? s.count : 0), 0)
+      const ballCount = slots.reduce((n, s) => n + (isPlantBall(s) ? s.count : 0), 0)
       const hasPotato = slots.some(s => s && s.name === 'potato')
       if (ballCount > 0 && !hasPotato) {
         logEvent('idle-wander', `hopper jammed (balls=${ballCount}, no potato) — running un-jam routine`)
@@ -6634,7 +6636,7 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
             const sr = await craftPlantBalls({ keepCount: 0, maxBalls: Infinity })
             logEvent('harvest-rc', `plant balls from seeds: ${sr.crafted}; seeds remaining=${countOnHand('wheat_seeds')}`)
           }
-          const ballCount = countOnHand('unknown')
+          const ballCount = countOnHand('unknown', PLANT_BALL_TYPE)
           if (ballCount > 0) {
             const r = await depositToHopper('unknown', { keep: 0 })
             logEvent('harvest-rc', `plant balls → hopper: deposited=${r.deposited}`)
@@ -6902,7 +6904,7 @@ async function feedHopperOneAtATime (waitMs, { requireSustain = false } = {}) {
       return false
     }
     const outcome = await withContainer(hopperBlock, async (win) => {
-      if (!containerSlots(win).some(s => s && s.name === 'unknown')) return 'clear'
+      if (!containerSlots(win).some(isPlantBall)) return 'clear'
       const containerSize = win.slots.length - 36
       const playerSlots = win.slots.slice(containerSize)
       const srcIdx = playerSlots.findIndex(s => s && s.name === fuelName)
@@ -6937,7 +6939,7 @@ async function feedHopperOneAtATime (waitMs, { requireSustain = false } = {}) {
     else await sleep(waitMs)
   }
   const finalSlots = await peekContainer(hopperBlock)
-  return !finalSlots.some(s => s && s.name === 'unknown')
+  return !finalSlots.some(isPlantBall)
 }
 
 // THE un-jam routine — the ONLY hopper-lock holder (user spec, 2026-07-07).
@@ -7963,11 +7965,18 @@ function releaseBench () {
 // first (stash_wheat / deposit_named do this). Guarded here so every caller,
 // including the ctl deposit actions, hits the same wall.
 const HOPPER_FORBIDDEN = new Set(['wheat', 'wheat_seeds'])
+// Plant balls have no name here — they're 'unknown' type 4169 (craft log:
+// unknown#4169:20). So are Forestry saplings, princesses, drones and fur
+// balls, which jammed the intake when a bot fed it "every unknown" (Quesss,
+// 2026-10-26). An 'unknown' deposit moves plant balls only.
+const PLANT_BALL_TYPE = 4169
+function isPlantBall (s) { return !!s && s.name === 'unknown' && s.type === PLANT_BALL_TYPE }
 async function depositToHopper (itemName, opts = {}) {
   if (HOPPER_FORBIDDEN.has(itemName)) {
     logEvent('hopper-guard', `refused ${itemName} — raw grain jams the intake; craft plantballs first`)
     throw new Error(`${itemName} jams the bio-fuel intake — craft plantballs first (use stash_wheat)`)
   }
+  if (itemName === 'unknown') opts = { ...opts, type: PLANT_BALL_TYPE }
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
   return await depositQuickMove(itemName, HOPPER, opts)
@@ -8371,8 +8380,10 @@ async function sustainHopperPatrol () {
   const hopperBlock = blockAtPos(HOPPER)
   if (!hopperBlock) { logEvent('sustain-hopper', 'patrol: hopper block not loaded'); return }
   const slots = await peekContainer(hopperBlock)
-  const hasBalls = slots.some(s => s && s.name === 'unknown')
+  const hasBalls = slots.some(isPlantBall)
   const hasPotato = slots.some(s => s && s.name === 'potato')
+  const foreign = slots.filter(s => s && s.name === 'unknown' && !isPlantBall(s))
+  if (foreign.length) logEvent('sustain-hopper', `patrol: foreign items in the hopper (${foreign.map(s => `#${s.type} x${s.count}`).join(', ')}) — potatoes will not clear these; needs a hand`)
   if (!hasBalls) { logEvent('sustain-hopper', 'patrol: hopper clear'); return }
   if (hasPotato) { logEvent('sustain-hopper', 'patrol: balls + potato present — digesting, not jammed'); return }
   logEvent('sustain-hopper', 'patrol: balls sitting with no potato — running un-jam routine')
@@ -11391,7 +11402,7 @@ async function runStashAll () {
         const sr = await craftPlantBalls({ keepCount: 0, maxBalls: Infinity })
         if (sr.crafted > 0) logEvent('stash-all', `crafted ${sr.crafted} plant balls from seeds`)
       }
-      if (countOnHand('unknown') > 0) {
+      if (countOnHand('unknown', PLANT_BALL_TYPE) > 0) {
         const r = await depositToHopper('unknown', { keep: 0 })
         logEvent('stash-all', `plant balls → hopper: deposited=${r.deposited}`)
       }
@@ -14817,9 +14828,14 @@ registerCommand('dump_saplings', (args, cmd) => {
   // Forestry saplings with no wanted genes go the way of the drones (Quesss, 2026-10-23).
   if (taskBusy() || beeState.inRound || beeFoodRun.busy) return { ok: false, error: 'busy' }
   if (!nearBeeCross()) return { ok: false, error: 'not at the bee cross' }
-  if (insideBeeCabin()) return { ok: false, error: 'inside the bee cabin' }
   if (!bot.inventory.items().some(i => i.type === FORESTRY_SAPLING_TYPE)) return { ok: true, skipped: 'no forestry saplings' }
-  return throwBehindCabin('saplings', () => bot.inventory.items().filter(i => i.type === FORESTRY_SAPLING_TYPE))
+  // She waits out the gap between rounds inside, so step out first (2026-10-26).
+  return (async () => {
+    if (isBedtime()) return { ok: false, error: 'bedtime' }
+    if (insideBeeCabin()) await beeCabinExit()
+    if (insideBeeCabin()) return { ok: false, error: `could not leave the bee cabin (${posStr(bot.entity.position)})` }
+    return throwBehindCabin('saplings', () => bot.inventory.items().filter(i => i.type === FORESTRY_SAPLING_TYPE))
+  })()
 })
 registerCommand('furnace_state', (args, cmd) => {
   // Open a furnace and report what's in each slot. Slots: 0=input,
