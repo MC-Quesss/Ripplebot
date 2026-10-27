@@ -31,6 +31,21 @@ that day; supersedes the older "farm port (-255, 62, 521)" bank).
 - 35940271 — in the middle slip (-251.4, 524).
 - 35940270 — Roz's paddle boat, south of the z=530 pier (-251.6, 532.8).
 
+## Update — 2026-10-27: a fourth pier, a north slip
+Dad added a finger pier at **z 518** (planks x -255…-251, y 62; water starts at x -250), which makes a
+**north slip at z 519–521** between it and the z=522 pier. The dock now has four piers (518/522/526/530)
+and three enclosed slips: north z 519–521, middle z 523–525, south z 527–529. Survey by block probe,
+standing at the landing. **Dad: keep using the slip the boat is in, second from the north**,
+the middle slip (-251.5, 524.5). The code's targets are unchanged; the new slip only needs to be known.
+
+**Landscaping west of the path:** Dad's new work sits on the land west of the grass path (path at
+x -256…-257), roughly x -257…-266 and z 519–530: a solid field of modded blocks (types 2963, 3855,
+1171, empty names) one block above the grass. Dad stood in it at (-258.5, 63, 523.5) to show Roz.
+**Stay on the path**, and never route through it.
+
+Boats seen that morning: 13155360 in the middle slip (-250.9, 523.7); 13155762 and 13155761 south of
+the z=530 pier (-252.3, 531.7 / 533.3).
+
 Related: [[boat-piloting]], [[gangplank-bleu-de-paris]]
 
 ## Update — 2026-09-28: entering the slip

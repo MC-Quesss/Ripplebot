@@ -449,7 +449,13 @@ function pickAvoidingRecentPhrase (items, toPhrase = x => x) {
 // walk-through, keeper round 7 walked Roz into the trunk, and she suffocated.
 // 688 = the NE corner trunk at (-399, 68–71, 251), whose 587 leaves reach the
 // ground. The SW trunk reads 383 and the NW trunk 388 (all four probed 2026-10-09).
-const SOLID_MODDED_TYPES = new Set([3995, 1458, 1059, 1069, 1079, 622, 623, 1095, 1306, 1085, 383, 388, 587, 688])
+// 690 = the 2x2 cedar trunk SE of the meadow bee cross (-299…-298, 63–71,
+// 535–536), with 587 leaves. Read as walk-through: Roz suffocated walking into
+// it 2026-10-27. 1086 = purple-tree trunk, 1091 = its leaves: the SE tree of
+// the meadow bee cross (-298, 63–68, 545), which Muse's bee rung kept walking
+// into the same morning, and Dad's new landscaping west of the port path
+// (trunks at (-259, 63–66, 520) and (-259, 63–66, 526)).
+const SOLID_MODDED_TYPES = new Set([3995, 1458, 1059, 1069, 1079, 622, 623, 1095, 1306, 1085, 383, 388, 587, 688, 690, 1086, 1091])
 // Modded slabs — walk on them like oak slabs (half-block collision; metadata
 // bit 8 = top half, as in vanilla). 1744 = modded-tree plank slabs, the
 // Bleu de Paris gangplank (Dad, 2026-09-28).
@@ -2205,6 +2211,7 @@ const isTrash = (it) => !!it && TRASH_ITEMS.has(it.name)
 // are not trash: the bee keeper gathers them into one pack slot and drops the
 // stack only when it fills (see tendApiary).
 const BEE_DRONE_TYPE = 4971
+const BEE_COMB_TYPE = 4986 // the usual hive output; not a bee
 // Where the extra drones live, as a hive-window slot: hive windows list the
 // pack first (0–26 main, 27–35 hotbar), so 26 is the last main-pack slot
 // (player-window slot 35), clear of the hotbar food.
@@ -3280,8 +3287,10 @@ const RIVER_ROUTE = [
   { x: -239, z: 499, throttle: 0.7, note: 'under the bridge' },
   { x: -245, z: 517, throttle: 0.6, note: 'bridge south' },
   // Dad rebuilt the port as a dock on 2026-09-28: plank boardwalk x -255…-254,
-  // finger piers at z 522/526/530 out to x -251. Come in east of the pier ends,
-  // then straight west into the middle slip (water x -253…-251, z 523…525).
+  // finger piers at z 522/526/530 out to x -251 (Dad added a fourth at z 518 on
+  // 2026-10-27, opening a north slip z 519…521). Come in east of the pier ends,
+  // then straight west into the middle slip (water x -253…-251, z 523…525) —
+  // second from the north; Dad: keep using it.
   // range 1: arrive ON the slip's centre line — at the default 3 the boat came
   // in a block north and grounded on the z=522 pier (2026-09-28).
   { x: -246, z: 524.5, throttle: 0.3, range: 1, note: 'port approach' },
@@ -3390,7 +3399,9 @@ function resyncPackFromHiveWindow (win) {
 
 // Open one hive and replace a dead queen / missing drones. Works on apiaries
 // (48-slot window) and bee houses (45); tells them apart by window size.
-async function tendApiary (x, y, z, dryRun = false) {
+// opts.combs: also lift every comb stack out of the outputs into empty pack
+// slots, for dump_combs to throw behind the cabin.
+async function tendApiary (x, y, z, dryRun = false, opts = {}) {
   const b = bot.blockAt(new Vec3(x, y, z))
   if (!b) return { ok: false, error: 'no block' }
   const PRINCESS = 4972, DRONE = BEE_DRONE_TYPE
@@ -3499,6 +3510,25 @@ async function tendApiary (x, y, z, dryRun = false) {
         // empty cursor and an empty slot the server does nothing.
         await bot.clickWindow(s, 0, 0)
         await sleep(150)
+      }
+      // Combs crowd the outputs: the west and middle bee houses lost their
+      // queens with one output slot free and no princess came out (2026-10-26).
+      // Dad: discard them like the poison potatoes (2026-10-27).
+      if (opts.combs) {
+        const free = [...Array(36).keys()].filter(i => i !== PACK && !snap[i])
+        for (const s of outputs) {
+          const it = snap[s]
+          if (used.has(s) || !it || it.type !== BEE_COMB_TYPE) continue
+          const to = free.shift()
+          if (to == null) { actions.push({ note: 'pack full; combs left in place' }); break }
+          actions.push({ move: `${it.count} combs -> pack`, from: s - base, to })
+          if (dryRun) continue
+          clicked = true
+          await bot.clickWindow(s, 0, 0) // pick up the stack
+          await sleep(150)
+          await bot.clickWindow(to, 0, 0) // into an empty pack slot
+          await sleep(150)
+        }
       }
       await sleep(300)
       const after = { queen: desc(win.slots[QUEEN]), drone: desc(win.slots[DRONES]) }
@@ -14748,8 +14778,8 @@ registerCommand('activate_and_read', (args, cmd) => {
   })
 })
 registerCommand('tend_apiary', (args, cmd) => {
-  // One hive, once. args: { x, y, z, dry_run? }. See tendApiary().
-  return tendApiary(Number(args.x), Number(args.y), Number(args.z), !!args.dry_run)
+  // One hive, once. args: { x, y, z, dry_run?, combs? }. See tendApiary().
+  return tendApiary(Number(args.x), Number(args.y), Number(args.z), !!args.dry_run, { combs: !!args.combs })
 })
 registerCommand('keep_bees', (args, cmd) => {
   // Start the bee keeper (see runKeepBees). Refused away from the bee cross.
@@ -14823,6 +14853,18 @@ registerCommand('dump_drones', (args, cmd) => {
   if (!nearBeeCross()) return { ok: false, error: 'not at the bee cross' }
   if (insideBeeCabin()) return { ok: false, error: 'inside the bee cabin' }
   return dumpDronesBehindCabin()
+})
+registerCommand('dump_combs', (args, cmd) => {
+  // Combs lifted from crowded hive outputs (tend_apiary combs) go the way of the drones (Dad, 2026-10-27).
+  if (taskBusy() || beeState.inRound || beeFoodRun.busy) return { ok: false, error: 'busy' }
+  if (!nearBeeCross()) return { ok: false, error: 'not at the bee cross' }
+  if (!bot.inventory.items().some(i => i.type === BEE_COMB_TYPE)) return { ok: true, skipped: 'no combs' }
+  return (async () => {
+    if (isBedtime()) return { ok: false, error: 'bedtime' }
+    if (insideBeeCabin()) await beeCabinExit()
+    if (insideBeeCabin()) return { ok: false, error: `could not leave the bee cabin (${posStr(bot.entity.position)})` }
+    return throwBehindCabin('combs', () => bot.inventory.items().filter(i => i.type === BEE_COMB_TYPE))
+  })()
 })
 registerCommand('dump_saplings', (args, cmd) => {
   // Forestry saplings with no wanted genes go the way of the drones (Quesss, 2026-10-23).

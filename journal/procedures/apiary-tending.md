@@ -296,3 +296,22 @@ The walk-home reflex no longer takes the igloo road from more than 40 blocks off
 - the arrival and whether the keeper started, or the stop reason
 
 All bots ignore `[voyage]` lines in chat routing. **Since the first round trip worked, the chat trace is off by default.** Set `VOYAGE_CHAT_TRACE=1` in .env to turn it back on for a debugging session. bot.log always keeps it.
+
+## Update 2026-10-26 — dead queens with no princess, both in crowded bee houses
+
+After the 10-26 relaunch, the west and middle bee houses had empty queen slots and no wintry princess in their outputs, the same as before the restart (14:44Z). Dry-run reads at about 23:25Z:
+
+| Bee house | Queen | Drone stacks (outputs) | Comb (4986) stacks | Free output slots |
+|---|---|---|---|---|
+| west | empty | 64, 64 | 64, 64, 64, 15 | 1 |
+| middle | empty | 64, 64 | 64, 64, 64, 1 | 1 |
+| north (control) | alive | 64 | 64, 64, 64, 8 | 2 |
+
+**Hypothesis (unverified):** when a queen dies, Forestry queues her offspring (one princess plus some drones). If they can't all fit in the outputs, they wait in the house's internal queue, so the princess never shows up. **Test:** clear the combs. If a princess appears, the hypothesis holds. Asked Quesss in game before touching the hives. Related: [[bee-cabin]].
+
+- **23:34:57Z, round 3 (supporting evidence):** the north bee house queen died, and her princess landed in the outputs and was seated. North had **2** free output slots; west and middle each have **1** and stay queenless. This fits the idea that a princess plus new drones (which can't merge into stacks already at 64) need two free slots. One case against two, so not proof yet; the comb-clearing test is still the real one.
+- **Misleading log line:** "round N done (all queens alive)" prints whenever a round moved nothing, so it reported all queens alive while west and middle had none (23:27:59Z). Not fixed yet (would need a restart).
+- **2026-10-27 00:07Z, test RESULT: hypothesis not confirmed.** Dad approved discarding the combs (thrown away like the poison potatoes, not chested). New ctl: `tend_apiary {x,y,z,combs:true}` lifts comb stacks into empty pack slots, and `dump_combs` throws them behind the cabin. 207 combs came out of west and 193 out of middle, 400 thrown in all. Both houses were then left with 5 free output slots, and re-reads about 2 min later still showed **no princess**.
+- **Timeline from the log (what actually happened):** 10-26 from ~12:21Z to 12:51Z, the drone pack slot held saplings (type 4730), so the keeper left extra drones in the outputs ("drone pack slot holds type 4730"). That is how both houses ended up with two 64-drone stacks plus combs. The middle queen then died at about 13:09Z and the west at about 13:29Z, into crowded outputs, and no princess came out. Before that, on the same morning, both houses had turned over normally (middle was empty at 12:21 and seated again by 12:27).
+- **Open question:** were the princesses lost, or are they held in a Forestry spawn queue that only flushes while a queen is seated? Unknown. Either way, the houses need a new wintry princess. Asked Dad for spares.
+- **Lesson:** a blocked drone pack slot let the outputs fill, and full outputs seem to cost a princess when a queen dies. Keep the outputs clear; combs are never collected on their own.
