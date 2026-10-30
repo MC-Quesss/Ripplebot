@@ -56,3 +56,10 @@ Gangplank pad (-222, 64, 537) → straight west along z=537 → **on-boat pad (-
   slabs — Dad's description). Roz crossed at y=64.5 the whole way, no fall.
 - x=-228: vanilla spruce slab. x=-229: spruce planks under a thin modded layer (3855) — the on-boat pad.
 - **Avoid x=-230** for now: floor there is a lever (type 69) with modded type 2924 above — unverified footing.
+
+## Update — 2026-10-30
+
+Dad's first boat-home was the **sailboat** at the [[lighthouse]], built "long before" the Bleu de Paris as a retirement project after the End.
+
+Not to be confused with **the Yacht** on the western point of Oceanside, a separate, earlier construction-foam build: [[yacht]].
+- **Why Dad lives here** (2026-10-30): after the grand [[yacht]], this boat felt most comfortable. A really beautiful kitchen and modest, day-to-day machines: **1 macerator, 1 furnace, 1 jetpack refiller**, and the like.

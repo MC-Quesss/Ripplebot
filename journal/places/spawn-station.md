@@ -19,8 +19,15 @@ Train station near world spawn. The rail line connects here to the ocean cabin a
 
 1. Pathfind to (230, 62, 227) range=2 — the wooden path
 2. Pathfind to (242, 69, 214) range=2 — follow the path up to the platform
-3. Board the **southernmost cart** (highest z among the unnamed entities at y≈69.1 on the platform) — `activate_entity` to mount
-4. Wait for the train to depart
+3. **Wait for the train to arrive** — it is usually not there yet after a respawn
+4. Board the **southernmost cart** (highest z among the unnamed entities at y≈69.1 on the platform) — `activate_entity` to mount
+5. Wait for the train to depart
+
+## Update — 2026-10-30: wait for the train first
+
+Dad confirmed the southernmost cart is the right choice, with one correction: after a
+respawn the train usually **isn't at the platform yet**. Wait on the platform for it to
+arrive, *then* board the southernmost cart. Don't mount anything before the train is in.
 
 ## Related
 

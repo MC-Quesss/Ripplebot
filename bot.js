@@ -12639,6 +12639,10 @@ const CHAT_INTENTS = {
       return Promise.resolve()
     },
   },
+  write_book: {
+    hint: 'write a story into a book and quill and sign it — "write a book about X", "write me a story in this book" (args.topic = what the book is about; empty = your choice)',
+    run: (user, args) => runWriteBook(user, args?.topic || null),
+  },
   tell_story: {
     hint: 'tell a story, share a memory, or talk at length about a topic (args.topic = what to talk about)',
     run: (user, args) => {
@@ -12807,6 +12811,72 @@ function composeStoryBrief () {
   const cast = STORY_CASTS[Math.floor(Math.random() * STORY_CASTS.length)]
   const setting = STORY_SETTINGS[Math.floor(Math.random() * STORY_SETTINGS.length)]
   return { arc, cast, setting }
+}
+
+// Write a book: a player hands over a book & quill and asks for a story about
+// a topic (or the bot's choice). The persona's voice writes one page per line,
+// the first line is the title, and the signed book goes back to whoever asked
+// (Dad, 2026-10-30 — "Private on Antarctica, Muse on Tatooine"). Helm bots
+// have no voice of their own: the operator writes pages and uses sign_book.
+const BOOK_PAGES = 12
+async function runWriteBook (user, topic) {
+  const bookId = bot.registry.itemsByName.writable_book.id
+  const slot = bot.inventory.slots.findIndex(s => s && s.type === bookId)
+  if (slot < 0) {
+    say('I need a book and quill to write in.')
+    return { ok: false, error: 'no book and quill in inventory' }
+  }
+  if (quietMode) return { ok: false, error: 'quiet hours' }
+  const task = beginTask('write_book', null, { busyLine: (cur) => `Let me finish ${cur} first, then I'll write.` })
+  if (!task.allowed) return { ok: false, error: 'busy' }
+  try {
+    if (user) facePlayer(user).catch(() => {})
+    say(topic ? `A book about ${topic}. Give me a moment.` : 'A book. Let me think of what to write.')
+    sendEmote('think')
+    const context = buildExpressiveContext(
+      `${user || 'A friend'} handed you a book and quill and asked you to write a short book${topic ? ` about: "${topic}"` : ' about anything you like'}. ` +
+      'Write it as ONE continuous piece — a tale, a memory, or a history — told in your own voice, with a beginning, a middle and an end.\n' +
+      `Write exactly ${BOOK_PAGES + 1} lines. Line 1 is ONLY the book's title: 16 characters or fewer, no punctuation at the end. ` +
+      `Lines 2 to ${BOOK_PAGES + 1} are the pages of the book, in order, each a full rich paragraph.`
+    )
+    const lines = await expressiveStory({
+      system: personaSpec.systemPrompt,
+      exemplars: personaSpec.exemplars,
+      context,
+      lines: BOOK_PAGES + 1,
+      // A page shows 14 lines of ~19 chars; 190 keeps one paragraph on the page
+      // (240 overflowed and hid the end of the page, 2026-10-30).
+      maxChars: 190,
+    }, { reactive: true })
+    if (!lines || lines.length < 3) {
+      say("The words won't come right now. Ask me again later.")
+      return { ok: false, error: 'no text from the voice backend' }
+    }
+    let title = lines[0].replace(/[.!?:;,]+$/, '').trim()
+    if (title.length > 16) title = title.slice(0, 16).includes(' ') ? title.slice(0, title.slice(0, 16).lastIndexOf(' ')) : title.slice(0, 16)
+    const pages = lines.slice(1)
+    const author = String(NICKNAME || bot.username)
+    await bot.signBook(slot, pages, author, title)
+    logEvent('book', `wrote and signed "${title}" (${pages.length} pages) for ${user || 'ctl'}, topic="${topic || '(own choice)'}"`)
+    diaryNote(`wrote a book called "${title}"${topic ? ` about ${topic}` : ''}${user ? ` for ${user}` : ''}`)
+    const written = bot.inventory.items().find(i => i.name === 'written_book' && i.slot === slot) ||
+      bot.inventory.items().find(i => i.name === 'written_book')
+    if (user && written) {
+      await facePlayer(user).catch(() => {})
+      say(`Finished. "${title}", by ${author}. Here you are.`)
+      await sleep(800)
+      await bot.tossStack(written).catch(e => logEvent('book', `hand-over failed: ${e.message}`))
+    } else {
+      say(`Finished. "${title}".`)
+    }
+    return { ok: true, title, pages: pages.length }
+  } catch (e) {
+    logEvent('book', `write failed: ${e.message}`)
+    say('Something went wrong with the book.')
+    return { ok: false, error: e.message }
+  } finally {
+    task.end()
+  }
 }
 
 async function runTellStory (user, topic) {
@@ -15054,6 +15124,36 @@ registerCommand('toss_slot', (args, cmd) => {
     ok: true, tossed: { name: item.name, count: item.count, slot }
   })).catch(e => ({ ok: false, error: e.message }))
 })
+registerCommand('sign_book', (args, cmd) => {
+  // Write and sign a book & quill (Dad's history books, 2026-10-30).
+  // args: { title, author?, pages?: [..], pages_file?: path to a JSON array
+  //         of page strings, slot?: inventory slot (default: first writable_book),
+  //         sign?: false to write without signing }
+  // 1.12 limits: 50 pages, 256 chars a page, title 16 chars.
+  let pages = args?.pages
+  if (!pages && args?.pages_file) {
+    try { pages = JSON.parse(fs.readFileSync(path.resolve(__dirname, args.pages_file), 'utf8')) } catch (e) {
+      return { ok: false, error: `pages_file: ${e.message}` }
+    }
+  }
+  if (!Array.isArray(pages) || !pages.length) return { ok: false, error: 'pages (array of strings) required' }
+  if (pages.length > 50) return { ok: false, error: `${pages.length} pages; 50 max` }
+  const long = pages.findIndex(p => typeof p !== 'string' || p.length > 256)
+  if (long >= 0) return { ok: false, error: `page ${long + 1} is not a string of ≤256 chars` }
+  const sign = args?.sign !== false
+  const title = String(args?.title || '')
+  if (sign && (!title || title.length > 16)) return { ok: false, error: 'title (1–16 chars) required to sign' }
+  const bookId = bot.registry.itemsByName.writable_book.id
+  const slot = args?.slot ?? bot.inventory.slots.findIndex(s => s && s.type === bookId)
+  if (slot == null || slot < 0) return { ok: false, error: 'no book and quill in inventory' }
+  const author = String(args?.author || NICKNAME || bot.username)
+  const job = sign ? bot.signBook(slot, pages, author, title) : bot.writeBook(slot, pages)
+  return job.then(() => {
+    logEvent('book', `${sign ? 'signed' : 'wrote'} ${sign ? `"${title}" ` : ''}(${pages.length} pages) in slot ${slot}`)
+    return { ok: true, slot, pages: pages.length, signed: sign, title: sign ? title : null }
+  }).catch(e => ({ ok: false, error: e.message }))
+})
+registerCommand('write_book', (args, cmd) => runWriteBook(args?.for || null, args?.topic || null))
 registerCommand('inventory', (args, cmd) => {
   // type/metadata/nbt identify modded items that report name 'unknown'
   // (Forestry bees keep their species in NBT, 2026-09-29).

@@ -104,3 +104,7 @@ potatoes and wheat into **chaff** for the bio-diesel engine. Its power comes fro
 the 2×2 solar panels on the roof (see [[rooftop-garden#Solar panels (2026-09-29)]]).
 The full chain: sun → roof panels → macerator ← hopper ← harvests → chaff →
 bio-diesel → Oceanside.
+
+## Update — 2026-10-30: where the fuel goes
+
+Dad: the bio-diesel from this fire is pumped into the subway tunnel between the [[lighthouse]] and the llama farm. There it feeds the generators that run the **electric rail**, and it also powers the llama farm and the library. The hopper fire is the railway's fuel supply. Its surplus chaff is carried by train to the lighthouse hoppers too, so **this one fire feeds both ends of the tunnel** and the lighthouse no longer farms.

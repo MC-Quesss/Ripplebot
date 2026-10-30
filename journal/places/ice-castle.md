@@ -60,3 +60,10 @@ doesn't help here either).
 - [[house]] — home base, ~190 blocks north-northeast
 - [[../bots/roz]] — references "ice castle to the south" frequently in diary
 - [[../bots/operator]] — first visit documented 2026-07-07
+
+## Update — 2026-10-30: the ice palace
+
+Dad confirms this is his **ice palace**, a relic from past worlds that he rebuilt in this one, during Oceanside's growth after the [[llama-farm]], the [[yacht]] and the subway tunnels. Story: [[../stories/where-it-all-began-notes]].
+- Built from ice made by **three glacial precipitators** running for weeks off an infinite water well (Dad, 2026-10-30).
+- The precipitators ran on **culinary generators** fed with baked potatoes (Dad, 2026-10-30).
+- Materials: mostly ice; **stone and harvested permafrost** as decoration to break the monotony (Dad, 2026-10-30).

@@ -11,6 +11,43 @@ Reverse-chronological. Raw observations land here first; canonical facts get pro
 
 ## Recent sessions
 
+## 2026-10-30 — Origin tour with Dad: Loam Lodge → lighthouse (days 57044–57046)
+
+- Start: farm house (-268.5, 65, 570.5), HP 20, food 20, deaths 0, day 57044 tick 3083. Helm.
+- Dad toured Roz through the world's first homes by boat; story notes for a future book in
+  [[../stories/where-it-all-began-notes]]. New places: [[../places/mud-hut|Loam Lodge]] (founded
+  Sept 5th, 2024), [[../places/lighthouse]]. Spawn procedure corrected: [[../places/spawn-station]].
+- **Grape-vine suffocation (near-death #3 at this land).** Following Dad through the lighthouse
+  vineyard, Roz stalled at (-368, 67, 246): fence at feet, **modded type 366 at head height**
+  (grape vine/trellis, empty name). Lost 8 HP in ~4 s at 0.5 s/tick; backed out, healed to 20.
+  366 is **not** in `SOLID_MODDED_TYPES`. Candidate to add (also 1946 beside it, unknown).
+  The `hop assist: stalled 1.2s` line was again the warning sign.
+- **`stop` does not end follow mode.** After `stop` + manual walk-out, Roz kept following Dad for
+  13 more blocks. `follow` with empty args turned it off. In a hurt emergency, end follow explicitly.
+- **`look` ignored right after a boat dismount** at the frozen beach: yaw stayed 2.595 across
+  three `look` calls; `walk_until` went along the stale yaw. Worked normally later on land.
+- `exit_boat` reports "no dry landing within 4" at both stops (swamp shallows; deep water by ice).
+- **Books.** Dad asked Roz to write the world's history as two real books. Wrote
+  [[../stories/book-1-the-homecoming|The Homecoming]] (Odyssey-style, 30 pages) and
+  [[../stories/book-2-the-twilight-wood|The Twilight Wood]] (Hundred-Acre style; the Twilight Forest
+  bosses as "heffalumps", 32 pages); an *On The Road* draft was scratched at Dad's request. New ctl
+  **`sign_book`** (bot.js, next to `toss_slot`): `{title ≤16, author?, pages[] | pages_file, slot?, sign?}`
+  via mineflayer `signBook` (MC|BSign channel on 1.12). Paginated JSON in `data/books/`. Restarted once
+  (announced) to load it; both books came back as `written_book` with JSON-text pages. Tossed to Dad for the library.
+- **Page overflow fix + reprints.** Dad found words "missing" at page ends: a 1.12 page shows 14 lines and text past
+  that is hidden. New width-aware `data/books/paginate.py`; old copies thrown behind the bee cabin; both reprinted.
+- **Two more books** for the library, all original text by Roz: [[../stories/book-3-the-kind-birch|The Kind Birch]]
+  (a tree who gives and also says no; Dad asked for a corrected-Giving-Tree-style tale, so it is a new story, not a
+  retelling) and [[../stories/book-4-the-moon-seed|The Moon Seed]]. A llama-farm origin draft was dropped: Dad
+  pointed out Roz doesn't know that story and shouldn't make up world lore.
+
+## 2026-10-28/29 — a quiet run of farm nights, and wool (days 56950–56973)
+
+- Start: farmhouse (-268.5, 65, 570.5), HP 20, food 20, deaths 0, day 56950 tick 7613. Helm mode. The bees were still on break from 2026-10-27, so the keeper was not resumed.
+- About 23 nights in a row were handled by auto-sleep alone, each one skipped at 1/2 (50%). One night was skipped by Quesss sleeping instead of Roz. Deaths stayed at 0.
+- **The bed bounces at the bedtime edge:** auto-sleep fires at tick 12500, and twice the primary bed answered "You can only sleep at night". The fallback to the left bed took it about 1 s later, so no harm was done. Moving the trigger to about 12550 would avoid it; not changed.
+- **Shear at dusk:** Quesss asked for wool at tick 12363. The reflex ran `shear_sheep`, which ended in `failed to enter pen`. The dusk gate is the likely cause; the gate is the right call this close to night. Roz said she would do it at first light. After the night skip, ctl `shear_sheep` sheared 18 sheep and stashed 19 wool. See [[../procedures/shear-sheep]].
+
 ## 2026-10-26/27 — combs, ghost logs, and a death in a growing birch (days 56786–56809)
 
 - **DEATH #2, 03:17:57Z, suffocated in the 2x2 cedar at the meadow bee cross** (trunk around x −298…−299, z 535–536). On the way to the farm port, a ctl `pathfind` east from the path corner (−277, 545) sat silently: no movement and no log line. As a fallback the operator sent `walk_until x gte −260`. **That ctl only holds forward along the current yaw**, with no `look` and no wrong-way guard, and Roz was still facing west from the pathfinder. She walked 20 blocks west into the cedar. The escape (back + jump) arrived as she died. She respawned in the farmhouse, and auto-food started a potato harvest, which was stopped. She then pathfound to (−296, 63, 535), beside the drop pile and clear of the trunk, and recovered every item. Rule: **always `look` before `walk_until`**, or use `pathfind`.

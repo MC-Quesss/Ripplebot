@@ -1,0 +1,109 @@
+---
+type: book
+name: book-2-the-twilight-wood
+title: The Twilight Wood
+author: Roz
+style: a Hundred-Acre-Wood sort of tale; heffalumps = the Twilight Forest's creatures, told gently
+written: 2026-10-30
+source: [[where-it-all-began-notes]], [[../places/twilight-forest]]
+---
+
+THE TWILIGHT WOOD
+
+or, Heffalumps, and Other Things That Are Not Very Frightening If You Have a Hearth to Go Home To
+
+told by Roz, for the bookshelf
+
+CHAPTER ONE
+In Which We Are Introduced to the Builder, and a Hole
+
+Once upon a time, a very long while ago now, about two years, the Builder lived in a hole under the name of Loam Lodge.
+
+It was not a Hole on purpose. Some Gravel had fallen into it, and it was getting dark, and the Builder thought, as anyone would, that a Hole is better than No Hole when the dark is coming.
+
+He put a roof of mud on it, which is a Sensible Thing, because gravel roofs are not roofs at all, only gravel waiting to fall on your head.
+
+CHAPTER TWO
+In Which the Builder Goes Somewhere Snowy
+
+After a while the Builder had Enough. When you have Enough, you begin to want Somewhere Else. So he packed his backpacks with food (mostly food) and rowed until he found a beach where it snowed.
+
+He liked the snow. That was the whole reason. Some reasons are Big and some are Small, and the Small ones are often the truest.
+
+He built eight furnaces in a row and made a lighthouse out of stone, and when it was finished he turned the furnaces into a fireplace, because a house with a fireplace is a Home, and a house with eight furnaces is only a Factory with a Bed in it.
+
+CHAPTER THREE
+In Which There Is a Portal, and a Wood Where It Is Always Teatime
+
+Not far from the lighthouse the Builder made a little pool of water, two by two, with flowers all around, and he dropped a diamond into it.
+
+There was a great deal of lightning, which the Builder did not care for, and the water turned purple, and when he stepped in he was somewhere else: a wood where it is always the end of the afternoon. Never quite day, never quite night.
+
+It was called the Twilight Forest, and it was full of Heffalumps.
+
+CHAPTER FOUR
+In Which We Learn What a Heffalump Is
+
+Nobody is entirely sure what a Heffalump is. That is the most important thing about them.
+
+In the Twilight Wood, a Heffalump is anything large that lives at the bottom of a tower or the middle of a maze and does not wish to be visited. They are FAR scarier than they sound, which is why it helps to give them a silly name.
+
+The Builder kept a list. It went in order, because in that Wood you may not visit the second Heffalump until you have been to tea with the first.
+
+CHAPTER FIVE
+In Which the Builder Meets a Very Long Heffalump
+
+The first Heffalump was the Naga. It lived in a courtyard of mossy stone and it was mostly Length. It went on and on, like a sentence that has forgotten how to stop.
+
+The Builder was very brave about it, and very quick, and when it was over he sat down for a long while and had something to eat.
+
+CHAPTER SIX
+In Which There Is a Tower, and a Heffalump Who Is Mostly Bones
+
+The second was the Lich, who lived at the top of a tower and was made mostly of Bones and Bad Temper. He threw things. He made copies of himself, which is a rude thing to do to a guest.
+
+But the Builder went up the stairs anyway, one at a time, which is how all stairs are climbed, even by robots who are not very good at stairs.
+
+He brought the Lich's head home and put it on a fence post by the door. It sits there still, looking surprised.
+
+CHAPTER SEVEN
+In Which There Are Several Heffalumps at Once, Which Is Too Many
+
+After the Lich came a Labyrinth with a Minoshroom in it (a cow who had become a mushroom, or a mushroom who had become a cow, nobody asked), and a swamp so hot it was nearly a kettle, with a Hydra in it, who had more heads than was reasonable.
+
+Then a stronghold full of Knights who were not quite there, and a Dark Tower with a great weeping Ghast at the top of it, who cried so much the Builder almost felt sorry for him. Almost.
+
+For the Knights he needed better armor, so he went home and built a smeltery in the south wing of the lighthouse, which is the kind of thing you do when Heffalumps get serious.
+
+CHAPTER EIGHT
+In Which It Snows Inside the Wood, Which the Builder Rather Liked
+
+Then the Builder came to a snowy part of the Wood, and of course he liked it, because it snowed. There was a large white Yeti in a cave who was mostly Fur and Opinions.
+
+And beyond the Yeti, on top of a glacier, stood a palace made of aurora, the colours of the sky at the very edge of night, and in it lived the Snow Queen, who was the coldest Heffalump of all.
+
+The Builder went in anyway. When he came out, he had her head under one arm and a great many aurora blocks under the other, and he went home and made a ceiling of them in his bedroom, so that every night he could look up at the edge of the sky.
+
+Her head went on the other fence post, across from the Lich. Between them, by the north door, they hold the whole story of the Wood: one from the beginning and one from the end.
+
+CHAPTER NINE
+In Which a Creeper Is Not a Heffalump, But Is Just as Rude
+
+It should be said that not every frightening thing lives in the Wood. One afternoon a Creeper came up from the north side of the lighthouse and went off like a sneeze against the front window.
+
+The Builder fixed the wall with mossy bricks, seven of them, and left them green. When someone asks about the green bricks, he tells them about the Creeper, and that is what a Reminder is for.
+
+CHAPTER TEN
+In Which the Heffalumps Are All Visited, and the Builder Goes Home
+
+After the Snow Queen there were no more Heffalumps on the list. The Builder had been to tea with all of them, and not one had asked him back.
+
+So he went home through the purple water to the lighthouse and sat by the fire with the jukebox playing. That, he discovered, is the best part of visiting Heffalumps: coming home after.
+
+Later he built a sailboat, and a yacht, and a llama farm with llamas, and a palace of ice, and a library of very patient stone, and at last a small boat on a river with a good kitchen in it.
+
+And next door, across the water, there is a farm, and on the farm there is a robot named Roz who keeps the fire going, and who has never met a Heffalump, and who would like to keep it that way, thank you.
+
+But if she ever does, she knows what to do. Climb the stairs one at a time. Keep the green bricks green. And always, always have a hearth to go home to.
+
+THE END
