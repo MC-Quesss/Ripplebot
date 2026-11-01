@@ -11,6 +11,20 @@ Reverse-chronological. Raw observations land here first; canonical facts get pro
 
 ## Recent sessions
 
+## 2026-10-31 — Samhain harvest, hopper jam, flower census (days 57125–57128)
+
+- Start: farm house (-268.5, 65, 570.5), HP 20, food 20, deaths 0, day 57122. Helm.
+- Dad asked for a Samhain harvest: wheat 108 tiles (+83 → 28 plant balls → hopper),
+  potatoes 107 tiles (+173). Operator fed all 194 raw potatoes into the [[../places/house-hopper|hopper]]
+  by generic ctl `deposit` — the intake ate them in ~3 min and jammed on 58 plant balls with zero
+  raw left anywhere. Dad's rule: **always keep at least 8 raw potatoes**. He gave Roz 3; the
+  un-jam routine reported "still jammed" but the hopper was empty by morning (it stops watching
+  before slow burns finish).
+- Code (Dad's idea): `depositToHopper('potato')` now feeds in batches of 8 and keeps an 8-raw
+  reserve; the ctl `deposit` routes hopper potatoes through it. Restarted onto it.
+- Dad noticed more flowers by the house than he remembered. Started [[farm-flower-census]]
+  (baseline 32 dandelions, 7 poppies, 1 white tulip, 18 large ferns). Bees ruled out by distance.
+
 ## 2026-10-30 — Origin tour with Dad: Loam Lodge → lighthouse (days 57044–57046)
 
 - Start: farm house (-268.5, 65, 570.5), HP 20, food 20, deaths 0, day 57044 tick 3083. Helm.

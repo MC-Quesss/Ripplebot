@@ -52,6 +52,16 @@ Two of these are in the farm collection: **Mall and Chirp**. `RECORD_INFO` in bo
 
 How it works: each disc's `.ogg` is replaced at its own path (`minecraft:sounds/records/<disc>.ogg`, `biomesoplenty:sounds/records/wanderer.ogg`), the songs are mono so they come from the jukebox, and one-line `en_us.lang` overrides change the tooltips. Turning the pack on reloads every mod's assets, so the game freezes for about a minute. That's normal.
 
+## Update 2026-10-31: pack v2 adds Stal → War Pigs
+
+Dad asked for one more song: **`record_stal` now plays Faith No More - War Pigs** (their cover of
+the Black Sabbath original), 7:46 (466s), mono OGG. Tooltip: "Faith No More - War Pigs (Black
+Sabbath)". Published as GitHub release `resourcepack-v2` on MC-Quesss/Ripplebot, SHA-1
+`6dfc2a2151f9a1024c31dde4f5894f9a62ef484e` (download verified). The other six discs are byte-for-byte
+the v1 files. `server.properties` must point at the v2 URL and hash. `RECORD_INFO` has a
+`record_stal` entry (title War Pigs, black label, 466s, aliases stal/sabbath/faith no more), so
+bots on the new code time the song correctly. Stal has no home slot in the kitchen chest yet.
+
 ## Update 2026-08-08 — Far lost, Blocks joins
 
 A mystery guest raided the kitchen chest, making off with Far, the pot,

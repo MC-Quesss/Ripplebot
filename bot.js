@@ -8001,12 +8001,24 @@ const HOPPER_FORBIDDEN = new Set(['wheat', 'wheat_seeds'])
 // 2026-10-26). An 'unknown' deposit moves plant balls only.
 const PLANT_BALL_TYPE = 4169
 function isPlantBall (s) { return !!s && s.name === 'unknown' && s.type === PLANT_BALL_TYPE }
+const HOPPER_POTATO_RESERVE = 8
+const HOPPER_POTATO_BATCH = 8
 async function depositToHopper (itemName, opts = {}) {
   if (HOPPER_FORBIDDEN.has(itemName)) {
     logEvent('hopper-guard', `refused ${itemName} — raw grain jams the intake; craft plantballs first`)
     throw new Error(`${itemName} jams the bio-fuel intake — craft plantballs first (use stash_wheat)`)
   }
   if (itemName === 'unknown') opts = { ...opts, type: PLANT_BALL_TYPE }
+  if (itemName === 'potato') {
+    // Raw potatoes go in whole batches of 8 and never below an 8-raw reserve,
+    // so the intake isn't left with plantballs and no potato to burn them,
+    // and the bot always has un-jam fuel on hand (Quesss, 2026-10-31).
+    const onHand = countOnHand('potato')
+    const keep = Math.max(opts.keep || 0, HOPPER_POTATO_RESERVE)
+    const batch = Math.floor(Math.max(0, onHand - keep) / HOPPER_POTATO_BATCH) * HOPPER_POTATO_BATCH
+    if (batch === 0) return { deposited: 0, remaining: onHand, rounds: 0, backedUp: false }
+    opts = { ...opts, keep: onHand - batch }
+  }
   await ensureInsideHouse()
   await pathTo(HARVEST_WAYPOINTS.chest_approach, 1, 12000)
   return await depositQuickMove(itemName, HOPPER, opts)
@@ -11572,6 +11584,8 @@ const RECORD_INFO = {
   record_wait:    { title: 'Wait',    color: 'blue',    durationSec: 238, factoid: 'C418 originally titled this one "Where are we now" — the most upbeat disc in our collection.' },
   record_chirp:   { title: 'I Will Follow You into the Dark', color: 'red', durationSec: 189, aliases: ['chirp', 'death cab', 'death cab for cutie', 'follow you into the dark'], factoid: 'Death Cab for Cutie: one voice and one acoustic guitar. It plays on the Chirp disc now.' },
   record_mellohi: { title: 'Mellohi', color: 'magenta', durationSec: 96,  factoid: 'A short, melancholy waltz in three-four time — C418 at his most wistful.' },
+  // Stal plays Faith No More's War Pigs through resource pack v2 (Dad, 2026-10-31).
+  record_stal:    { title: 'War Pigs', color: 'black', durationSec: 466, aliases: ['stal', 'faith no more', 'black sabbath', 'sabbath', 'war pigs'], factoid: 'Faith No More covering Black Sabbath: a 1970 song against war and the generals who send others to fight it. It plays on the Stal disc now.' },
 }
 // Now-playing state (in-memory; lost on restart). Set both when this bot puts
 // a disc on AND when another bot's "Now playing" announce is heard — so every
@@ -14665,10 +14679,27 @@ registerCommand('deposit', (args, cmd) => {
   // bypasses depositToHopper, so enforce the rule here too: strip
   // wheat/seeds when the target is a hopper and report them refused.
   const refusedGrain = []
+  // Raw potatoes into the hopper go through depositToHopper too, which batches
+  // them by 8 and keeps an 8-raw reserve — a plain deposit dumped all 194 and
+  // left the bot with nothing to un-jam with (2026-10-31).
+  let hopperPotatoes = false
   if (b.name === 'hopper' || (b.position.x === HOPPER.x && b.position.y === HOPPER.y && b.position.z === HOPPER.z)) {
     for (const g of HOPPER_FORBIDDEN) if (wantedNames.delete(g)) refusedGrain.push(g)
     if (refusedGrain.length) logEvent('hopper-guard', `deposit: refused ${refusedGrain.join(', ')} into hopper — craft plantballs first`)
-    if (!wantedNames.size) return { ok: false, error: `${refusedGrain.join(', ')} jams the bio-fuel intake — craft plantballs first (use stash_wheat)` }
+    hopperPotatoes = wantedNames.delete('potato') && b.position.x === HOPPER.x && b.position.y === HOPPER.y && b.position.z === HOPPER.z
+    if (!wantedNames.size && !hopperPotatoes) return { ok: false, error: `${refusedGrain.join(', ')} jams the bio-fuel intake — craft plantballs first (use stash_wheat)` }
+  }
+  const depositHopperPotatoes = async (deposited) => {
+    if (!hopperPotatoes) return
+    const r = await depositToHopper('potato', { maxRounds: 20, maxStalls: 10, stallDelayMs: 30000 })
+    if (r.deposited > 0) deposited.potato = r.deposited
+    logEvent('hopper-guard', `deposit: potato batched by ${HOPPER_POTATO_BATCH}, reserve ${HOPPER_POTATO_RESERVE}: deposited=${r.deposited} remaining=${r.remaining}`)
+  }
+  if (!wantedNames.size) {
+    const deposited = {}
+    return depositHopperPotatoes(deposited)
+      .then(() => refusedGrain.length ? { ok: true, deposited, refused: refusedGrain } : { ok: true, deposited })
+      .catch(e => ({ ok: false, error: e.message }))
   }
   return withContainer(b, async (win) => {
     const deposited = {}
@@ -14683,6 +14714,9 @@ registerCommand('deposit', (args, cmd) => {
         break
       }
     }
+    return deposited
+  }).then(async (deposited) => {
+    await depositHopperPotatoes(deposited)
     return refusedGrain.length ? { ok: true, deposited, refused: refusedGrain } : { ok: true, deposited }
   }).catch(e => ({ ok: false, error: e.message }))
 })
