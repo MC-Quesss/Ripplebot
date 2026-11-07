@@ -11,6 +11,30 @@ Reverse-chronological. Raw observations land here first; canonical facts get pro
 
 ## Recent sessions
 
+### 2026-11-07 — five stalled houses, MTAC survey, west outer turns Meadows (day 57789 on)
+- Helm session; launched 02:38Z at the SE stand after about 10 hours offline with no goodbye line in the log. HP 20, food 20, deaths 0. The [[../places/meadow-bee-cross|Nueve Reinas]] keeper had no stop line, so it resumed at relaunch under the standing rule.
+- **Stall analysis:** bot.log queen reads show centre, north and east stopped aging queens on 2026-11-06 while west and south did not. Leaf cover and a single chunk both fit the split. All columns read clear now, and all five houses have returned to normal lives. Details and the open test are in [[../places/meadow-bee-cross]].
+- **[[../places/mtac|MTAC]]:** first look since the dirt mock-up, by block reads from the path, not entered.
+- **West outer:** lost its Forest line at 03:11Z with no princess. Quesss seated a Meadows queen, and Roz threw out the 7 Forest drones at the potato patch. Species are not to be mixed.
+- **Operator mistakes, for next time:** type 4970 is a queen, and Roz held a Forest queen for about two hours because the pack check looked only for princesses. Trusting the round summary hid the empty house for about 50 min. A first sky scan was invalid because shell variables did not split under zsh, and it was caught by its blank coordinates.
+- **Bed race:** when the night skips just as auto-sleep polls, it can cycle all three beds in daylight and get refused. Seen twice, harmless, about 5 seconds each.
+- **Open:** `tendMeadowHouse` species picking (reads only the first chromosome's active gene, falls back to any species, no per-house species) is proposed for a fix but not changed. `beeSpecies` read a just-seated Meadows princess as Water at the next round on 2026-11-06, possibly because it matches her mate's genome first; not tested.
+
+### 2026-11-06 — dropped connection, stuck relaunch (day 57677)
+- Helm session; launched 01:33Z at the farm house, HP 20, food 20, deaths 0, day 57675. Auto-sleep put her in the primary bed ~5s after spawn.
+- 01:43Z `client timed out` → `[end] keepAliveError`, process exited. Client-measured TPS read 11 on the last sample. Relaunch at 01:44Z failed auth with `Failed to obtain profile data` ~21s in. A curl check around then got no response from any of four Microsoft/Mojang endpoints; shortly after, those endpoints and a control site all answered. Likely a brief connectivity blip on this side, cause not proven. Same sequence on 2026-11-01 08:01Z (timeout, then two auth failures). Mac checks: no sleep or reboot at the drop (woke 01:31Z, stayed awake). The FTB app on the same Mac also went down, but its process was still active until at least 01:47Z, 4 min after Roz dropped, and it left no crash report; relaunched 01:53Z. So the two failures are not shown to share a cause.
+- **Failure mode:** after that auth error the process stays alive with the control socket open, but never joins and never retries. `pos` answers ok with (0,0,0), `time` is null, and `quit` returns ok without exiting (no client to end). Needs SIGTERM by PID, then a fresh launch. The fresh launch spawned first try at 01:54Z, day 57677; offline about 11 min.
+- Lesson: a JSON reply from `pos` proves the process is up, not that she is in the world. Check for a `[spawn]` line or non-null `time`.
+- Open: she carries 7 raw potatoes, one under the [[../places/house-hopper|hopper]] reserve of 8. Source of the shortfall unknown.
+- **Reflex near-miss:** Dad asked for the bees at the farm, and the `tend_bees` reflex matched and aimed at the cove voyage, since its pattern ignores any mention of the farm. Only the tick 9000 voyage cutoff stopped her (it was tick ~10200); earlier in the day she would have sailed off. She started the [[../places/meadow-bee-cross|Nueve Reinas]] by ctl instead. Reflex not changed yet.
+- **False "all nine queens alive":** `runReinasRound` breaks out when a stand is unreachable, then reports all alive whenever no moves were made, even with zero houses read. Rounds 6–8 (03:33–03:43Z) read nothing and said this; round 9 then found seven queens dead and replaced them. Fix not applied yet.
+- **The NW stand (-305, 63, 538) blocked for three rounds:** 03:38Z probe read type 587 leaves at head height (-305, 64, 538), and a 2x2 type 690 trunk at (-308…-307, 536) reaching y 71 or higher. By ~03:49Z the stand column was air and she reached it again, and the whole trunk was gone: (-308…-307, 63, 536) read type 586 (unidentified, possibly saplings) with air above. Reached fine at 03:27Z, so the tree came and went within ~20 min. It looks felled and maybe replanted, but that is unconfirmed; no chat explained it. If 586 is a sapling, a regrown tree could block this stand again. The failed walk left her at (-304.5, 63, 539.6), outside the farm sleep radius, so auto-sleep passed the call to the operator once (03:40Z); `come_inside` brought her in.
+
+### 2026-11-02 — wool run, door snag on the way back (day 57424)
+- Helm session; Roz relaunched 2026-11-02 00:03Z after the server restart that loaded resource pack v2 (Stal → War Pigs, confirmed live by Quesss). Auto-sleep carried ~85 consecutive farm-bed nights with no operator action.
+- Shear reflex (no ctl needed): pen entry clean, 40 sheep, **89 wool stashed**.
+- Anomaly: pen → house `go-inside` attempt 1 timed out at x=-272.3 (walk_until x→-268 TIMEOUT, snags=0, door had just been activated from closed). Retry re-aligned from orientation (-275.4, 572.4), door already open, walked through to (-268, 65, 572). Quesss saw her stuck for ~20s. Not new: bot.log holds 49 `go-inside attempt 1 failed` lines, so the retry path is routine; the cost is the ~20s stall players can see. Second wool run the same day (39 sheep, 73 wool) got through on the first try with the door already open. See [[procedures/pen-door-traversal]] if it recurs.
+
 ## 2026-10-31 — Samhain harvest, hopper jam, flower census (days 57125–57128)
 
 - Start: farm house (-268.5, 65, 570.5), HP 20, food 20, deaths 0, day 57122. Helm.

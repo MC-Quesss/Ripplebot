@@ -28,3 +28,12 @@ Roz measured it from the wheat field just after landing at the port. The ground 
 - Unverified whether the dirt patch at x -258…-252, z 546…560 is part of the plan or just terrain.
 
 Related: [[farm-port]], [[wheat-field]], [[house]].
+
+## Update — 2026-11-07: no longer dirt (day 57791)
+
+Roz surveyed it by block reads from the path at (-269, 63, 545.5), outside the building, covering x -280…-256, z 524…544, y 62…83. It is unfinished, and Quesss intends the upper part as a hotel, with a pool below and a basement water pump used to make concrete.
+
+- **Materials read:** glass (type 20) about 35 blocks per layer at y 66–74, concrete (251) from y 62 up, water (9) at y 62–64, glass panes (102), wool (35) at y 77–80, wall banners (177), and many modded types with empty names.
+- **Type 690 runs through the frame** from y 65 to at least y 83. It matches the type of the trunk read at the [[meadow-bee-cross]] on 2026-11-06, which fits the cedar coming from there, as Quesss says.
+- **Type 4029 appears on most layers.** At the [[ocean-cabin]] that type behaves as an invisible wall, so do not assume open-looking spaces here are walkable.
+- **Limits:** the survey hit its edges (x -280, z 544, y 83), so the building may extend beyond them. Bounds in the frontmatter date from the dirt mock-up. Roz has not been inside.
