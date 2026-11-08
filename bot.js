@@ -1210,6 +1210,7 @@ function startAutoSleep () {
     tryAutoSleep()
     tryMorningExclamation()
     tryFoodSafety()
+    tryCoffeeAuto()
     tryBeeFoodRun()
     tryCollectBake()
     tryRestockSupplies()
@@ -4132,9 +4133,14 @@ async function quickMoveType (win, type) {
   for (let s = win.inventoryStart; s < win.inventoryEnd; s++) {
     const it = win.slots[s]
     if (!it || it.type !== type) continue
-    await bot.clickWindow(s, 0, 1)
-    moved += it.count
+    // A "Server rejected transaction" here is usually benign — the stack still
+    // moves (coffee beans, 2026-11-08: 31 reached the chest, but the throw
+    // skipped the seed toss and the walk home). Count by what left the pack.
+    const before = win.slots.slice(win.inventoryStart, win.inventoryEnd).filter(i => i && i.type === type).reduce((n, i) => n + i.count, 0)
+    await benignClick('container', `quick-move slot ${s}`, () => bot.clickWindow(s, 0, 1))
     await sleep(150)
+    const after = win.slots.slice(win.inventoryStart, win.inventoryEnd).filter(i => i && i.type === type).reduce((n, i) => n + i.count, 0)
+    moved += Math.max(0, before - after)
   }
   return moved
 }
@@ -9151,6 +9157,197 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
   }
 }
 
+// ── Coffee (Dad, 2026-11-08) ────────────────────────────────────────────────
+// Two rows just west of the potatoes, from the field edge to the water:
+// x -289 and -288, z 576–581, plants at y 63 on farmland (water from z 582).
+// Harvest like wheat: right-click a ripe plant (stage 7) and it resets to 0.
+// Beans (9810) go into the coffee chest beside the field; the seeds (9814)
+// are discarded. Some drops land on the ground, so both rows get walked.
+// Pathfind won't route into the crop rows (live, 2026-11-08), so the field
+// legs are fixed walk_until legs with the yaw set first.
+const COFFEE_PLANT_TYPE = 3994
+const COFFEE_RIPE_META = 7
+const COFFEE_BEAN_TYPE = 9810
+const COFFEE_SEED_TYPE = 9814
+const COFFEE_ROWS_X = [-289, -288]
+const COFFEE_Z = [576, 577, 578, 579, 580, 581]
+const COFFEE_Y = 63
+const COFFEE_CHEST = { x: -289, y: 63, z: 571 } // double chest, (-289..-290, 63, 571)
+const COFFEE_STAND = { x: -288, y: 63, z: 575 }  // grass at the field's north edge
+const COFFEE_DISCARD = { x: -284, y: 63, z: 575 } // potato patch edge, off the coffee path
+function coffeeTiles () {
+  const out = []
+  for (const z of COFFEE_Z) for (const x of COFFEE_ROWS_X) {
+    const b = bot.blockAt(new Vec3(x, COFFEE_Y, z))
+    if (b && b.type === COFFEE_PLANT_TYPE) out.push({ x, z, meta: b.metadata })
+  }
+  return out
+}
+function coffeeRipeCount () { return coffeeTiles().filter(t => t.meta === COFFEE_RIPE_META).length }
+function packCount (type) {
+  return bot.inventory.items().filter(i => i.type === type).reduce((n, i) => n + i.count, 0)
+}
+async function walkLeg (yaw, axis, target, direction, maxMs = 5000) {
+  await bot.look(yaw, 0, true)
+  return walkUntilAxis({ axis, target, direction, maxMs, maintainYaw: yaw })
+}
+// Chest full = no empty slot and no bean stack with room left.
+function coffeeChestFull (slots) {
+  return slots.every(s => s && !(s.type === COFFEE_BEAN_TYPE && s.count < 64))
+}
+async function runHarvestCoffee ({ user, auto = false } = {}) {
+  const task = beginTask('harvest_coffee', null, { busyLine: auto ? null : BUSY_LINE })
+  if (!task.allowed) return 'busy'
+  const { myGen, startDeaths } = task
+  try {
+    const t = bot.time || {}
+    if (!t.isDay || isBedtime()) {
+      await yieldToBedtime(myGen)
+      if (deathCount > startDeaths) throw new Error('died during pre-harvest sleep')
+    }
+    if (insideHouse()) {
+      await runGoOutside('coffee')
+      if (deathCount > startDeaths) throw new Error('died exiting house')
+      if (insideHouse()) { logEvent('coffee', 'still inside after exit attempt — aborting'); return 'failed' }
+    }
+    // Automatic runs look in the chest first: no harvest when it is full
+    // (Dad, 2026-11-08: "any time coffee is ripe and chest is not already full").
+    if (auto) {
+      await pathTo({ x: -288, y: 63, z: 573 }, 1, 8000)
+      const slots = await peekContainer(COFFEE_CHEST, { label: 'coffee chest' })
+      if (coffeeChestFull(slots)) {
+        logEvent('coffee', 'auto: coffee chest is full, leaving the plants')
+        if (!insideHouse()) await runGoInside()
+        return 'full'
+      }
+      checkAbort(myGen)
+    }
+    if (!await pathToSure(COFFEE_STAND, 0, 1.2, 3, 12000)) {
+      logEvent('coffee', `did not reach the coffee field (${posStr(bot.entity.position)})`)
+      return 'failed'
+    }
+    checkAbort(myGen)
+    const beansBefore = packCount(COFFEE_BEAN_TYPE)
+    const ripeBefore = coffeeRipeCount()
+    logEvent('coffee', `start: ${ripeBefore}/${coffeeTiles().length} ripe`)
+
+    let clicked = 0, reset = 0
+    const clickRipe = async (zs) => {
+      for (const z of zs) for (const x of COFFEE_ROWS_X) {
+        const b = bot.blockAt(new Vec3(x, COFFEE_Y, z))
+        if (!b || b.type !== COFFEE_PLANT_TYPE || b.metadata !== COFFEE_RIPE_META) continue
+        try {
+          await bot.activateBlock(b)
+          clicked++
+          await sleep(250)
+          const after = bot.blockAt(new Vec3(x, COFFEE_Y, z))
+          if (after && after.type === COFFEE_PLANT_TYPE && after.metadata < COFFEE_RIPE_META) reset++
+        } catch (e) { logEvent('coffee', `activate fail ${x},${z}: ${e.message}`) }
+      }
+    }
+    // From the north edge, z 576–579 are in reach; step into the rows for 580–581.
+    await clickRipe([576, 577, 578, 579])
+    checkAbort(myGen)
+    await walkLeg(Math.PI, 'z', 578.3, 'gte', 3000)
+    await clickRipe([580, 581])
+    checkAbort(myGen)
+    if (deathCount > startDeaths) throw new Error('died mid-harvest')
+
+    // Sweep for ground drops: south down the east row to the water's edge,
+    // west across, then north up the west side (the walk that collected
+    // everything live, 2026-11-08). Water starts at z 582, so stop at 581.4.
+    await sleep(500)
+    await walkLeg(Math.PI, 'z', 581.4, 'gte', 4000)
+    await walkLeg(Math.PI / 2, 'x', -289.3, 'lte', 3000)
+    await walkLeg(0, 'z', 576.5, 'lte', 6000)
+    checkAbort(myGen)
+    if (deathCount > startDeaths) throw new Error('died during sweep')
+
+    const beans = packCount(COFFEE_BEAN_TYPE)
+    const seeds = packCount(COFFEE_SEED_TYPE)
+    logEvent('coffee', `clicked=${clicked} reset=${reset} beans +${beans - beansBefore} (pack ${beans}) seeds ${seeds}`)
+
+    // Beans into the coffee chest. Shift-click merges onto the stacks already
+    // there (Dad asked for stacking on 2026-11-08).
+    let stored = 0
+    if (beans > 0) {
+      await pathTo({ x: -288, y: 63, z: 573 }, 1, 8000)
+      stored = await withContainer(COFFEE_CHEST, (win) => quickMoveType(win, COFFEE_BEAN_TYPE), { label: 'coffee chest' })
+      logEvent('coffee', `stored ${stored} beans (pack now ${packCount(COFFEE_BEAN_TYPE)})`)
+    }
+
+    // Seeds are discarded: throw them at the potato patch edge, off the coffee
+    // path, then walk away (the poison-potato pattern).
+    if (seeds > 0) {
+      await pathTo(COFFEE_DISCARD, 1, 8000)
+      for (const it of bot.inventory.items().filter(i => i.type === COFFEE_SEED_TYPE)) {
+        try { await bot.tossStack(it); logEvent('coffee', `tossed ${it.count} coffee seeds`) }
+        catch (e) { logEvent('coffee', `seed toss fail: ${e.message}`) }
+      }
+    }
+    if (!insideHouse()) {
+      await runGoInside()
+      if (deathCount > startDeaths) throw new Error('died entering house')
+    }
+    diaryNote(`harvested the coffee: ${reset} plants, ${stored} beans to the chest`)
+    if (user) say(ripeBefore ? `Coffee done. ${reset} plants harvested, ${stored} beans in the chest, ${seeds} seeds discarded.` : 'No coffee was ripe yet.')
+    return 'done'
+  } finally {
+    task.end()
+    bot.pathfinder.setGoal(null)
+    await clearHand()
+  }
+}
+
+// Automatic coffee, like food safety (Dad, 2026-11-08): whenever the plants are
+// ripe and the chest has room, Roz harvests and stores without being asked. It
+// runs in helm mode too — that was the point of the request — so it also stands
+// aside while the operator is moving her (pathfinder or controls active).
+const COFFEE_AUTO_MIN_RIPE = 10           // of 12
+const COFFEE_AUTO_LAST_TICK = 11000       // no new runs after this time of day
+const COFFEE_AUTO_FULL_BACKOFF_MS = 30 * 60_000
+const COFFEE_AUTO_FAIL_BACKOFF_MS = 10 * 60_000
+let coffeeAutoEnabled = true
+let coffeeAutoBusy = false
+let coffeeAutoCooldownUntil = 0
+let coffeeAutoLast = null
+async function tryCoffeeAuto () {
+  if (!coffeeAutoEnabled || coffeeAutoBusy) return
+  if (taskBusy() || goInsideBusy || autoSleepBusy || penTraversalBusy) return
+  if (foodSafetyBusy || restockBusy || beeState.inRound || reinasState.inRound) return
+  if (rpsCurrentRival || followTarget) return
+  if (!bot.entity || !bot.world || bot.isSleeping || bot.vehicle || bot.currentWindow) return
+  if (!bot.time?.isDay || isBedtime()) return
+  // runGoOutside refuses after tick 11500 (too late to go out), so stop
+  // starting runs well before that: 06:44Z run on 2026-11-08 aborted on it.
+  if ((bot.time?.timeOfDay ?? 0) >= COFFEE_AUTO_LAST_TICK) return
+  if (Date.now() < coffeeAutoCooldownUntil) return
+  if (Date.now() < foodSafetyWindowCooldownUntil) return
+  if (bot.pathfinder?.isMoving?.()) return
+  const cs = bot.controlState || {}
+  if (cs.forward || cs.back || cs.left || cs.right || cs.jump || cs.sneak) return
+  if (distanceFromHome() > HOME_RADIUS) return
+  const tiles = coffeeTiles()
+  if (tiles.length < COFFEE_ROWS_X.length * COFFEE_Z.length) return // not loaded / not all planted
+  const ripe = tiles.filter(t => t.meta === COFFEE_RIPE_META).length
+  if (ripe < COFFEE_AUTO_MIN_RIPE) return
+
+  coffeeAutoBusy = true
+  try {
+    logEvent('coffee', `auto: ${ripe}/${tiles.length} ripe — going out to harvest`)
+    const result = await runHarvestCoffee({ auto: true })
+    coffeeAutoLast = { at: new Date().toISOString(), result }
+    if (result === 'full') coffeeAutoCooldownUntil = Date.now() + COFFEE_AUTO_FULL_BACKOFF_MS
+    else if (result !== 'done') coffeeAutoCooldownUntil = Date.now() + COFFEE_AUTO_FAIL_BACKOFF_MS
+  } catch (e) {
+    coffeeAutoLast = { at: new Date().toISOString(), result: 'error', error: e.message }
+    if (e.name !== 'AbortError') logEvent('coffee', `auto run failed: ${e.message}`)
+    coffeeAutoCooldownUntil = Date.now() + COFFEE_AUTO_FAIL_BACKOFF_MS
+  } finally {
+    coffeeAutoBusy = false
+  }
+}
+
 // Bake any raw potatoes in inventory using the kitchen furnace.
 // Assumes the user keeps fuel (charcoal) topped up in the furnace's fuel
 // slot — we don't add fuel. Smelts in batches: put all potatoes in, wait
@@ -12352,6 +12549,20 @@ const CHAT_HANDLERS = [
     },
   },
   {
+    // "Roz, harvest the coffee" (Dad, 2026-11-08): right-click the two coffee
+    // rows west of the potatoes, beans to the coffee chest, seeds discarded.
+    name: 'harvest-coffee',
+    pattern: /\b(go|get|grab|harvest|pick|collect)\b.*\bcoffee\b/i,
+    handler: (user) => {
+      abortGen++
+      runHarvestCoffee({ user }).catch(e => {
+        if (e.name === 'AbortError') return
+        logEvent('coffee-error', e.message)
+        say(`Coffee run aborted: ${e.message}`)
+      })
+    },
+  },
+  {
     // Right-click method (water-safe, no replant phase). Note "bake" is not in
     // the verb list — "bake the potatoes" routes to the LLM's bake_potatoes intent.
     name: 'harvest-potato',
@@ -15411,6 +15622,21 @@ registerCommand('harvest_potatoes', (args, cmd) => {
   // Right-click is the default. For the legacy left-click brute method,
   // use action 'harvest_potatoes_brute'.
   return startAsync('harvest-potato-rc-error', () => runHarvestPotatoesRightClick({ user: 'ctl' }))
+})
+registerCommand('harvest_coffee', (args, cmd) => {
+  return startAsync('coffee-error', () => runHarvestCoffee({ user: 'ctl' }))
+})
+registerCommand('coffee_status', (args, cmd) => {
+  return {
+    ok: true, tiles: coffeeTiles(), ripe: coffeeRipeCount(), beansInPack: packCount(COFFEE_BEAN_TYPE),
+    auto: { enabled: coffeeAutoEnabled, busy: coffeeAutoBusy, minRipe: COFFEE_AUTO_MIN_RIPE, cooldownMs: Math.max(0, coffeeAutoCooldownUntil - Date.now()), last: coffeeAutoLast }
+  }
+})
+// {"action":"coffee_auto","args":{"enabled":false}} pauses the automatic watcher.
+registerCommand('coffee_auto', (args, cmd) => {
+  if (typeof args.enabled === 'boolean') coffeeAutoEnabled = args.enabled
+  if (args.reset_cooldown) coffeeAutoCooldownUntil = 0
+  return { ok: true, enabled: coffeeAutoEnabled, busy: coffeeAutoBusy, cooldownMs: Math.max(0, coffeeAutoCooldownUntil - Date.now()), last: coffeeAutoLast }
 })
 registerCommand('harvest_potatoes_brute', (args, cmd) => {
   return startAsync('harvest-potato-error', () => runHarvestPotatoes({ user: 'ctl' }))
