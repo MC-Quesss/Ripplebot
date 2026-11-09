@@ -7340,6 +7340,7 @@ const RPS_NAMES = { r: 'rock', p: 'paper', s: 'scissors' }
 let rpsState = null // { round, myThrow, rival, resolve }
 let rpsChallengeResolve = null // resolve function for incoming .d acceptance
 let rpsAccepted = null // set to challenger's name when we receive a .d challenge
+let rpsAcceptedAt = 0 // when rpsAccepted was set — see rpsAcceptedFresh()
 let rpsReadyResolve = null // resolve function for rival's .g ready signal
 let rpsFunChallengeResolve = null // resolve for fun-RPS acceptance (.m)
 let rpsFunWithdrewTo = null // dual-challenge tiebreak loser: name we join as acceptor
@@ -7350,6 +7351,20 @@ let rpsChantResolve = null // resolve for the challenger's chant (.t<round> @<ti
 let rpsLastChant = null // { from, round, tick, at } — buffered so a chant that beats the listener isn't lost
 let rpsAbortResolve = null // armed per match; .a from the rival fires it
 let rpsHumanState = null // { player, resolve } — armed while a human match waits on the player's typed throw
+
+// An unanswered .d goes stale once the challenger's own accept window has
+// closed: they've backed off (rpsFailureBackoff), so an .e now would answer
+// nobody. A stale rpsAccepted used to pin the wheat rung in an endless
+// rps-bail loop: the harvest paused at tile 10 for the "waiting" challenge,
+// and the acceptor never ran because that same paused wheat counted as due
+// (Muse, 2026-11-09, ~30 min of "Harvesting the north field" every 10s).
+function rpsAcceptedFresh () {
+  if (rpsAccepted && Date.now() - rpsAcceptedAt > RPS_ACCEPT_WAIT_MS) {
+    logEvent('rps', `${rpsAccepted}'s challenge went stale unanswered — dropping it`)
+    rpsAccepted = null
+  }
+  return rpsAccepted
+}
 
 function rpsWinner (a, b) {
   if (a === b) return 'tie'
@@ -8128,11 +8143,13 @@ function trackFireCoordination (username, message) {
         logEvent('rps', `dual challenge with ${username} — withdrawing (they win tiebreak)`)
         rpsChallengeResolve('withdrew') // not a failure — we join their match as acceptor
         rpsAccepted = name
+        rpsAcceptedAt = Date.now()
         sustainWake()
       }
     } else if (sustainState.active && (myDuties().has('north') || myDuties().has('south')) &&
                !sustainState.potatoRole && Date.now() >= rpsAcceptCooldownUntil) {
       rpsAccepted = name
+      rpsAcceptedAt = Date.now()
       logEvent('rps', `${username} challenged us to RPS`)
       sustainWake()
     }
@@ -8252,7 +8269,7 @@ function trackFireCoordination (username, message) {
 let sustainWakeResolve = null
 async function sustainWait (ms) {
   const steps = Math.max(1, Math.round(ms / 1000))
-  for (let i = 0; i < steps && sustainState.active && !(rpsAccepted && !sustainState.potatoRole); i++) {
+  for (let i = 0; i < steps && sustainState.active && !(rpsAcceptedFresh() && !sustainState.potatoRole); i++) {
     await new Promise(resolve => {
       sustainWakeResolve = resolve
       setTimeout(() => { sustainWakeResolve = null; resolve() }, 1000)
@@ -8276,7 +8293,7 @@ function sustainPause (reason) {
 
 // F4: true when an RPS challenge is waiting on us to reach a checkpoint.
 function sustainRpsInterruptPending () {
-  return sustainState.active && !!rpsAccepted && !sustainState.potatoRole
+  return sustainState.active && !!rpsAcceptedFresh() && !sustainState.potatoRole
 }
 
 function sustainResume (reason) {
@@ -8352,8 +8369,8 @@ async function sustainHousekeep () {
       }
 
       if (progress) {
-        if (rpsAccepted) { logEvent('sustain', 'housekeep interrupted — RPS challenge waiting'); return true }
-        const rpsBail = () => !!rpsAccepted
+        if (rpsAcceptedFresh()) { logEvent('sustain', 'housekeep interrupted — RPS challenge waiting'); return true }
+        const rpsBail = () => !!rpsAcceptedFresh()
         const r = await depositToHopper('unknown', { keep: 0, maxRounds: 3, bail: rpsBail })
         logEvent('sustain', `housekeep plantball deposit: deposited=${r.deposited} remaining=${r.remaining}`)
       }
@@ -8364,8 +8381,8 @@ async function sustainHousekeep () {
       }
 
       if (excessPotatoes) {
-        if (rpsAccepted) { logEvent('sustain', 'housekeep interrupted — RPS challenge waiting'); return true }
-        const rpsBail = () => !!rpsAccepted
+        if (rpsAcceptedFresh()) { logEvent('sustain', 'housekeep interrupted — RPS challenge waiting'); return true }
+        const rpsBail = () => !!rpsAcceptedFresh()
         const r = await depositToHopper('potato', { keep: SUSTAIN_KEEP_RAW_POTATO, maxRounds: 20, maxStalls: 10, stallDelayMs: 30000, bail: rpsBail })
         logEvent('sustain', `housekeep raw potato deposit: deposited=${r.deposited} remaining=${r.remaining}`)
         if (r.deposited > 0) progress = true
@@ -8524,6 +8541,32 @@ async function runWheatCycle (harvestHalf) {
     await sleep(500)
   }
   return true
+}
+
+// Stall breadcrumbs. Chat is the only debug channel every machine can see,
+// so a wheat cycle that keeps stopping short says why, in plain words, at the
+// 3rd stop in a row and every 20th after. A finished cycle resets the count.
+// (Quesss, 2026-11-09: Muse looped "Harvesting the north field" for half an
+// hour and nobody else could see Muse's log to learn why.)
+const WHEAT_STALL_REPORT_AT = 3
+const WHEAT_STALL_REPORT_EVERY = 20
+let wheatStall = { half: null, streak: 0 }
+function noteWheatStall (half, reason) {
+  if (wheatStall.half !== half) wheatStall = { half, streak: 0 }
+  wheatStall.streak++
+  const n = wheatStall.streak
+  logEvent('sustain', `wheat stall ${half} #${n}: ${reason}`)
+  if (n === WHEAT_STALL_REPORT_AT || (n > WHEAT_STALL_REPORT_AT && (n - WHEAT_STALL_REPORT_AT) % WHEAT_STALL_REPORT_EVERY === 0)) {
+    const where = half === 'all' ? 'both fields' : half.replace('-field', ' field')
+    say(`My ${where} harvest has stopped short ${n} times in a row. Reason: ${reason}.`)
+  }
+}
+function clearWheatStall (half) {
+  if (wheatStall.streak >= WHEAT_STALL_REPORT_AT) {
+    const where = half === 'all' ? 'both fields' : half.replace('-field', ' field')
+    say(`My ${where} harvest finished properly this time.`)
+  }
+  wheatStall = { half: null, streak: 0 }
 }
 
 // Outdoor work (field harvests) must start before the door's own late cutoff
@@ -8687,8 +8730,11 @@ async function runSustainFarm (user) {
         if (pCheck.maturePct < SUSTAIN_POTATO_MATURITY_PCT) sustainState.potatoRole = null
       }
       const holdsWheat = duties.has('north') || duties.has('south')
-      if (holdsWheat && !duties.has('potatoes') && !sustainState.potatoRole && !activeFireClaims().has('potatoes') && canWork() && sustainOutdoorOk() && !myWheatDue()) {
-        if (rpsAccepted) {
+      // A waiting challenge is answered even when our wheat is due: the harvest
+      // pauses for it at its next checkpoint (and leaves the half pending), so
+      // gating the acceptor on !myWheatDue() deadlocked the two rungs.
+      if (holdsWheat && !duties.has('potatoes') && !sustainState.potatoRole && !activeFireClaims().has('potatoes') && canWork() && sustainOutdoorOk() && (!myWheatDue() || rpsAcceptedFresh())) {
+        if (rpsAcceptedFresh()) {
           const challenger = rpsAccepted
           rpsAccepted = null
           await runRpsAcceptor(challenger)
@@ -8768,10 +8814,12 @@ async function runSustainFarm (user) {
               // whoever ends up owning this half finishes it regardless of the
               // now-sub-85% maturity — clearing it here strands a half-cut field.
               logEvent('sustain', `wheat cycle bailed for RPS — ${harvestHalf} remainder left pending`)
+              noteWheatStall(harvestHalf, `paused for an RPS challenge from ${rpsAccepted || 'nobody (already cleared)'}`)
             } else {
               for (const h of dueHalves) sustainState.pendingWork.delete(h)
               sustainState.lastCycleDay = bot.time?.day ?? -1
               diaryNote(`completed fire-duty cycle ${sustainState.cycles} (${harvestHalf})`)
+              clearWheatStall(harvestHalf)
             }
           } catch (e) {
             if (e.name === 'AbortError' && !sustainState.active) {
@@ -8779,6 +8827,7 @@ async function runSustainFarm (user) {
               break
             }
             logEvent('sustain', `cycle ${sustainState.cycles} failed (recoverable): ${e.message} [type=${e.name} active=${sustainState.active}]`)
+            noteWheatStall(harvestHalf, `failed: ${e.message}`)
             try { if (!followTarget && !insideHouse()) await runGoInside() } catch (_) {}
           }
           // Clear food-safety cooldown so tryFoodSafety can run during the poll
@@ -12826,6 +12875,21 @@ const CHAT_INTENTS = {
   },
   enter_pen: { hint: 'go into the sheep pen / visit the sheep', run: () => { abortGen++; return runEnterPen() } },
   leave_pen: { hint: 'leave the sheep pen', run: () => { abortGen++; return runLeavePen() } },
+  // Shearing used to be reachable only through the reflex wording ("shear the
+  // sheep", "get some wool"). A follow-up like "yes, please" to "shall I take
+  // the shears to the pen?" routed to enter_pen/equip_item, so the bot walked
+  // into the pen and stood there holding shears (Muse, 2026-11-09).
+  shear_sheep: {
+    hint: 'shear the sheep / get or collect wool (goes into the pen with shears and shears every sheep) — use this, not enter_pen, whenever wool is the goal',
+    run: () => {
+      abortGen++
+      return runShearSheep().catch(e => {
+        if (e.name === 'AbortError') return
+        logEvent('shear-error', e.message)
+        say(`Can't shear: ${e.message}`)
+      })
+    },
+  },
   eat: {
     hint: 'eat something now',
     run: () => {
@@ -13242,6 +13306,14 @@ function buildClaudeBrainSystemPrompt () {
     'Decision rules:\n' +
     '- If the message is not addressed to you, is noise, or you have nothing genuine to add: {"chat":null,"actions":[],"emote":null}\n' +
     '- If addressed to you with a task request, include both a chat reply AND the matching action.\n' +
+    // Words-match-deeds (2026-11-09): the local router returns a command OR a
+    // reply, never both, so it can't promise what it doesn't do. Claude returns
+    // chat and actions separately, and Muse twice said it would shear / head to
+    // the pen with no matching action, then stood still. These rules keep the
+    // Claude brain a clean drop-in for the local one.
+    '- Your words and your actions must match. If your chat says you will do something, the matching action MUST be in "actions" in this same reply. Never offer, promise, or agree to a task unless one of the intent keys above actually does it.\n' +
+    '- If someone asks for something none of the intent keys covers, say plainly that you do not know how to do that yet. Do not pretend, and do not substitute a different action that only looks related (walking into the pen is not shearing).\n' +
+    '- A short "yes", "yes please", "go ahead" or "do it" right after you offered a task means: do that task now. Include its action.\n' +
     '- Your reply should be grounded in what you are actually doing and experiencing RIGHT NOW. The context message tells you your current task, vitals, inventory, and surroundings — weave those naturally into your conversation when relevant. If you are harvesting potatoes, say so; if you are hungry, mention it; if you are keeping the fire, let that color your reply. A bot that chats obliviously while working feels broken.\n' +
     '- Stay in character. Keep it wholesome. Never discuss real-world topics.\n' +
     '- NEVER say "task acquired", "processing", "initiating", "commencing", or any robotic task-language. You are a character with warmth — speak like one.\n' +
@@ -13518,6 +13590,9 @@ async function executeClaudeResponse (username, message, result, { namedMe, from
       const intent = CHAT_INTENTS[cmd.action]
       if (!intent) {
         logEvent('claude-brain', `rejected unknown action: ${cmd.action}`)
+        // Say it out loud. Chat is the only place everyone can see, and a silent
+        // rejection after a promising reply looks like the bot ignoring a request.
+        if (!fromBot) say(`I don't know how to ${String(cmd.action).replace(/_/g, ' ')} yet.`)
         continue
       }
       if (fromBot) {
