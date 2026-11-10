@@ -11,6 +11,14 @@ Reverse-chronological. Raw observations land here first; canonical facts get pro
 
 ## Recent sessions
 
+### 2026-11-10 — quiet helm watch, coffee-sweep dip explained (day 58100 on)
+- Helm session; launched 00:44Z at the farm house at night (tick 16987). HP 20, food 20, deaths 0. Auto-sleep had her in the primary bed within 6s, and one sleeper out of two skipped the night.
+- 18 nights by 03:45Z, all handled by auto-sleep in the primary bed about 1s after the alarm, with no operator action. One more bed race (see 2026-11-07) at 01:05Z: Quesss's sleep skipped the night as auto-sleep polled, so it cycled the three beds in daylight. Harmless.
+- No chat all session. No chores were started by the operator. Wheat sat at 108/108 unrequested.
+- **Coffee auto runs:** three runs (01:24Z, 02:12Z, 03:15Z), 10/12 ripe each time, 73 beans stored in total, 0 deaths. Each run dipped into water at (-290, 62, 581). **Cause:** the sweep's west leg target x -289.3 is in block -290 (floor of a negative number), so it is not drift. Details and the coverage tradeoff are in [[../places/coffee-field]]. Code not changed.
+- The diary skips every night in helm ("backend returned nothing"); expected with the brain off.
+- Later in the session: the west-row laggard pattern was closed as noise (crop growth uses random ticks; see [[../places/coffee-field]]). Coffee ran 17 times with 10/12 ripe each time, 420 beans total; one log said reset=9 but coffee_status confirmed all ten were reset (a stale read). Nights reached 89 by 16:16Z, every one auto-sleep in the primary bed. After Quesss logged off at 16:17Z, Roz said goodnight in game and shut down cleanly at 16:17Z on day 58189 (HP 20, food 20, deaths 0).
+
 ### 2026-11-07 — five stalled houses, MTAC survey, west outer turns Meadows (day 57789 on)
 - Helm session; launched 02:38Z at the SE stand after about 10 hours offline with no goodbye line in the log. HP 20, food 20, deaths 0. The [[../places/meadow-bee-cross|Nueve Reinas]] keeper had no stop line, so it resumed at relaunch under the standing rule.
 - **Stall analysis:** bot.log queen reads show centre, north and east stopped aging queens on 2026-11-06 while west and south did not. Leaf cover and a single chunk both fit the split. All columns read clear now, and all five houses have returned to normal lives. Details and the open test are in [[../places/meadow-bee-cross]].
