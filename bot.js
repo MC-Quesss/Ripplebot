@@ -7020,7 +7020,8 @@ async function clearJammedHopper ({ requireSustain = false } = {}) {
 // .q <f> release-with-work-pending (handoff/orphan absorb) · .b/.f bench
 // claim/release · .k/.l hopper claim/release · .d RPS challenge/accept ·
 // .g RPS ready · .t<round> @<tick> RPS chant + synced reveal tick ·
-// .a RPS abort · .j fun-RPS · "shoots rock (.t<round>)" round-tagged throw.
+// .a RPS abort · .j fun-RPS · "shoots rock (.t<round>)" round-tagged throw ·
+// .o/.u coffee claim/release (crossed claims → RPS at the coffee field).
 //
 // Chat is for claims and liveness only — the world (blocks, containers) is
 // the shared database. That's why re-running any stage after an interrupt
@@ -7678,12 +7679,17 @@ async function runHumanRpsMatch (player) {
   return 'draw'
 }
 
-async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
+// stakes: null = potato duty (needs fire duty running); 'coffee' = who
+// harvests the coffee (no fire duty needed; played at `spots`). forFun and
+// stakes are both "casual": no potato backoff, no sustain requirement.
+async function runRpsMatch (rival, isChallenger, { forFun = false, stakes = null, spots = null } = {}) {
+  const casual = forFun || !!stakes
   // Each bot goes to a different spot so they face each other.
   // Compare real usernames so both bots agree on who goes where.
   const myUsername = (bot.username || '').toLowerCase()
   const rivalUsername = rival.toLowerCase()
-  const mySpot = myUsername < rivalUsername ? RPS_SPOT_NORTH : RPS_SPOT_SOUTH
+  const [spotA, spotB] = spots || [RPS_SPOT_NORTH, RPS_SPOT_SOUTH]
+  const mySpot = myUsername < rivalUsername ? spotA : spotB
   rpsCurrentRival = rival
   rpsLastChant = null
   let matchAborted = false
@@ -7692,7 +7698,7 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
   })
   const failed = (why) => {
     if (!matchAborted) rpsAnnounceAbort(why)
-    if (!forFun) {
+    if (!casual) {
       rpsFailureBackoff(matchAborted ? `rival aborted (${why})` : why)
       // Also decline incoming challenges for a beat — a rival stuck in a
       // failure loop must not be able to yank us around via the accept path.
@@ -7740,7 +7746,7 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
     const throws = ['r', 'p', 's']
     let myWins = 0, rivalWins = 0
     for (let round = 1; round <= 10; round++) {
-      if (!forFun && !sustainState.active) return null
+      if (!casual && !sustainState.active) return null
       if (matchAborted) return failed(`aborted before round ${round}`)
 
       // Arm throw listener at the TOP of the round — before any emotes —
@@ -7841,6 +7847,13 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
             { skipGate: true }
           ).catch(() => false)
           if (!said) say('Ha! I win!')
+        } else if (stakes === 'coffee') {
+          logEvent('rps', `won best-of-3 (${myWins}-${rivalWins}) against ${rival} — the coffee is mine`)
+          const said = await impulseExpressive('rps',
+            `You just won a best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}, in the coffee field. You get to pick the coffee. Celebrate — playful, one short sentence, no task language.`,
+            { skipGate: true }
+          ).catch(() => false)
+          if (!said) say('I win. The coffee is mine today.')
         } else {
           sustainState.potatoRole = 'mine'
           logEvent('rps', `won best-of-3 (${myWins}-${rivalWins}) — claiming potato duty`)
@@ -7850,7 +7863,7 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
           ).catch(() => false)
           if (!said) say('I win the potatoes!')
         }
-        diaryNote(`won ${forFun ? 'a friendly' : 'the potato-duty'} rock-paper-scissors match against ${rival} (${myWins}-${rivalWins})`)
+        diaryNote(`won ${forFun ? 'a friendly' : stakes === 'coffee' ? 'the coffee' : 'the potato-duty'} rock-paper-scissors match against ${rival} (${myWins}-${rivalWins})`)
         await sleep(2000)
         return 'win'
       }
@@ -7864,6 +7877,13 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
             { skipGate: true }
           ).catch(() => false)
           if (!said) say('Good game! You got me.')
+        } else if (stakes === 'coffee') {
+          logEvent('rps', `lost best-of-3 (${myWins}-${rivalWins}) against ${rival} — the coffee is theirs`)
+          const said = await impulseExpressive('rps',
+            `You just lost a best-of-3 rock-paper-scissors match ${myWins}-${rivalWins} against ${rival}, in the coffee field. They pick the coffee this time. A warm, playful concession — one short sentence, no task language.`,
+            { skipGate: true }
+          ).catch(() => false)
+          if (!said) say('Good game. The coffee is yours.')
         } else {
           sustainState.potatoRole = 'theirs'
           logEvent('rps', `lost best-of-3 (${myWins}-${rivalWins}) — rival gets potato duty`)
@@ -7873,7 +7893,7 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
           ).catch(() => false)
           if (!said) say('You win... potatoes are yours.')
         }
-        diaryNote(`lost ${forFun ? 'a friendly' : 'the potato-duty'} rock-paper-scissors match against ${rival} (${myWins}-${rivalWins})`)
+        diaryNote(`lost ${forFun ? 'a friendly' : stakes === 'coffee' ? 'the coffee' : 'the potato-duty'} rock-paper-scissors match against ${rival} (${myWins}-${rivalWins})`)
         await sleep(2000)
         return 'lose'
       }
@@ -7893,10 +7913,10 @@ async function runRpsMatch (rival, isChallenger, { forFun = false } = {}) {
     // Never an alphabetical fallback: RPS is the one true potato tiebreak.
     rpsFailStreak = 0
     logEvent('rps', `10 rounds no winner (${myWins}-${rivalWins}) — calling it a wash`)
-    say(forFun ? "We'll call that a draw!" : "We'll call that a wash — rematch in a bit!")
-    if (!forFun) rpsChallengerCooldownUntil = Date.now() + 30000 + Math.random() * 30000
+    say(casual ? "We'll call that a draw!" : "We'll call that a wash — rematch in a bit!")
+    if (!casual) rpsChallengerCooldownUntil = Date.now() + 30000 + Math.random() * 30000
     await sleep(2000)
-    return forFun ? 'draw' : null
+    return casual ? 'draw' : null
   } finally {
     rpsCurrentRival = null
     rpsChantResolve = null
@@ -7925,6 +7945,37 @@ const hopperLock = makeChatLock('hopper', '.k', '.l', 8 * 60_000)
 // they take over; no claim or wellness check needed.
 const hiveLock = makeChatLock('hive', '.h', '.i', 3 * 60_000)
 let nextReinasRoundAt = 0
+// Coffee lock (.o/.u, 2026-11-12): every bot runs coffee auto, and they all
+// saw the same ripe field and raced for it (4 races on 11-12). Now a bot
+// claims before going out. A bot that also wants the coffee while that claim
+// is still fresh joins it instead of standing aside, and two crossed claims
+// are settled by rock-paper-scissors at the coffee field: the winner harvests
+// (user's idea, 2026-11-12). Built for two bots; a third just waits its turn.
+const coffeeLock = makeChatLock('coffee', '.o', '.u', 3 * 60_000)
+const COFFEE_CONTEST_MS = 5000     // after claiming, listen this long for a rival claim
+const COFFEE_JOIN_WINDOW_MS = 3000 // join a rival's claim only while it is this fresh (chat lag margin)
+const COFFEE_LOSE_BACKOFF_MS = 5 * 60_000
+const COFFEE_RPS_SPOTS = [{ x: -288, y: 63, z: 573 }, { x: -288, y: 63, z: 575 }] // both on the coffee path
+let coffeeContest = null // { rival } while our claim's contest window is open
+
+// A rival's .o. Inside our own contest window it is a crossed claim (RPS);
+// otherwise it is an ordinary claim and the coffee is theirs until .u.
+function trackCoffeeClaim (name, username) {
+  if (isSameBot(name, myFireName())) return
+  if (coffeeContest && coffeeLock.holder === myFireName()) {
+    if (!coffeeContest.rival) coffeeContest.rival = name
+    logEvent('coffee-lock', `${username} claimed too — rock-paper-scissors for it`)
+    return
+  }
+  if (coffeeLock.holder === myFireName() && coffeeAutoBusy) {
+    // Our window closed and we're committed — a claim this late lost the race.
+    logEvent('coffee-lock', `${username} claimed after our window closed — keeping it`)
+    return
+  }
+  coffeeLock.holder = name
+  coffeeLock.at = Date.now()
+  logEvent('coffee-lock', `${username} claimed`)
+}
 
 function lockIsFree (lock) {
   if (!lock.holder) return true
@@ -8206,6 +8257,8 @@ function trackFireCoordination (username, message) {
   if (code === 'l') { trackLockRelease(hopperLock, name, username); return }
   if (code === 'h') { trackLockClaim(hiveLock, name, username); return }
   if (code === 'i') { trackLockRelease(hiveLock, name, username); nextReinasRoundAt = Date.now() + BEE_ROUND_MS; return }
+  if (code === 'o') { trackCoffeeClaim(name, username); return }
+  if (code === 'u') { trackLockRelease(coffeeLock, name, username); return }
   if (code === 'j') {
     // .j is ONLY a fun challenge now; acceptance is .m (mirrors the .d/.e fix
     // that killed the duty-RPS echo chamber). If we're already challenging when
@@ -9381,9 +9434,49 @@ async function tryCoffeeAuto () {
   const ripe = tiles.filter(t => t.meta === COFFEE_RIPE_META).length
   if (ripe < COFFEE_AUTO_MIN_RIPE) return
 
+  // Claim first (.o). Someone else's settled claim means they're on it;
+  // a claim still inside its join window means they've only just called it,
+  // so we call it too and the two of us play for it.
+  let joinedFrom = null
+  if (!lockIsFree(coffeeLock)) {
+    if (Date.now() - coffeeLock.at >= COFFEE_JOIN_WINDOW_MS) return
+    joinedFrom = coffeeLock.holder
+  }
+
   coffeeAutoBusy = true
   try {
-    logEvent('coffee', `auto: ${ripe}/${tiles.length} ripe — going out to harvest`)
+    coffeeContest = { rival: joinedFrom }
+    coffeeLock.holder = myFireName()
+    coffeeLock.at = Date.now()
+    chatCore(null, '.o')
+    logEvent('coffee-lock', joinedFrom ? `${joinedFrom} just claimed — claiming too` : 'claimed')
+    await sleep(COFFEE_CONTEST_MS)
+    const rival = coffeeContest.rival
+    coffeeContest = null
+    if (rival) {
+      // Lower name chants (challenger), both meet at the coffee field.
+      const outcome = await runRpsMatch(rival, myFireName() < rival.toLowerCase(),
+        { stakes: 'coffee', spots: COFFEE_RPS_SPOTS })
+      if (outcome !== 'win') {
+        if (outcome === 'lose') {
+          coffeeLock.holder = rival.toLowerCase() // theirs until their .u
+          coffeeLock.at = Date.now()
+          coffeeAutoCooldownUntil = Date.now() + COFFEE_LOSE_BACKOFF_MS
+        } else {
+          // Fizzled or drawn: nobody won, so let go and both try again later
+          // (jittered so the retries don't cross again).
+          releaseChatLock(coffeeLock)
+          coffeeAutoCooldownUntil = Date.now() + COFFEE_AUTO_FAIL_BACKOFF_MS * (0.7 + Math.random() * 0.6)
+        }
+        coffeeAutoLast = { at: new Date().toISOString(), result: `rps-${outcome || 'failed'}` }
+        if (!insideHouse()) await runGoInside().catch(e => logEvent('coffee', `go inside after rps: ${e.message}`))
+        return
+      }
+      coffeeLock.holder = myFireName()
+      coffeeLock.at = Date.now()
+      await sleep(1500) // let the loser start clearing the field
+    }
+    logEvent('coffee', `auto: ${coffeeRipeCount()}/${tiles.length} ripe — going out to harvest`)
     const result = await runHarvestCoffee({ auto: true })
     coffeeAutoLast = { at: new Date().toISOString(), result }
     if (result === 'full') coffeeAutoCooldownUntil = Date.now() + COFFEE_AUTO_FULL_BACKOFF_MS
@@ -9394,6 +9487,8 @@ async function tryCoffeeAuto () {
     coffeeAutoCooldownUntil = Date.now() + COFFEE_AUTO_FAIL_BACKOFF_MS
   } finally {
     coffeeAutoBusy = false
+    coffeeContest = null
+    if (coffeeLock.holder === myFireName()) releaseChatLock(coffeeLock)
   }
 }
 
