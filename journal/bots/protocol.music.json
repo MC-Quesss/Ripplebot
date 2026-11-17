@@ -6,19 +6,53 @@
     "notes": []
   },
   "record_cat": {
-    "timesHeard": 7,
-    "lastHeardDay": 46429,
-    "lastHeardAt": "2026-07-08T04:08:41.321Z",
+    "timesHeard": 11,
+    "lastHeardDay": 58007,
+    "lastHeardAt": "2026-11-08T22:33:37.761Z",
     "notes": [
-      "Oh my, the soft melody of that cat makes me feel a profound sense of safety amidst the usual farmyard worries."
+      "Oh my, the soft melody of that cat makes me feel a profound sense of safety amidst the usual farmyard worries.",
+      "Oh my, what a lovely dusk this is a housemate's favorite tune drifting across the wheat as the light softens into gold.",
+      "A housemate's favorite the melody always feels like sunshine on the wheat field, even when my circuits are a bit weary."
+    ],
+    "memories": [
+      {
+        "day": 54752,
+        "snap": "dusk; put on by someone else"
+      },
+      {
+        "day": 54968,
+        "snap": "dusk; during play_record"
+      },
+      {
+        "day": 55519,
+        "snap": "dusk; during play_record"
+      },
+      {
+        "day": 58007,
+        "snap": "daytime; during play_record"
+      }
     ]
   },
   "record_chirp": {
-    "timesHeard": 7,
-    "lastHeardDay": 49770,
-    "lastHeardAt": "2026-08-15T01:33:35.043Z",
+    "timesHeard": 10,
+    "lastHeardDay": 57796,
+    "lastHeardAt": "2026-11-07T03:56:10.655Z",
     "notes": [
       "Oh dear, that jaunty tune reminds me of a time I simply wanted to sit quietly in the sun, yet here I am, bustling about again."
+    ],
+    "memories": [
+      {
+        "day": 55847,
+        "snap": "dusk; while keeping the fire; put on by someone else"
+      },
+      {
+        "day": 56803,
+        "snap": "daytime; put on by someone else"
+      },
+      {
+        "day": 57796,
+        "snap": "daytime; during play_record"
+      }
     ]
   },
   "record_far": {
@@ -28,10 +62,34 @@
     "notes": []
   },
   "record_mall": {
-    "timesHeard": 3,
-    "lastHeardDay": 46149,
-    "lastHeardAt": "2026-07-05T12:38:08.236Z",
-    "notes": []
+    "timesHeard": 8,
+    "lastHeardDay": 55898,
+    "lastHeardAt": "2026-10-18T08:47:51.600Z",
+    "notes": [
+      "The purple disc plays its quiet melody Tezeta now, I'm told and I find myself oddly moved by a song I cannot yet quite remember."
+    ],
+    "memories": [
+      {
+        "day": 54969,
+        "snap": "daytime; during play_record"
+      },
+      {
+        "day": 55880,
+        "snap": "daytime; while keeping the fire; put on by someone else"
+      },
+      {
+        "day": 55883,
+        "snap": "daytime; while keeping the fire; put on by someone else"
+      },
+      {
+        "day": 55895,
+        "snap": "daytime; while keeping the fire; put on by someone else"
+      },
+      {
+        "day": 55898,
+        "snap": "daytime; while keeping the fire; put on by someone else"
+      }
+    ]
   },
   "record_wait": {
     "timesHeard": 5,
@@ -42,11 +100,17 @@
     ]
   },
   "record_blocks": {
-    "timesHeard": 1,
-    "lastHeardDay": 49775,
-    "lastHeardAt": "2026-08-15T02:23:03.309Z",
+    "timesHeard": 2,
+    "lastHeardDay": 55928,
+    "lastHeardAt": "2026-10-18T14:06:22.800Z",
     "notes": [
       "Oh my, how delightful to hear the rain tapping on the stone; it reminds me of the quiet safety of the ocean waves."
+    ],
+    "memories": [
+      {
+        "day": 55928,
+        "snap": "daytime; while keeping the fire; put on by someone else"
+      }
     ]
   }
 }
