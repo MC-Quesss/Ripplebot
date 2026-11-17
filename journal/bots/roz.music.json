@@ -74,17 +74,13 @@
     ]
   },
   "record_mall": {
-    "timesHeard": 23,
-    "lastHeardDay": 55898,
-    "lastHeardAt": "2026-10-18T08:47:51.596Z",
+    "timesHeard": 24,
+    "lastHeardDay": 58559,
+    "lastHeardAt": "2026-11-14T01:39:56.091Z",
     "notes": [
       "The empty feeling in the song reminds me of the silence after the ocean floor, but the melody fills the space just enough to make the farm feel like a home."
     ],
     "memories": [
-      {
-        "day": 54969,
-        "snap": "daytime; put on by someone else"
-      },
       {
         "day": 55880,
         "snap": "daytime; put on by someone else"
@@ -99,6 +95,10 @@
       },
       {
         "day": 55898,
+        "snap": "daytime; put on by someone else"
+      },
+      {
+        "day": 58559,
         "snap": "daytime; put on by someone else"
       }
     ]

@@ -860,7 +860,11 @@ async function tryAutoSleep () {
     return
   }
   if (goInsideBusy || taskBusy() || penTraversalBusy) return
-  const place = sleepPlaceHere()
+  // Keeping bees she may be at the cross but past the cabin's sleep radius
+  // (the birches): that still means the bee cabin, and beeCabinSleep walks
+  // her to the door (2026-11-16).
+  const place = sleepPlaceHere() ||
+    ((beeState.active || brainMode !== 'helm') && nearBeeCross() ? SLEEP_PLACES.find(s => s.name === 'bee-cabin') : null)
   // Helm mode (user, 2026-09-26): auto-sleep stays on, but ONLY within the
   // radius of a known sleep place. Anywhere else the operator decides.
   if (brainMode === 'helm' && !place) {
@@ -1086,14 +1090,18 @@ async function beeCabinExit () {
   await bot.look(Math.PI, 0, true)
   await walkUntilAxis({ axis: 'z', target: BEE_CABIN_OUTSIDE_DOOR.z, direction: 'gte', maxMs: 4000, maintainYaw: Math.PI })
 }
-async function beeCabinSleep () {
+async function beeCabinSleep ({ asked = false } = {}) {
   if (!insideBeeCabin()) {
     // Mid-hive the keeper owns the pathfinder; it breaks off at bedtime and
     // the next 5s auto-sleep poll lands here with it free.
     if (beeState.inRound) return
     // Keeping the bees, she is out at the cross at dusk: walk to the front
     // door herself (Dad, 2026-10-01: the keeper must not just stop at night).
-    if (!nearBeeCabinDoor() && beeState.active && nearBeeCross()) {
+    // The same when she is asked to go to bed, and in every brain mode but
+    // helm: with no operator there is nobody else to decide. On 2026-11-16
+    // she stood at the cross at dusk logging "operator decides" until the
+    // keeper was started by hand.
+    if (!nearBeeCabinDoor() && (asked || beeState.active || brainMode !== 'helm') && nearBeeCross()) {
       await pathToSure(BEE_CABIN_DOORSTEP, 0, 1.5, 3, 10000).catch(() => false)
     }
     if (!nearBeeCabinDoor()) {
@@ -1117,6 +1125,36 @@ async function beeCabinSleep () {
     if (bot.isSleeping) { logEvent('bee-cabin', `sleeping in bee cabin bed at ${posStr(b)}`); return }
   }
   logEvent('bee-cabin', found ? 'no bee cabin bed resulted in sleep' : 'no bed block found at expected positions')
+}
+// "Go to the bee cabin" and "go to bed" at the bee cove (Dad, 2026-11-16: she
+// should know where the cabin is and that her bed is in it). From the dock or
+// anywhere at the cross; from farther off she says where it is.
+async function runGoToBeeCabin ({ toBed = false } = {}) {
+  if (!atBeeCove()) {
+    const k = knownPlacesFromHere().find(k => /^the bee cabin/.test(k.name))
+    say(k ? `The bee cabin is ${k.dist} blocks to the ${k.dir}, at ${k.x}, ${k.y}, ${k.z}. I cannot walk there from here.` : 'I cannot walk to the bee cabin from here.')
+    return { ok: false, error: 'not at the bee cove' }
+  }
+  const task = beginTask('bee_cabin', toBed ? 'to bed' : 'going in', { busyLine: BUSY_LINE })
+  if (!task.allowed) return task.busyReply
+  try {
+    if (!insideBeeCabin()) {
+      if (onBeeDock()) {
+        const r = await beeWalkUpFromDock(task.myGen)
+        if (!r.ok) { say(`I could not get up from the dock. ${r.error}.`); return r }
+      }
+      if (!await ensureInsideBeeCabin()) {
+        say(`I could not get into the bee cabin. I am at ${posStr(bot.entity.position)}.`)
+        return { ok: false, error: 'could not get into the cabin' }
+      }
+    }
+    if (toBed) await beeCabinSleep({ asked: true })
+    return { ok: true, inside: insideBeeCabin(), sleeping: !!bot.isSleeping }
+  } catch (e) {
+    if (e instanceof AbortError) return { ok: false, error: 'stopped' }
+    logEvent('bee-cabin', `go to the cabin failed: ${e.message}`)
+    return { ok: false, error: e.message }
+  } finally { task.end() }
 }
 
 // Known sleep places (user, 2026-09-26). Each has a center and a radius that
@@ -2567,7 +2605,16 @@ async function pathTo (pt, range = 1, waitMs = 15000) {
     await sleep(150)
   }
   if (abortGen !== startGen) { bot.pathfinder.setGoal(null); throw new AbortError() }
-  return withinRange() || !bot.pathfinder.isMoving()
+  if (withinRange() || !bot.pathfinder.isMoving()) return true
+  // Timed out still walking: drop the goal, or the pathfinder keeps driving
+  // her toward it after the caller has moved on. A farm replant goal set from
+  // the bee cross outlived its 5s wait and swam Roz 130 blocks out to sea
+  // (2026-11-16). Only our own goal: a newer caller's goal is theirs to keep.
+  if (bot.pathfinder.goal === goal) {
+    bot.pathfinder.setGoal(null)
+    logEvent('pathTo', `timed out after ${waitMs}ms still short of ${tx},${pt.y},${tz} (at ${posStr(bot.entity.position)}) — goal dropped`)
+  }
+  return false
 }
 
 // Orientation-block check: are we standing on the specific block that's the
@@ -3891,6 +3938,14 @@ async function runBeeRoundInner () {
   if (!nearBeeCross()) { stopKeepBees('carried away from the bee cross'); return }
   if (taskBusy()) { logEvent('bees', `round skipped: busy with ${activeTask.name}`); return }
   if (bot.isSleeping || isBedtime()) { logEvent('bees', 'round skipped: bedtime'); return }
+  // The round holds the task lock, hives and chores both. Without it every
+  // idle-time timer saw her as free mid-round and could take the pathfinder
+  // (the farm field repair did, 2026-11-16).
+  const task = beginTask('bee_round')
+  if (!task.allowed) { logEvent('bees', `round skipped: busy with ${task.current}`); return }
+  try { await runBeeRoundBody(gen) } finally { task.end() }
+}
+async function runBeeRoundBody (gen) {
   if (insideBeeCabin()) {
     // First thing each morning, before going outside (Dad, 2026-10-11).
     await collectTrophyNugget().catch(e => logEvent('bees', `trophy nugget: ${e.message}`))
@@ -3921,6 +3976,8 @@ async function runBeeRoundInner () {
   beeState.lastRoundAt = Date.now()
   logEvent('bees', `round ${beeState.rounds} done${moves.length ? ': ' + moves.join('; ') : ' (all queens alive)'}`)
   if (beeState.active && beeState.gen === gen && !isBedtime() && (bot.health ?? 0) >= BEE_MIN_HP) await dumpDronesBehindCabin()
+  // Forestry saplings never stay in the pack: a few stacks and out they go.
+  if (beeState.active && beeState.gen === gen && !isBedtime() && (bot.health ?? 0) >= BEE_MIN_HP) await discardForestrySaplings({ minStacks: BEE_FORESTRY_SAPLING_DUMP_STACKS })
   // Auto-eat stays quiet while hive windows cycle, and the first click after a
   // round is often rejected (the hive windows scramble the slot model), so feed
   // her here and retry once.
@@ -3968,18 +4025,25 @@ async function withdrawFoodFromWindow (win, max) {
   const containerSize = win.slots.length - 36
   let pulled = 0
   const names = []
+  // seen = food sitting in the container; error = why a withdraw failed. A
+  // failed click used to be swallowed here and reported upstream as "no food
+  // left" — with 228 baked potatoes in the bee cabin chest (2026-11-16).
+  const wanted = new Set(beeFoodNames())
+  let seen = 0
+  for (let s = 0; s < containerSize; s++) { const it = win.slots[s]; if (it && wanted.has(it.name)) seen += it.count }
+  let error = null
   for (const name of beeFoodNames()) {
     for (let s = 0; s < containerSize && pulled < max; s++) {
       const it = win.slots[s]
       if (!it || it.name !== name || it.count <= 0) continue
       const take = Math.min(it.count, max - pulled)
-      try { await win.withdraw(it.type, it.metadata, take) } catch (_) { break }
+      try { await win.withdraw(it.type, it.metadata, take) } catch (e) { error = e.message; break }
       pulled += take
       if (!names.includes(name)) names.push(name)
     }
-    if (pulled >= max) break
+    if (pulled >= max || error) break
   }
-  return { pulled, names }
+  return { pulled, names, seen, error }
 }
 async function eatToFull () {
   for (let i = 0; i < 4 && (bot.food ?? 20) < 20; i++) {
@@ -3997,10 +4061,24 @@ async function restockFromBeeCabinChest () {
   await pathTo(BEE_CABIN_DOOR_IN, 0, 6000).catch(() => false)
   const b = bot.blockAt(new Vec3(BEE_CABIN_FOOD_CHEST.x, BEE_CABIN_FOOD_CHEST.y, BEE_CABIN_FOOD_CHEST.z))
   if (!b || !/chest/.test(b.name)) return { ok: false, pulled: 0, error: `no chest at ${posStr(BEE_CABIN_FOOD_CHEST)} (found "${b?.name}")` }
-  const win = await bot.openContainer(b)
+  // Food in the chest but nothing taken is a failed click, not an empty chest
+  // (the first click after the hive windows is often rejected): try once more
+  // with a fresh window, and say what went wrong instead of "no food left".
+  const before = beePackFood()
   let r
-  try { r = await withdrawFoodFromWindow(win, BEE_PACK_FOOD_TAKE) } finally { bot.closeWindow(win) }
-  return { ok: r.pulled > 0, ...r }
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const win = await bot.openContainer(b)
+    try { r = await withdrawFoodFromWindow(win, BEE_PACK_FOOD_TAKE) } finally { bot.closeWindow(win) }
+    await sleep(400)
+    // Count by what reached the pack: a rejected click can still move the items.
+    const got = beePackFood() - before
+    if (got > 0) { r.pulled = got; if (!r.names.length) r.names = ['food'] }
+    if (r.pulled > 0 || !r.seen) break
+    logEvent('bees', `bee cabin chest: ${r.seen} food inside but the withdraw failed (${r.error || 'nothing moved'}), attempt ${attempt}/2`)
+    await sleep(1500)
+  }
+  if (!r.pulled && r.seen) return { ok: false, pulled: 0, names: [], error: `${r.seen} food inside but none could be taken (${r.error || 'nothing moved'})` }
+  return { ok: r.pulled > 0, pulled: r.pulled, names: r.names }
 }
 async function beeRestockFood () {
   const had = beePackFood()
@@ -4285,39 +4363,35 @@ async function storeGold () {
   return notes.join(', ')
 }
 
-// "Empty saplings" (Dad, 2026-10-11): the corner trees drop Forestry saplings
-// (one item id, a genome each, so they never stack — 22 once filled the pack
-// to five free slots). This puts every one of them in the cabin chest's middle
-// columns (2–7; potatoes keep the left column, charcoal the right) for Dad to
-// sort and dispose of. Birch saplings are vanilla and stay in the pack.
+// Forestry saplings (Quesss, 2026-11-16: "forestry saplings get discarded —
+// only birch saplings get stored"). The corner trees drop them: one item id, a
+// genome each, so they never stack. On 2026-11-16 they filled 27 of her 36
+// slots, and for a whole session not one birch log could be picked up. They
+// are never kept and never put in a chest (the 2026-10-11 "into the cabin
+// chest for Dad to sort" routine is retired): they go behind the cabin like
+// the drones. Birch saplings are vanilla and stay in the pack.
 const FORESTRY_SAPLING_TYPE = 4730
+const BEE_FORESTRY_SAPLING_DUMP_STACKS = 4 // the keeper throws them out once she holds this many stacks
+async function discardForestrySaplings ({ minStacks = 1 } = {}) {
+  const mine = () => bot.inventory.items().filter(i => i.type === FORESTRY_SAPLING_TYPE)
+  if (mine().length < minStacks) return { ok: true, dumped: 0, skipped: 'no forestry saplings to discard' }
+  if (!nearBeeCross() && !insideBeeCabin()) return { ok: false, error: 'not at the bee cross' }
+  if (isBedtime()) return { ok: false, error: 'bedtime' }
+  // She waits out the gap between rounds inside, so step out first (2026-10-26).
+  if (insideBeeCabin()) await beeCabinExit()
+  if (insideBeeCabin()) return { ok: false, error: `could not leave the bee cabin (${posStr(bot.entity.position)})` }
+  return throwBehindCabin('forestry saplings', mine)
+}
+// "Empty saplings" (chat and ctl): the same discard, as its own task.
 async function emptySaplings () {
   if (beeState.inRound || beeChores.busy) return { ok: false, error: 'busy with the bees — ask again after this round' }
-  if (!nearBeeCross()) return { ok: false, error: 'not at the bee cabin' }
-  if (bot.inventory.items().every(i => i.type !== FORESTRY_SAPLING_TYPE)) return { ok: true, moved: 0, left: 0 }
   const t = startTask('empty_saplings')
   if (!t.allowed) return { ok: false, error: `busy with ${t.current}` }
   try {
-    if (!await ensureInsideBeeCabin()) return { ok: false, error: `could not get into the cabin (${posStr(bot.entity.position)})` }
-    let moved = 0
-    await withCabinChest(async win => {
-      const free = []
-      for (let r = 0; r * 9 < win.inventoryStart; r++) for (let c = 1; c <= 6; c++) if (!win.slots[r * 9 + c]) free.push(r * 9 + c)
-      for (let s = win.inventoryStart; s < win.inventoryEnd && free.length; s++) {
-        if (win.slots[s]?.type !== FORESTRY_SAPLING_TYPE) continue
-        const to = free.shift()
-        await chestMove('saplingToChest', async () => {
-          await bot.clickWindow(s, 0, 0); await sleep(150)
-          await bot.clickWindow(to, 0, 0); await sleep(150)
-          if (win.selectedItem || bot.inventory.selectedItem) { await bot.clickWindow(s, 0, 0); await sleep(150) }
-        })
-        if (win.slots[to]?.type === FORESTRY_SAPLING_TYPE) moved++
-      }
-    })
-    await sleep(300)
+    const r = await discardForestrySaplings()
+    if (!r.ok) return r
     const left = bot.inventory.items().filter(i => i.type === FORESTRY_SAPLING_TYPE).length
-    logEvent('bee-chores', `empty saplings: ${moved} to the chest, ${left} still in the pack`)
-    return { ok: true, moved, left }
+    return { ok: true, moved: r.dumped || 0, left }
   } finally {
     endTask('empty_saplings')
   }
@@ -4822,7 +4896,11 @@ async function runBeeCabinChores ({ force = false } = {}) {
     }
     // A replant-only pass (nothing cut, furnaces not due) once left her at the
     // far birch, and the next round stopped the keeper as "carried away" (2026-10-23).
-    if (!nearBeeCross() && !insideBeeCabin()) await pathTo({ x: BEE_DUMP.laneX, y: 66, z: BEE_DUMP.frontZ }, 1, 12000)
+    // The near birch is inside the cross radius (30) but outside the cabin's
+    // sleep radius (22): a pass ending there just before dusk left her under
+    // the tree all night, five nights out of five (2026-11-16). Always finish
+    // inside the sleep radius.
+    if (!insideBeeCabin() && sleepPlaceHere()?.name !== 'bee-cabin') await pathTo({ x: BEE_DUMP.laneX, y: 66, z: BEE_DUMP.frontZ }, 1, 20000)
     beeChores.lastNote = notes.join('; ') || 'nothing to do'
     beeChores.lastError = null
     logEvent('bee-chores', beeChores.lastNote)
@@ -5708,6 +5786,36 @@ function describeTimeOfDay () {
   return 'night'
 }
 
+// Places she knows by coordinate (Dad, 2026-11-16: "she should KNOW where she
+// is, coordinates and such" — at the bee cove the brain said it had never been
+// there, did not know where the bee cabin was, and had no bed). Only places
+// she has stood at; add new ones here. North is −z, east is +x.
+const KNOWN_PLACES = [
+  { name: 'the farmhouse (home: bed, kitchen chest, hopper)', x: -268, y: 65, z: 572 },
+  { name: 'the farm port (boat slip)', x: -254, y: 63, z: 525 },
+  { name: 'the meadow bee cross, Nueve Reinas (by the farm)', x: -303, y: 64, z: 540 },
+  { name: 'the bee cove dock', x: -416, y: 63, z: 288 },
+  { name: 'the bee cross (nine hives, at the bee cove)', x: -404, y: 68, z: 256 },
+  { name: 'the bee cabin (your bed at the bee cove, food chest, two furnaces; front door on the south wall)', x: -403, y: 66, z: 240 },
+  { name: 'the bee cove birches', x: -425, y: 65, z: 267 },
+  { name: 'the ocean cabin', x: -125, y: 65, z: 332 },
+  { name: 'the igloo', x: -325, y: 65, z: 796 },
+]
+function compassFrom (dx, dz) {
+  const names = ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest']
+  return names[((Math.round(Math.atan2(dx, -dz) / (Math.PI / 4)) % 8) + 8) % 8]
+}
+// Each known place with its distance and direction from where she stands.
+function knownPlacesFromHere () {
+  const p = bot.entity?.position
+  if (!p) return []
+  return KNOWN_PLACES.map(k => {
+    const dx = k.x - p.x; const dz = k.z - p.z
+    return { ...k, dist: Math.round(Math.hypot(dx, dz)), dir: compassFrom(dx, dz) }
+  }).sort((a, b) => a.dist - b.dist)
+}
+function atBeeCove () { return insideBeeCabin() || nearBeeCross() || onBeeDock() }
+
 function describeWhereabouts () {
   if (bot.vehicle && bot.vehicle.name === 'boat') return 'riding in a boat on the water'
   if (insideHouse()) return 'inside the house'
@@ -5715,7 +5823,16 @@ function describeWhereabouts () {
   if (inWheatField()) return 'standing in the wheat field'
   if (insideCabinBedroom()) return 'in the bedroom of the ocean cabin'
   if (nearCabin()) return 'at the ocean cabin'
-  if (distanceFromHome() > HOME_RADIUS) return 'far from the farm, out exploring'
+  if (insideBeeCabin()) return 'inside the bee cabin at the bee cove (your bed here is beside you)'
+  if (nearBeeCross()) return 'at the bee cross at the bee cove, where you keep the bees; the bee cabin with your bed is a few steps north'
+  if (onBeeDock()) return 'on the dock at the bee cove; the bee cross and the bee cabin are up the shore to the north'
+  if (distanceFromHome() > HOME_RADIUS) {
+    const near = knownPlacesFromHere()[0]
+    const wet = bot.entity?.isInWater ? 'in the water, ' : ''
+    return near
+      ? `${wet}away from the farm; the nearest place you know is ${near.name}, ${near.dist} blocks to the ${near.dir}`
+      : `${wet}far from the farm`
+  }
   return 'outside on the farm'
 }
 
@@ -5725,6 +5842,15 @@ function buildExpressiveContext (situation) {
   const farFromHome = !atCabin && distanceFromHome() > HOME_RADIUS
   parts.push(`It is ${describeTimeOfDay()}${bot.isRaining ? ' and raining' : ''}. You are ${describeWhereabouts()}.`)
   if (farFromHome) parts.push('You are too far from the farm to see it. You CANNOT see the wheat field, the sheep pen, the farmhouse, the jukebox, or any of the farm surroundings. You know the farm from memory and agricultural instinct — you may sense that crops might need tending based on experience — but you cannot see or directly observe anything at the farm from here.')
+  // Where things are, from where she stands. She has been to every one of
+  // these; she must never say she does not know where they are.
+  const known = knownPlacesFromHere()
+  if (known.length) {
+    parts.push(`Places you know well, with their coordinates and how far they are from you right now: ${known.map(k => `${k.name} at (${k.x}, ${k.y}, ${k.z}), ${k.dist} blocks ${k.dir}`).join('; ')}. You have been to all of them. Never say you do not know where one of these is or that you have not been there.`)
+  }
+  if (atBeeCove()) {
+    parts.push('You are at the bee cove, your second home: you sleep in the bee cabin here, not at the farm. If asked to go to bed or sleep, use the sleep action (it walks you into the bee cabin bed). If asked to go to the bee cabin, use go_to_bee_cabin. Never say you have no bed here.')
+  }
   if (worldContext) parts.push(`Shared world facts for grounding. Use these facts naturally when relevant; do not recite them as a list. Avoid inventing conflicting details.\n${worldContext}`)
   // Vitals and pockets, so questions like "how are you", "where are you",
   // "what are you carrying" get answered truthfully, in voice — these were
@@ -6354,6 +6480,10 @@ setInterval(async () => {
   // Roz mid-errand four times on 2026-09-28 (one tile that never replants kept
   // pulling her back to the potatoes).
   if (brainMode === 'helm') return
+  // Farm only. The potato patch is in view from the bee cross (~340 blocks):
+  // a bare tile there sent Roz walking for the farm mid bee round and into
+  // the sea (2026-11-16, first keeper run outside helm mode).
+  if (distanceFromHome() > HOME_RADIUS) return
   if (proactiveRepairBusy) return
   if (activeTask.name) return
   if (isBedtime()) return
@@ -7727,7 +7857,11 @@ async function runRpsMatch (rival, isChallenger, { forFun = false, stakes = null
     } catch (e) {
       rpsReadyResolve = null
       logEvent('rps', `failed to reach meet spot: ${e.message}`)
-      return failed('could not reach the meet spot')
+      // Ship the detail in the abort prose — the rival's log is the only one
+      // anybody may be able to read. Parens stripped so the trailing (.a)
+      // core stays the last paren group for parseFireCoord.
+      const detail = String(e.message || '').replace(/[()]/g, '').slice(0, 80)
+      return failed(`could not reach the meet spot: ${detail}`)
     }
     await lookAtPlayer(rival)
     chatCore(null, '.g')
@@ -8234,7 +8368,12 @@ function trackFireCoordination (username, message) {
     // Mutual abort: rival gave up mid-match — exit immediately instead of
     // serving out our own longer timeout and re-challenging out of phase.
     if (rpsCurrentRival && isSameBot(name, rpsCurrentRival)) {
-      logEvent('rps', `${username} aborted the match`)
+      // Log the prose: it carries the rival's failure reason (see
+      // rpsAnnounceAbort). Core-bearing bot lines are consumed before the
+      // [chat] log, so without this the reason never reaches any log
+      // (2026-11-13 03:01Z fizzle: cause lost, rival's log unreachable).
+      const why = message.replace(/\s*\(\.[a-z][^()]*\)\s*$/, '').trim()
+      logEvent('rps', `${username} aborted the match${why ? `: ${why}` : ''}`)
       if (rpsAbortResolve) rpsAbortResolve('abort')
     }
     return
@@ -12472,8 +12611,9 @@ const CHAT_HANDLERS = [
     },
   },
   {
-    // "Roz, empty saplings" / "empty your saplings" (Dad, 2026-10-11): every
-    // Forestry sapling from the pack into the bee cabin chest. See emptySaplings.
+    // "Roz, empty saplings" / "empty your saplings": every Forestry sapling in
+    // the pack is thrown out behind the bee cabin (Quesss, 2026-11-16: they
+    // are discarded, never stored). See discardForestrySaplings.
     name: 'empty_saplings',
     pattern: /\bempty\s+(?:the\s+|your\s+|out\s+)?saplings\b/i,
     handler: () => {
@@ -12481,8 +12621,8 @@ const CHAT_HANDLERS = [
         .then((r) => {
           if (!r.ok) say(`I cannot empty the saplings yet — ${r.error}.`)
           else if (r.moved === 0 && r.left === 0) say('I carry no tree saplings. Only birch, and those stay with me.')
-          else if (r.left === 0) say(`Saplings emptied. ${r.moved} in the chest, middle columns. Birch stays with me.`)
-          else say(`${r.moved} saplings in the chest. ${r.left} would not fit — the middle columns are full.`)
+          else if (r.left === 0) say(`Saplings thrown out behind the cabin, ${r.moved} of them. Birch stays with me.`)
+          else say(`${r.moved} saplings thrown out. ${r.left} stacks are still in my pack.`)
         })
         .catch(e => logEvent('bee-chores', `empty saplings failed: ${e.message}`))
     },
@@ -12956,8 +13096,20 @@ const CHAT_INTENTS = {
     },
   },
   go_boating: {
-    hint: 'take the boat out / go boating / paddle around the pond — a fun leisure activity',
-    run: () => { abortGen++; return runIdleBoating() },
+    hint: 'take the boat out / go boating / paddle around the pond — a fun leisure activity. Also "get in the boat" / "get in my boat": away from the farm she boards the nearest boat and rides along',
+    run: async () => {
+      abortGen++
+      // The pond routine is a farm routine: away from home it boarded Dad's
+      // boat at the north shore, got out again at the bee dock and swam for
+      // the farm pond (2026-11-16). Away from the farm, just get in and sit.
+      if (distanceFromHome() > HOME_RADIUS) {
+        const aboard = !!bot.vehicle || await mountNearestBoat(8).catch(() => false)
+        logEvent('boat', aboard ? 'away from the farm: boarded the nearest boat, riding along' : `away from the farm: no boat within reach at ${posStr(bot.entity.position)}`)
+        if (!aboard) say('I cannot reach a boat from here.')
+        return
+      }
+      return runIdleBoating()
+    },
   },
   go_outside: { hint: 'leave the house / go outdoors', run: () => { abortGen++; return runGoOutside() } },
   go_inside: {
@@ -12992,7 +13144,18 @@ const CHAT_INTENTS = {
       return eatSomething().then(msg => say(msg))
     },
   },
-  sleep: { hint: 'go to bed now', run: () => { say('Heading to bed.'); return tryAutoSleep() } },
+  sleep: {
+    hint: 'go to bed now (at the farm: the farmhouse bed; at the bee cove: the bee cabin bed)',
+    run: () => {
+      if (atBeeCove()) { say('Heading to bed in the bee cabin.'); return runGoToBeeCabin({ toBed: true }) }
+      say('Heading to bed.')
+      return tryAutoSleep()
+    },
+  },
+  go_to_bee_cabin: {
+    hint: 'walk to the bee cabin at the bee cove and go inside (works from the bee cove dock or the bee cross; from the farm she must sail there first)',
+    run: () => runGoToBeeCabin({ toBed: false }),
+  },
   check_furnace: { hint: 'report what is cooking in the furnace', run: () => reportFurnace() },
   look_at_sun: { hint: 'look up at the sun and gaze for a moment', run: () => lookAtSun() },
   play_rps: {
@@ -15330,7 +15493,7 @@ registerCommand('trophy_skip', (args, cmd) => {
   return { ok: true, trophySkipDay: day }
 })
 registerCommand('empty_saplings', (args, cmd) => {
-  // Every Forestry sapling from the pack into the bee cabin chest (Dad, 2026-10-11).
+  // Every Forestry sapling in the pack is thrown out behind the bee cabin (never stored).
   return emptySaplings()
 })
 registerCommand('dump_drones', (args, cmd) => {
@@ -15352,17 +15515,10 @@ registerCommand('dump_combs', (args, cmd) => {
   })()
 })
 registerCommand('dump_saplings', (args, cmd) => {
-  // Forestry saplings with no wanted genes go the way of the drones (Quesss, 2026-10-23).
+  // Forestry saplings go the way of the drones (Quesss, 2026-10-23; all of
+  // them, 2026-11-16).
   if (taskBusy() || beeState.inRound || beeFoodRun.busy) return { ok: false, error: 'busy' }
-  if (!nearBeeCross()) return { ok: false, error: 'not at the bee cross' }
-  if (!bot.inventory.items().some(i => i.type === FORESTRY_SAPLING_TYPE)) return { ok: true, skipped: 'no forestry saplings' }
-  // She waits out the gap between rounds inside, so step out first (2026-10-26).
-  return (async () => {
-    if (isBedtime()) return { ok: false, error: 'bedtime' }
-    if (insideBeeCabin()) await beeCabinExit()
-    if (insideBeeCabin()) return { ok: false, error: `could not leave the bee cabin (${posStr(bot.entity.position)})` }
-    return throwBehindCabin('saplings', () => bot.inventory.items().filter(i => i.type === FORESTRY_SAPLING_TYPE))
-  })()
+  return discardForestrySaplings()
 })
 registerCommand('furnace_state', (args, cmd) => {
   // Open a furnace and report what's in each slot. Slots: 0=input,

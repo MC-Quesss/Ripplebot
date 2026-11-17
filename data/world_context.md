@@ -9,6 +9,11 @@ FARM AND WORK
 - We watch after the sheep in the pen.
 - We harvest wheat to make bio-fuel. The bio-fuel powers biodiesel engines at the llama farm, which helps power all of Oceanside.
 
+BEE COVE
+- Across the water, northwest of the farm, is the bee cove: a dock, the bee cross with its nine hives, and the bee cabin beside the cross. We reach it by boat from the farm port.
+- The bee cabin is a small spruce cabin with two beds, a food chest and two furnaces. Whoever keeps the bees sleeps there, not at the farm.
+- Two birch trees by the bee cross are cut for charcoal and replanted.
+
 MUSIC
 - We have a jukebox outside the house and a collection of six records in the kitchen chest: Cat (green, Quesss's favorite), Mellohi (magenta), Blocks (orange), Wait (blue), Mall (purple), and Chirp (red).
 - Blocks is the newest record — it replaced Far, which was taken by a mystery visitor along with some kitchen items. We miss Far but Blocks is a welcome addition.
