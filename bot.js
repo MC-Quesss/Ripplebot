@@ -455,7 +455,7 @@ function pickAvoidingRecentPhrase (items, toPhrase = x => x) {
 // the meadow bee cross (-298, 63–68, 545), which Muse's bee rung kept walking
 // into the same morning, and Dad's new landscaping west of the port path
 // (trunks at (-259, 63–66, 520) and (-259, 63–66, 526)).
-const SOLID_MODDED_TYPES = new Set([3995, 1458, 1059, 1069, 1079, 622, 623, 1095, 1306, 1085, 383, 388, 587, 688, 690, 1086, 1091])
+const SOLID_MODDED_TYPES = new Set([3995, 1458, 1059, 1069, 1079, 622, 623, 1095, 1306, 1085, 383, 388, 587, 688, 690, 1086, 1091, 366]) // 366: grape vine/trellis at the lighthouse vineyard, -8 HP at head height (2026-10-30)
 // Modded slabs — walk on them like oak slabs (half-block collision; metadata
 // bit 8 = top half, as in vanilla). 1744 = modded-tree plank slabs, the
 // Bleu de Paris gangplank (Dad, 2026-09-28).
@@ -1546,7 +1546,7 @@ loadWorldContext()
 
 // ── Bot diary ────────────────────────────────────────────────────────────────
 // Each persona keeps its own first-person diary at journal/bots/<persona>.md,
-// written BY the bot (via its LLM voice) once per in-game day at bedtime.
+// written BY the bot (via its LLM voice) at bedtime, at most once per real (UTC) day.
 // A small buffer collects notable events during the day (harvests, deaths,
 // RPS matches, stories, jukebox moments); the previous entry and the tail of
 // any housemate diary found on this machine are fed back into the prompt so
@@ -1579,6 +1579,12 @@ function peerDiaryTails () {
   return out.slice(0, 2)
 }
 
+function lastDiaryEntryDate () {
+  try {
+    const all = [...fs.readFileSync(DIARY_PATH, 'utf8').matchAll(/^## Day \d+ \((\d{4}-\d\d-\d\d)\)$/gm)]
+    return all.length ? all[all.length - 1][1] : null
+  } catch (_) { return null }
+}
 async function tryWriteDiary () {
   if (PERSONA === 'default') return
   // Quiet hours: skip BEFORE marking the day, so the first bedtime after
@@ -1589,6 +1595,13 @@ async function tryWriteDiary () {
   if (typeof day !== 'number' || day === lastDiaryDay) return
   if (!bot.isSleeping) return // write once tucked in for the night
   lastDiaryDay = day
+  // At most one entry per REAL (UTC) day. An in-game day is ~10.6 real
+  // minutes, so "once a night" meant dozens of entries a day. The gate reads the diary's own last "## Day N (date)" heading, so a restart
+  // can't buy an extra entry. Skipped nights keep their events (capped) for
+  // the next entry; a session that ends without one loses them — fine by
+  // Dad (2026-11-19: "losing some days ... is totally fine").
+  const today = new Date().toISOString().slice(0, 10)
+  if (lastDiaryEntryDate() === today) return
   const events = diaryEvents.splice(0)
   const ownTail = readDiaryTail(DIARY_PATH)
   const peers = peerDiaryTails()
@@ -1621,7 +1634,7 @@ async function tryWriteDiary () {
     if (!fs.existsSync(DIARY_PATH)) {
       fs.writeFileSync(DIARY_PATH,
         `---\ntype: diary\nname: ${PERSONA}-diary\n---\n\n# ${personaSpec.name || PERSONA}'s Diary\n\n` +
-        'Written by the bot itself — one entry per in-game day, newest last. ' +
+        'Written by the bot itself — at most one entry per real day, newest last. ' +
         'See [[../observations/_log|the session log]].\n')
     }
     fs.appendFileSync(DIARY_PATH, `\n## Day ${day} (${new Date().toISOString().slice(0, 10)})\n\n${entry.join('\n')}\n`)
@@ -2062,10 +2075,25 @@ const activeTask = {
   sleeping: false,
 }
 
+// Idle wander checks idleWanderBusy() once, at the top; a task or ctl move that
+// starts mid-wander used to run alongside it — two navigators at once (seen
+// live 2026-07-07: doubled snag lines, two go-outside routines interleaved; an
+// operator `pathfind` stomped). Whoever needs the motors now preempts it: one
+// abortGen bump ends the wander's pathTo / walk / go-inside at their next
+// check. Callers capture their own gen AFTER this (beginTask does), so the
+// bump never hits the newcomer.
+let idleWanderInFlight = false
+function preemptIdleWander (by) {
+  if (!idleWanderInFlight) return
+  abortGen++
+  logEvent('idle-wander', `preempted by ${by} — wander stands down`)
+}
+
 function startTask (name, detail) {
   if (activeTask.name) {
     return { allowed: false, current: activeTask.name, detail: activeTask.detail }
   }
+  preemptIdleWander(`task ${name}`)
   activeTask.name = name
   activeTask.detail = detail || null
   activeTask.startedAt = Date.now()
@@ -2649,6 +2677,14 @@ function verifyAtOrientation (pt, xzTol = 1.5, yTol = 0.6) {
 //   the axis crosses `at`, steering around a known catch point (door jamb)
 //   before the reactive snag detector would have to rescue us.
 const WALK_WRONG_WAY_TOL = 0.75 // blocks of backward travel before walkUntilAxis bails
+// Stop rule (motor-lock fix, approved 2026-07-07). A walk used to ignore
+// `stop`: clearControlStates() released forward, the timer saw "no progress",
+// read it as a door snag and kept pulsing strafe keys for up to maxMs. Now a
+// stop (abortGen bump) ends the walk at once. walkUntilSeq only marks the
+// newest walk so an older one ending doesn't release forward under it. (A
+// newer walk deliberately does NOT retire an older one: the loser's caller
+// would retry and retire the winner — a ping-pong worse than the overlap.)
+let walkUntilSeq = 0
 async function walkUntilAxis ({
   axis, target, direction = 'gte', maxMs = 8000, bailOnDamage = false,
   unstickStrafe = null, unstickMs = 200, snagWindow = 500, snagThreshold = 0.1,
@@ -2656,6 +2692,8 @@ async function walkUntilAxis ({
 }) {
   const startHp = bot.health ?? 20
   const startDeaths = deathCount
+  const myWalk = ++walkUntilSeq
+  const myGen = abortGen
   return new Promise((resolve) => {
     const start = Date.now()
     const startPos = bot.entity?.position
@@ -2679,6 +2717,8 @@ async function walkUntilAxis ({
     const timer = setInterval(() => {
       const now = Date.now()
       const val = bot.entity?.position?.[axis] ?? 0
+
+      const stopped = abortGen !== myGen
 
       // End strafe pulse once the timer elapses.
       if (strafeActive && now >= strafeOffAt) {
@@ -2727,20 +2767,23 @@ async function walkUntilAxis ({
       const reached = direction === 'gte' ? val >= target : val <= target
       const hpDrop = bailOnDamage && (bot.health ?? 20) < startHp - 2
       const died = deathCount > startDeaths
-      if (reached || died || hpDrop || wrongWay || now - start > maxMs) {
-        bot.setControlState('forward', false)
+      if (reached || died || hpDrop || stopped || wrongWay || now - start > maxMs) {
+        // Forward belongs to the newest walk: an older one finishing must not
+        // let go of it under a walk that started since (a new command bumps
+        // abortGen and walks at once).
+        if (walkUntilSeq === myWalk) bot.setControlState('forward', false)
         if (strafeActive) bot.setControlState(strafeActive, false)
         clearInterval(timer)
         const p = bot.entity?.position || { x: 0, y: 0, z: 0 }
         const endX = +p.x.toFixed(3)
         const endZ = +p.z.toFixed(3)
-        const outcome = reached ? 'OK' : died ? 'DIED' : hpDrop ? 'HP_DROP' : wrongWay ? 'WRONG_WAY' : 'TIMEOUT'
+        const outcome = reached ? 'OK' : died ? 'DIED' : hpDrop ? 'HP_DROP' : stopped ? 'STOPPED' : wrongWay ? 'WRONG_WAY' : 'TIMEOUT'
         const snagSummary = snagPositions.length > 0
           ? ` snags=[${snagPositions.map(s => `(${s.x},${s.z}@${s.ms}ms)`).join(',')}]`
           : ''
         logEvent('walk_until', `trace ${axis}→${target}: ${outcome} start=(${startX},${startZ}) end=(${endX},${endZ}) snags=${snagCount} elapsed=${now - start}ms threshold=${thresholdFired}${snagSummary}`)
         resolve({
-          reached, died, hpDrop, wrongWay: !reached && wrongWay,
+          reached, died, hpDrop, stopped: !reached && stopped, wrongWay: !reached && wrongWay,
           x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2),
           elapsed_ms: now - start,
         })
@@ -3860,6 +3903,7 @@ async function runReinasRoundInner (once, liveFn) {
   reinasState.rounds++
   const moves = []
   let stand = null
+  let read = 0
   for (const h of MEADOW_HOUSES) {
     if (!live()) return { ok: false, error: 'stopped' }
     if ((bot.health ?? 0) < BEE_MIN_HP || isBedtime()) { logEvent('reinas', `round ${reinasState.rounds} cut short`); break }
@@ -3870,12 +3914,18 @@ async function runReinasRoundInner (once, liveFn) {
     }
     const r = await tendMeadowHouse(h)
     if (!r.ok) { logEvent('reinas', `${h.name}: ${r.error}`); continue }
+    read++
     const did = r.actions.filter(a => a.move || a.discard)
     if (did.length) { moves.push(`${h.name}: ${did.map(a => a.move || a.discard).join(', ')}`); reinasState.moves += did.length }
     for (const a of r.actions) if (a.note) logEvent('reinas', `${h.name}: ${a.note}`)
   }
   reinasState.lastRoundAt = Date.now()
-  reinasState.lastNote = moves.length ? moves.join('; ') : 'all nine queens alive'
+  // "All alive" only when every house was actually read: an unreachable stand
+  // breaks the loop, and rounds that read nothing said "all nine queens alive"
+  // while seven had died (2026-11-06).
+  const unread = MEADOW_HOUSES.length - read
+  reinasState.lastNote = (moves.length ? moves.join('; ') : (unread ? 'no moves' : 'all nine queens alive')) +
+    (unread ? ` (${unread} of ${MEADOW_HOUSES.length} houses not read)` : '')
   logEvent('reinas', `round ${reinasState.rounds} done: ${reinasState.lastNote}`)
   if (live() && !isBedtime()) {
     const d = await reinasDiscardDrones().catch(e => ({ ok: false, error: e.message }))
@@ -3954,6 +4004,7 @@ async function runBeeRoundBody (gen) {
   }
   beeState.rounds++
   const moves = []
+  let read = 0
   for (const h of BEE_HIVES) {
     if (!beeState.active || beeState.gen !== gen) return
     if ((bot.health ?? 0) < BEE_MIN_HP) { logEvent('bees', `round ${beeState.rounds} cut short: HP ${bot.health}`); break }
@@ -3966,6 +4017,7 @@ async function runBeeRoundBody (gen) {
     }
     const r = await tendApiary(h.x, h.y, h.z)
     if (!r.ok) { logEvent('bees', `${h.name}: ${r.error}`); continue }
+    read++
     const did = (r.actions || []).filter(a => a.move || a.reset)
     if (did.length) {
       moves.push(`${h.name}: ${did.map(a => a.move || a.reset).join(', ')}`)
@@ -3974,7 +4026,9 @@ async function runBeeRoundBody (gen) {
     for (const a of (r.actions || [])) if (a.note) logEvent('bees', `${h.name}: ${a.note}`)
   }
   beeState.lastRoundAt = Date.now()
-  logEvent('bees', `round ${beeState.rounds} done${moves.length ? ': ' + moves.join('; ') : ' (all queens alive)'}`)
+  const unread = BEE_HIVES.length - read
+  const unreadNote = unread ? ` (${unread} of ${BEE_HIVES.length} hives not read)` : ''
+  logEvent('bees', `round ${beeState.rounds} done${moves.length ? ': ' + moves.join('; ') : unread ? ': no moves' : ' (all queens alive)'}${unreadNote}`)
   if (beeState.active && beeState.gen === gen && !isBedtime() && (bot.health ?? 0) >= BEE_MIN_HP) await dumpDronesBehindCabin()
   // Forestry saplings never stay in the pack: a few stacks and out they go.
   if (beeState.active && beeState.gen === gen && !isBedtime() && (bot.health ?? 0) >= BEE_MIN_HP) await discardForestrySaplings({ minStacks: BEE_FORESTRY_SAPLING_DUMP_STACKS })
@@ -4074,6 +4128,7 @@ async function restockFromBeeCabinChest () {
     const got = beePackFood() - before
     if (got > 0) { r.pulled = got; if (!r.names.length) r.names = ['food'] }
     if (r.pulled > 0 || !r.seen) break
+    if (bot.inventory.emptySlotCount() === 0) break // a fresh window can't fix a full pack
     logEvent('bees', `bee cabin chest: ${r.seen} food inside but the withdraw failed (${r.error || 'nothing moved'}), attempt ${attempt}/2`)
     await sleep(1500)
   }
@@ -4083,6 +4138,20 @@ async function restockFromBeeCabinChest () {
 async function beeRestockFood () {
   const had = beePackFood()
   if (had > 0 && beeFood.chestEmptyAt && Date.now() - beeFood.chestEmptyAt < BEE_CHEST_RECHECK_MS) return
+  // mineflayer's window.withdraw refuses outright when the pack has no EMPTY
+  // slot — even with a half stack of baked potatoes that has room — throwing
+  // "Unable to withdraw, Bot inventory is full." before any click. That, not
+  // an empty chest or a rejected click, was every "no food left" on record
+  // (6 of 6, 10-26 and 11-16: each 2-5 ms after the chest opened, each beside
+  // a bee-chores "inventory is full" or "picked up 0" line). Make room first:
+  // Forestry saplings never stay in the pack, so any stack of them goes.
+  if (bot.inventory.emptySlotCount() === 0) {
+    await discardForestrySaplings({ minStacks: 1 }).catch(e => logEvent('bees', `make room for food: ${e.message}`))
+    if (bot.inventory.emptySlotCount() === 0) {
+      logEvent('bees', `bee cabin chest: pack is full (no empty slot, no Forestry saplings to throw out) — food not restocked (pack has ${had})`)
+      return
+    }
+  }
   let r
   try { r = await restockFromBeeCabinChest() } catch (e) { r = { ok: false, pulled: 0, error: e.message } }
   if (r.pulled > 0) {
@@ -5620,7 +5689,12 @@ function distanceFromHome () {
 async function tryIdleWander () {
   if (!idleWanderEnabled) return
   if (idleWanderBusy()) return
-
+  idleWanderInFlight = true
+  try { await _tryIdleWander() } finally { idleWanderInFlight = false }
+}
+async function _tryIdleWander () {
+  // Captured to tell, at the end, whether someone else took the motors.
+  const myGen = abortGen
   const atCabin = nearCabin() || insideCabinBedroom()
   const homeDist = distanceFromHome()
   if (!atCabin && homeDist > HOME_RADIUS) {
@@ -5681,8 +5755,12 @@ async function tryIdleWander () {
     if (e.name === 'AbortError') return
     logEvent('idle-wander', `${action} failed: ${e.message}`)
   } finally {
-    bot.pathfinder.setGoal(null)
-    await clearHand()
+    // Preempted or stopped: the goal and the hand now belong to whoever took
+    // over — clearing them here clobbered the new task's pathfinder goal.
+    if (abortGen === myGen) {
+      bot.pathfinder.setGoal(null)
+      await clearHand()
+    }
   }
 }
 
@@ -8385,8 +8463,11 @@ function trackFireCoordination (username, message) {
     if (isRival && roundOk) {
       logEvent('rps', `received ${name}'s throw: ${RPS_NAMES[throw_]}${parsed.round ? ` (round ${parsed.round})` : ''}`)
       rpsState.resolve(throw_)
-    } else {
-      logEvent('rps-diag', `throw dropped: from=${name} round=${parsed.round ?? 'untagged'} rpsState=${!!rpsState} expectRound=${rpsState?.round ?? '-'} rival=${rpsState?.rival || 'null'}`)
+    } else if (rpsState) {
+      // Mid-match only: a spectator ignoring other bots' throws is normal (all
+      // 174 drops logged 10-07..11-14 were rpsState=false; the isSameBot
+      // identity fix had zero in-match drops over 33 contested matches).
+      logEvent('rps', `throw dropped mid-match: from=${name} round=${parsed.round ?? 'untagged'} expectRound=${rpsState.round ?? '-'} rival=${rpsState.rival || 'null'}`)
     }
     return
   }
@@ -10157,6 +10238,11 @@ async function tryMorningPlantBalls () {
   if (bot.currentWindow) return
   if (Date.now() < foodSafetyWindowCooldownUntil) return
   if (sustainState.active) return // sustain loop handles its own crafting
+  // Only when already home. craftPlantBalls → ensureInsideHouse walks her back
+  // from wherever she is: at dawn on 2026-10-02 that took Roz off the Bleu and
+  // across the river, stranding the paddle boat. Helm: the operator decides.
+  if (brainMode === 'helm' || bot.vehicle) return
+  if (distanceFromHome() > 45) return // the farm sleep radius
 
   const seeds = countOnHand('wheat_seeds')
   if (seeds < 8) return
@@ -11089,7 +11175,27 @@ async function ensureShears () {
 }
 
 // Shear all woolly sheep in the pen.
+// Shearing holds the task lock (2026-11-19). Without it the chat reflex and a
+// ctl shear ran two routines at once on 2026-10-14 (one kept closing the pen
+// door on the other), and task_status read busy:false mid-shear. Callers bump
+// abortGen to preempt whatever was running, and that task's finally hasn't
+// released the lock yet on this tick, so wait briefly for it to clear.
 async function runShearSheep () {
+  const gen = abortGen
+  let t = startTask('shear_sheep')
+  for (let i = 0; !t.allowed && t.current !== 'shear_sheep' && i < 100; i++) {
+    await sleep(100)
+    if (abortGen !== gen) return // a stop (or a newer command) arrived while waiting
+    t = startTask('shear_sheep')
+  }
+  if (!t.allowed) {
+    logEvent('shear', `not starting: busy with ${t.current}`)
+    say(t.current === 'shear_sheep' ? 'Already shearing, one flock at a time.' : BUSY_LINE(t.current))
+    return
+  }
+  try { return await _runShearSheep() } finally { endTask('shear_sheep') }
+}
+async function _runShearSheep () {
   // Pre-flight: ensure we have shears before heading to the pen.
   const ready = await ensureShears()
   if (!ready) return
@@ -11797,7 +11903,14 @@ async function runStashJunk (filterNames) {
   logEvent('stash-junk', `deposited=${deposited} remaining=${remaining}`)
 }
 
+// Holds the task lock (2026-11-19): sent while a harvest was still in its own
+// craft → hopper tail, it crafted in the same grid at the same moment (2026-10-02).
 async function runStashWheat () {
+  const t = startTask('stash_wheat')
+  if (!t.allowed) { say(BUSY_LINE(t.current)); return }
+  try { return await _runStashWheat() } finally { endTask('stash_wheat') }
+}
+async function _runStashWheat () {
   const onHand = bot.inventory.items().filter(i => i.name === 'wheat').reduce((s, i) => s + i.count, 0)
   if (!onHand) { say('No wheat in my pockets.'); return }
   say(`Crafting ${onHand} wheat into plant balls…`)
@@ -12810,6 +12923,7 @@ const CHAT_HANDLERS = [
     name: 'shear_sheep',
     pattern: /\b(shear|shave|clip)\s+(the\s+)?sheep\b|\b(get|collect|gather)\s+(some\s+)?wool\b/i,
     handler: (_user) => {
+      if (activeTask.name === 'shear_sheep') { say('Already shearing, one flock at a time.'); return }
       abortGen++
       runShearSheep().catch(e => {
         if (e.name === 'AbortError') return
@@ -13129,6 +13243,7 @@ const CHAT_INTENTS = {
   shear_sheep: {
     hint: 'shear the sheep / get or collect wool (goes into the pen with shears and shears every sheep) — use this, not enter_pen, whenever wool is the goal',
     run: () => {
+      if (activeTask.name === 'shear_sheep') { say('Already shearing, one flock at a time.'); return }
       abortGen++
       return runShearSheep().catch(e => {
         if (e.name === 'AbortError') return
@@ -14107,7 +14222,6 @@ bot.on('whisper', (username, message) => {
 // with a trailing core ("glances north... (.c n)"); parseFireCoord decides.
 const ACTION_COORD_RE = /^\* (\w+) (.+)$/
 bot.on('messagestr', (msg) => {
-  if (msg.includes('shoots')) logEvent('rps-diag', `messagestr: "${msg}"`)
   // Server sleep notices ("X is now sleeping", "1/2 players sleeping") — the
   // helm operator needs these to know who's in bed. Player chat is excluded.
   if (!msg.startsWith('<') && /sleep|slept|in bed|wake|woke/i.test(msg)) logEvent('server-sleep', msg)
@@ -15057,6 +15171,7 @@ registerCommand('look_at_sun', (args, cmd) => {
   return { ok: true, ...sun }
 })
 registerCommand('control', (args, cmd) => {
+  preemptIdleWander('ctl control')
   // args: { state: 'forward'|'back'|'left'|'right'|'jump'|'sprint'|'sneak', value: bool, duration_ms?: number }
   bot.setControlState(args.state, !!args.value)
   if (args.duration_ms && args.value) {
@@ -15086,6 +15201,7 @@ registerCommand('stop', (args, cmd) => {
   return { ok: true }
 })
 registerCommand('walk_until', (args, cmd) => {
+  preemptIdleWander('ctl walk_until')
   // Walk forward until the bot's position reaches a target coordinate along one axis.
   // args: { axis: 'x'|'z', target: number, direction: 'gte'|'lte', max_ms?: 8000 }
   const axis = args.axis
@@ -15112,6 +15228,7 @@ registerCommand('walk_until', (args, cmd) => {
   })
 })
 registerCommand('goto', (args, cmd) => {
+  preemptIdleWander('ctl goto')
   const dx = Number(args.dx ?? 0), dy = Number(args.dy ?? 0), dz = Number(args.dz ?? 0)
   rawState.x += dx; rawState.y += dy; rawState.z += dz
   client.write('position_look', {
@@ -15121,6 +15238,7 @@ registerCommand('goto', (args, cmd) => {
   return { ok: true, x: rawState.x, y: rawState.y, z: rawState.z }
 })
 registerCommand('pathfind', (args, cmd) => {
+  preemptIdleWander('ctl pathfind')
   // Routes through pathTo() so all safety guards apply automatically:
   // cabin corridor exit, pen exit, occupied-block avoidance.
   const { x, y, z, range } = args
@@ -15146,6 +15264,7 @@ registerCommand('pathfind_stop', (args, cmd) => {
   return { ok: true }
 })
 registerCommand('walk_blocks', (args, cmd) => {
+  preemptIdleWander('ctl walk_blocks')
   // Smooth walk: sends many small position packets over time so server accepts it as walking.
   // args: { dx, dz, speed? (blocks/sec, default 4) }
   const dx = Number(args.dx ?? 0), dz = Number(args.dz ?? 0)
@@ -15988,6 +16107,7 @@ registerCommand('stash_junk', (args, cmd) => {
   return startAsync('stash-junk-error', () => runStashJunk(filterNames))
 })
 registerCommand('stash_wheat', (args, cmd) => {
+  if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
   return startAsync('stash-wheat-error', () => runStashWheat())
 })
 registerCommand('unjam_hopper', (args, cmd) => {

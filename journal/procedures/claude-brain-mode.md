@@ -24,7 +24,9 @@ event-driven musings (`music`, `craft`, `victory`, `bedtime_suggest`, `rps`,
 `bot_chat`) fire only when a **human** player is within 16 blocks
 (`humanNearby` — crew bots don't count as an audience). Empty farm = $0.
 Local modes are unaffected — qwen musings stay chatty. The nightly diary in
-claude-super is exempt (once per day, bounded).
+claude-super is exempt, and that is now actually bounded: at most one entry per
+real (UTC) day, gated on the diary's last heading (2026-11-19; before that it
+was once per *in-game* day).
 
 > **⚠ 2026-07-27: "bounded" is wrong.** `tryWriteDiary` keys on `bot.time.day` —
 > an *in-game* day, ~10.6 minutes real. Measured from the diary file: **up to 91
