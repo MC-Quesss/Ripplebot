@@ -11,7 +11,16 @@ Reverse-chronological. Raw observations land here first; canonical facts get pro
 
 ## Recent sessions
 
-*None since the 2026-11-19 compaction.*
+### 2026-11-20 — helm at the farm
+
+- **Muse wedges in the sheep pen door**, not the house door: inside the door block at (-278, 64, 574) while its chat says it is indoors. One right-click from the outside pad freed it, and that click left the door open; a second click closed it (lower half meta 5 = open, 1 = closed). Check the meta after every pen-door click.
+- **Coffee auto-harvest has no helm guard** (`tryCoffeeAuto`): it can start a chore in helm.
+- **Post-skip bed race at the bee cabin bed:** "You can only sleep at night" twice, then "no bee cabin bed resulted in sleep". Same race as the farm beds.
+- **Bee dock landing:** the voyage home ran 8/8 legs; the landing used the tread-water and boardwalk fallback, as every docking does.
+- **Round summary verified live:** "(5 of 9 hives not read)" printed where it used to claim all queens alive.
+- **Sheep:** 8 counted in the pen, down from 12 at the last count. Not confirmed; the count may have missed some.
+- Five clean farm night skips with Muse; auto-sleep took the left bed each time after the primary bounced.
+- Learned: the subway tunnel runs under the ocean from the llama farm to the lighthouse, with an engine at each end; the farm's surplus chaff is carried through to the lighthouse side, so the farm fuels both ends. See [[../places/lighthouse]]. A new [[../stories/sayings|sayings]] page holds a line from *Walden*.
 
 ## Open threads
 
@@ -19,12 +28,12 @@ Checked against `bot.js` on 2026-11-19. Each item is still open unless marked; "
 
 ### Bees
 
-- **"Bee cabin chest: no food left" was a full pack** (solved from the log 2026-11-19). All 6 on record came 2–5 ms after the chest opened. mineflayer's `window.withdraw` refuses when there is no *empty* slot, even with room in a baked-potato stack, and the old code swallowed the error. **Fix uncommitted, not yet seen live:** with no empty slot, throw out Forestry saplings (any count); if the pack is still full, log "pack is full" and don't retry. A "pack is full" line will name the real clog.
+- **"Bee cabin chest: no food left" was a full pack** (solved from the log 2026-11-19). All 6 on record came 2–5 ms after the chest opened. mineflayer's `window.withdraw` refuses when there is no *empty* slot, even with room in a baked-potato stack, and the old code swallowed the error. **Fix committed, not yet seen live:** with no empty slot, throw out Forestry saplings (any count); if the pack is still full, log "pack is full" and don't retry. A "pack is full" line will name the real clog.
 - **The kitchen food run has never fired.** It runs when the pack and the cabin chest are both empty. Weak spots: a boat drifted past `mountNearestBoat`'s 4-block reach at the bee dock (seen at ~6.5 and ~7 blocks), and the client froze after a failed farm-slip landing (10-07; a restart fixed it).
 - **A non-drone item in the drone pack slot stops drone collection.** Shears sat in inventory slot 35 (hive-window 26) for about 22 h on 11-16/17; every house logged `drone pack slot holds type 359` and left drones in the outputs. Moving the shears fixed it. The keeper should clear that slot itself.
 - **Brain switches and the keeper (11-17).** Taking the helm *mid-round* makes `pathTo` throw `AbortError`, and the round reads it as a stop: the season ends silently. Switching helm → claude-super leaves `autoGreet` and `idleWander` off (verified: the helm branch clears them and nothing restores them).
 - **The keeper doesn't resume after a restart** (send `keep_bees`).
-- ~~False "all queens alive"~~ **Fixed 2026-11-19 (uncommitted, not live):** both round summaries now say "all queens alive" only when every house was read, and otherwise append "(N of M houses not read)".
+- ~~False "all queens alive"~~ **Fixed 2026-11-19 (verified live 2026-11-20):** both round summaries now say "all queens alive" only when every house was read, and otherwise append "(N of M houses not read)".
 - **Meadow species picking.** `tendMeadowHouse` reads only the first chromosome's active gene and falls back to any species. `beeSpecies` once read a just-seated Meadows princess as Water (11-07). Proposed, not changed.
 - **`tend_bees` reflex ignores "at the farm"**: on 11-06 it aimed at the cove voyage and only the tick-9000 voyage cutoff stopped it.
 - Private's meadow bee rung ends in about 20 s (11-13); her log would say why.
@@ -32,12 +41,12 @@ Checked against `bot.js` on 2026-11-19. Each item is still open unless marked; "
 
 ### Movement and doors
 
-- **Motor ownership, part one done 2026-11-19** (uncommitted, desk-tested). `walkUntilAxis` ends `STOPPED` the moment `abortGen` changes (7,741 ms → 4 ms after `stop` in a fake-bot test), an older walk no longer releases `forward` under a newer one, and idle wander is preempted by any `startTask` and by ctl movement. **Still open:** auto-sleep vs tasks have no owner rule; `pathTo`/ctl `pathfind` log "reached" when another routine replaced the goal (09-28, 11-16). Watch: an internal `abortGen++` now cuts a door walk short.
+- **Motor ownership, part one done 2026-11-19** (desk-tested). `walkUntilAxis` ends `STOPPED` the moment `abortGen` changes (7,741 ms → 4 ms after `stop` in a fake-bot test), an older walk no longer releases `forward` under a newer one, and idle wander is preempted by any `startTask` and by ctl movement. **Still open:** auto-sleep vs tasks have no owner rule; `pathTo`/ctl `pathfind` log "reached" when another routine replaced the goal (09-28, 11-16). Watch: an internal `abortGen++` now cuts a door walk short.
 - **Ctl `walk_until` (the ctl handler, not `walkUntilAxis`) holds forward along the current yaw** with no `look` and no wrong-way guard. That caused death #2 in the meadow cedar (10-27). Always `look` first.
 - **Ctl `pathfind` sometimes never starts** when sent in a shell loop right after another leg; one call at a time works (10-26).
 - **Pen exit gives up the stash** after a sheep bumps her (`WRONG_WAY` 11-14, `didn't clear gate` 10-24). It should retry the walk.
-- ~~`tryMorningPlantBalls` had no helm or home-radius guard~~ **Fixed 2026-11-19 (uncommitted):** skipped in helm, in a vehicle, or more than 45 blocks from the house (the farm sleep radius). On 10-02 it had walked Roz off the Bleu.
-- **Grape vine type 366 is now solid** (2026-11-19, uncommitted, loads on restart); Roz lost 8 HP in it at the lighthouse vineyard (10-30). Type 1946 beside it is still unidentified and not added.
+- ~~`tryMorningPlantBalls` had no helm or home-radius guard~~ **Fixed 2026-11-19:** skipped in helm, in a vehicle, or more than 45 blocks from the house (the farm sleep radius). On 10-02 it had walked Roz off the Bleu.
+- **Grape vine type 366 is now solid** (2026-11-19); Roz lost 8 HP in it at the lighthouse vineyard (10-30). Type 1946 beside it is still unidentified and not added.
 - `stop` didn't end follow mode on 10-30 (empty-args `follow` did). `look` was ignored right after a boat dismount (10-30). `exit_boat` finds "no dry landing within 4" in the swamp shallows and by the ice.
 - Go-inside attempt 1 fails routinely (49 lines by 11-02); the retry works, but players see a ~20 s stall. The `go_outside` snag at x≈-273.1 is still unexplained.
 - Igloo: wall blocks invisible to scans; entrance and beds untraversable (type 4029). See [[../places/igloo]].
@@ -48,7 +57,7 @@ Checked against `bot.js` on 2026-11-19. Each item is still open unless marked; "
 
 ### Chores and crafting
 
-- ~~Shearing takes no task lock; `stash_wheat` has no busy guard~~ **Fixed 2026-11-19 (uncommitted, fake-bot tested):** both hold the task lock. A duplicate shear request is refused ("Already shearing") *before* it bumps `abortGen`, so it no longer kills the running shear. A shear that preempts another task waits up to 10 s for that task to release, and gives up quietly on a stop. Ctl `stash_wheat` returns busy while a task runs.
+- ~~Shearing takes no task lock; `stash_wheat` has no busy guard~~ **Fixed 2026-11-19 (fake-bot tested):** both hold the task lock. A duplicate shear request is refused ("Already shearing") *before* it bumps `abortGen`, so it no longer kills the running shear. A shear that preempts another task waits up to 10 s for that task to release, and gives up quietly on a stop. Ctl `stash_wheat` returns busy while a task runs.
 - Harvest drops `backedUp` from `depositQuickMove`, so plantballs ride along silently when the hopper stalls. The harvest's `harvested` counter can read 0 while wheat arrives (10-02; Muse's diary noticed it twice); trust the inventory delta.
 - **Music notes repeat word for word**: `markRecordHeard` pushes every note with no duplicate check (verified). Separately, Private keeps asking whether Roz has heard the same disc (five times over 11-12/13), so the asker probably doesn't record a yes. Not traced.
 

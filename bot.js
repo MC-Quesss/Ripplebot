@@ -458,7 +458,7 @@ function pickAvoidingRecentPhrase (items, toPhrase = x => x) {
 const SOLID_MODDED_TYPES = new Set([3995, 1458, 1059, 1069, 1079, 622, 623, 1095, 1306, 1085, 383, 388, 587, 688, 690, 1086, 1091, 366]) // 366: grape vine/trellis at the lighthouse vineyard, -8 HP at head height (2026-10-30)
 // Modded slabs — walk on them like oak slabs (half-block collision; metadata
 // bit 8 = top half, as in vanilla). 1744 = modded-tree plank slabs, the
-// Bleu de Paris gangplank (Dad, 2026-09-28).
+// Bleu de Paris gangplank.
 const SLAB_MODDED_TYPES = new Set([1744])
 // Modded ground blocks shorter than a full block, like vanilla grass path:
 // type -> top height. 1058 = silty grass block (ice cove SW of the lighthouse,
@@ -467,7 +467,7 @@ const SLAB_MODDED_TYPES = new Set([1744])
 const SHORT_MODDED_TYPES = new Map([[1058, 15 / 16]])
 // Modded stairs — vanilla stair shapes (bottom slab + raised half on the
 // ascending side; metadata 0-3 = ascends E/W/S/N, bit 4 = upside down).
-// 516 = citrus-wood stairs, bee-cove shore (Dad, 2026-10-05): with no shape
+// 516 = citrus-wood stairs, bee-cove shore: with no shape
 // Roz hung on the edge half up, half down, and the pathfinder walked around.
 const STAIR_MODDED_TYPES = new Set([516])
 function stairShapes (meta) {
@@ -636,8 +636,8 @@ let storyTimeStartedAt = 0
 let storyNightDay = -1
 let lastStoryRequestDay = -1
 const STORY_REQUEST_CHANCE = 0.25
-// Request fires around sunset so the telling carries INTO the night (user,
-// 2026-08-01): better to start late and end with everyone ready to drop into
+// Request fires around sunset so the telling carries INTO the night:
+// better to start late and end with everyone ready to drop into
 // bed than to finish early and stand around waiting for sleep to unlock.
 // With the ~60s gather wait, the ask lands near bedtime (12500) and the tale
 // itself runs in the dark; auto-sleep resumes 5s after the end marker.
@@ -734,7 +734,7 @@ async function cabinExitBedroom () {
     await walkUntilAxis({ axis: 'z', target: CABIN_CORRIDOR_OUTSIDE.z, direction: 'lte', maxMs: 10000, maintainYaw: 0 })
   } finally { restore() }
   // Keep walking north past the wall line before the pathfinder turns —
-  // turning too early clips the invisible modded walls (user, 2026-09-23).
+  // turning too early clips the invisible modded walls.
   await walkUntilAxis({ axis: 'z', target: 314, direction: 'lte', maxMs: 5000, maintainYaw: 0 })
   logEvent('cabin', 'cleared corridor, at outside orientation')
   await pathTo(CABIN_STAIRS_BOTTOM, 2, 10000)
@@ -769,7 +769,7 @@ async function cabinSleep () {
 }
 
 // ── Bleu de Paris gangplank (Dad's river yacht, east bank) ─────────────────
-// A fixed corridor like the cabin bedroom (Dad, 2026-09-28): the only safe way
+// A fixed corridor like the cabin bedroom: the only safe way
 // on or off the yacht is straight along the gangplank at block z=537. The
 // gangplank is modded plank slabs (SLAB_MODDED_TYPES, 1744) over open water,
 // the shore pad sits on mud bricks (1079). See journal/procedures/gangplank-bleu-de-paris.md.
@@ -865,7 +865,7 @@ async function tryAutoSleep () {
   // her to the door (2026-11-16).
   const place = sleepPlaceHere() ||
     ((beeState.active || brainMode !== 'helm') && nearBeeCross() ? SLEEP_PLACES.find(s => s.name === 'bee-cabin') : null)
-  // Helm mode (user, 2026-09-26): auto-sleep stays on, but ONLY within the
+  // Helm mode: auto-sleep stays on, but ONLY within the
   // radius of a known sleep place. Anywhere else the operator decides.
   if (brainMode === 'helm' && !place) {
     if (!autoSleepAwayLogged) {
@@ -888,8 +888,8 @@ async function tryAutoSleep () {
     }
     return
   }
-  // Away from home, do not sleep and do NOT walk back (user, 2026-07-30:
-  // "DO NOT SHORTCUT"). The taskBusy() check above already protects the walk
+  // Away from home, do not sleep and do NOT walk back.
+  // The taskBusy() check above already protects the walk
   // itself, but once a walk_route to the igloo ENDS, bedtime used to fire here
   // and runGoInside() brute-forced a 235-block manual trek home, cutting across
   // the modded lights by the sheep pen. Stay put instead; the way home is
@@ -904,9 +904,8 @@ async function tryAutoSleep () {
     return
   }
   autoSleepAwayLogged = false
-  // Aboard the Bleu de Paris, stay aboard — never run home across the river
-  // (Dad, 2026-09-28: "When on the boat, don't run home"). The operator or a
-  // player decides where to sleep.
+  // Aboard the Bleu de Paris, stay aboard — never run home across the river.
+  // The operator or a player decides where to sleep.
   if (onBleu()) {
     if (!autoSleepBleuLogged) {
       autoSleepBleuLogged = true
@@ -1096,7 +1095,7 @@ async function beeCabinSleep ({ asked = false } = {}) {
     // the next 5s auto-sleep poll lands here with it free.
     if (beeState.inRound) return
     // Keeping the bees, she is out at the cross at dusk: walk to the front
-    // door herself (Dad, 2026-10-01: the keeper must not just stop at night).
+    // door herself rather than just stopping at night.
     // The same when she is asked to go to bed, and in every brain mode but
     // helm: with no operator there is nobody else to decide. On 2026-11-16
     // she stood at the cross at dusk logging "operator decides" until the
@@ -1126,8 +1125,8 @@ async function beeCabinSleep ({ asked = false } = {}) {
   }
   logEvent('bee-cabin', found ? 'no bee cabin bed resulted in sleep' : 'no bed block found at expected positions')
 }
-// "Go to the bee cabin" and "go to bed" at the bee cove (Dad, 2026-11-16: she
-// should know where the cabin is and that her bed is in it). From the dock or
+// "Go to the bee cabin" and "go to bed" at the bee cove: she
+// knows where the cabin is and that her bed is in it. From the dock or
 // anywhere at the cross; from farther off she says where it is.
 async function runGoToBeeCabin ({ toBed = false } = {}) {
   if (!atBeeCove()) {
@@ -1157,23 +1156,23 @@ async function runGoToBeeCabin ({ toBed = false } = {}) {
   } finally { task.end() }
 }
 
-// Known sleep places (user, 2026-09-26). Each has a center and a radius that
+// Known sleep places. Each has a center and a radius that
 // answers "am I close enough to sleep here?" — auto-sleep only acts inside one
 // of these in helm mode. Add new places here. Radii must not overlap.
 const SLEEP_PLACES = [
   // Within it, auto-sleep walks inside to bed. 45, not HOME_RADIUS (60): the
   // fields/potatoes/pen all sit within ~30, and 60 reached across the river to
-  // the Bleu de Paris (~52) and marched Roz home off the yacht (Dad, 2026-09-28).
+  // the Bleu de Paris (~52) and marched Roz home off the yacht.
   // The farm port (~50) is now outside too — at the port the operator decides.
   { name: 'farm', center: { x: -268, z: 572 }, radius: 45, sleep: () => goToBed('auto-sleep') },
   // Covers the whole nearCabin() box (dock to bedroom).
   { name: 'cabin', center: { x: -125, z: 332 }, radius: 26, sleep: cabinSleep },
-  // Bee cabin (Dad, 2026-09-30): covers the cabin and every hive stand at the
+  // Bee cabin: covers the cabin and every hive stand at the
   // bee cross (farthest, the south bee house stand, is 20.1 away — 16 left the
   // east bee house out and bedtime there did nothing, 2026-10-01), not the dock
   // (~49). Outside, beeCabinSleep walks to the door only while keeping bees.
   { name: 'bee-cabin', center: { x: -404, z: 243 }, radius: 22, sleep: beeCabinSleep },
-  // Igloo removed 2026-09-26 (Quesss): its beds sit up modded stairs (type 4029,
+  // Igloo removed 2026-09-26: its beds sit up modded stairs (type 4029,
   // zero collision) that the bot cannot climb. Re-add once beds are reachable:
   // { name: 'igloo', center: { x: -325, z: 796 }, radius: 16, sleep: iglooSleep },
 ]
@@ -1484,8 +1483,8 @@ function expressiveStory (opts, { reactive = false } = {}) {
   return llm.generateStory(opts)
 }
 
-// "Special circumstances" gate for musings that cost API money (claude-super;
-// user policy 2026-07-11): timer/scan-driven impulses (idle ambient, wildlife)
+// "Special circumstances" gate for musings that cost API money (claude-super):
+// timer/scan-driven impulses (idle ambient, wildlife)
 // NEVER call the API, and event-driven impulses muse only when a human player
 // is around to hear it. Local modes are unaffected — qwen musings stay chatty.
 const AMBIENT_EVENT_KINDS = new Set(['music', 'craft', 'victory', 'bedtime_suggest', 'rps', 'bot_chat', 'boat_ride'])
@@ -1595,11 +1594,10 @@ async function tryWriteDiary () {
   if (typeof day !== 'number' || day === lastDiaryDay) return
   if (!bot.isSleeping) return // write once tucked in for the night
   lastDiaryDay = day
-  // At most one entry per REAL (UTC) day. An in-game day is ~10.6 real
-  // minutes, so "once a night" meant dozens of entries a day. The gate reads the diary's own last "## Day N (date)" heading, so a restart
-  // can't buy an extra entry. Skipped nights keep their events (capped) for
-  // the next entry; a session that ends without one loses them — fine by
-  // Dad (2026-11-19: "losing some days ... is totally fine").
+  // At most one entry per real (UTC) day; an in-game day is ~10.6 real
+  // minutes. The gate reads the diary's own last "## Day N (date)" heading,
+  // so it holds across restarts. Skipped nights keep their events (capped)
+  // for the next entry.
   const today = new Date().toISOString().slice(0, 10)
   if (lastDiaryEntryDate() === today) return
   const events = diaryEvents.splice(0)
@@ -2075,13 +2073,10 @@ const activeTask = {
   sleeping: false,
 }
 
-// Idle wander checks idleWanderBusy() once, at the top; a task or ctl move that
-// starts mid-wander used to run alongside it — two navigators at once (seen
-// live 2026-07-07: doubled snag lines, two go-outside routines interleaved; an
-// operator `pathfind` stomped). Whoever needs the motors now preempts it: one
-// abortGen bump ends the wander's pathTo / walk / go-inside at their next
-// check. Callers capture their own gen AFTER this (beginTask does), so the
-// bump never hits the newcomer.
+// Idle wander checks idleWanderBusy() only at the top, so anything that needs
+// the motors mid-wander preempts it: one abortGen bump ends the wander's
+// pathTo / walk / go-inside at their next check. Callers capture their own gen
+// AFTER this (beginTask does), so the bump never hits the newcomer.
 let idleWanderInFlight = false
 function preemptIdleWander (by) {
   if (!idleWanderInFlight) return
@@ -2590,14 +2585,14 @@ async function pathTo (pt, range = 1, waitMs = 15000) {
     cabinTraversalBusy = true
     try { await cabinExitBedroom() } finally { cabinTraversalBusy = false }
   }
-  // Gangplank rule (Dad, 2026-09-28): on and off the Bleu de Paris only by the
+  // Gangplank rule: on and off the Bleu de Paris only by the
   // gangplank corridor, like the cabin bedroom.
   if (!gangplankBusy) {
     const targetAboard = bleuContainsXZ(pt.x, pt.z)
     if (onBleu() && !targetAboard) await gangplankLeave()
     else if (!onBleu() && targetAboard) await gangplankBoard()
   }
-  // Pen exit-first rule (user, 2026-07-06): the pathfinder cannot route
+  // Pen exit-first rule: the pathfinder cannot route
   // through the pen gate, so a bot in the pen heading anywhere OUTSIDE the
   // pen must run the safe exit procedure before anything else — field duties,
   // hopper runs, RPS meet spots, all of it. penTraversalBusy guards
@@ -2677,13 +2672,11 @@ function verifyAtOrientation (pt, xzTol = 1.5, yTol = 0.6) {
 //   the axis crosses `at`, steering around a known catch point (door jamb)
 //   before the reactive snag detector would have to rescue us.
 const WALK_WRONG_WAY_TOL = 0.75 // blocks of backward travel before walkUntilAxis bails
-// Stop rule (motor-lock fix, approved 2026-07-07). A walk used to ignore
-// `stop`: clearControlStates() released forward, the timer saw "no progress",
-// read it as a door snag and kept pulsing strafe keys for up to maxMs. Now a
-// stop (abortGen bump) ends the walk at once. walkUntilSeq only marks the
-// newest walk so an older one ending doesn't release forward under it. (A
-// newer walk deliberately does NOT retire an older one: the loser's caller
-// would retry and retire the winner — a ping-pong worse than the overlap.)
+// A stop (abortGen bump) ends the walk at once; otherwise the stall timer
+// would read the released forward key as a door snag and keep strafing.
+// walkUntilSeq marks the newest walk so an older one ending doesn't release
+// forward under it. A newer walk does NOT retire an older one: the loser's
+// caller would retry and retire the winner, a ping-pong worse than overlap.
 let walkUntilSeq = 0
 async function walkUntilAxis ({
   axis, target, direction = 'gte', maxMs = 8000, bailOnDamage = false,
@@ -2863,7 +2856,7 @@ async function maybeRepairBareWheatTilesWhileWandering () {
 function idleWanderBusy () {
   // rpsCurrentRival spans a whole RPS match (duty or fun) — a bot mid-game
   // must hold its spot on the field, including against the bedtime override
-  // (user, 2026-07-04: Roz ran inside mid-match).
+  // (2026-07-04: Roz ran inside mid-match).
   return !bot.entity || bot.isSleeping || autoSleepBusy || goInsideBusy || penTraversalBusy ||
     activeTask.name !== null || followTarget || rpsCurrentRival || bot.vehicle
 }
@@ -2910,11 +2903,10 @@ function randomIdleWanderTarget () {
 }
 
 // Farm port: stand on the bank by the paddle boats and look east across the
-// river, where Dad likes to be (Dad, 2026-09-28: "come visit from time to
-// time"). Stand point is the land block Roz walked to on 2026-09-28.
+// river. Stand point is the land block Roz walked to on 2026-09-28.
 const FARM_PORT_STAND = { x: -255, y: 63, z: 524 }
 
-// Both legs walk the grass path (Dad, 2026-10-24: "STAY ON THE PATH") — a free
+// Both legs walk the grass path — a free
 // pathTo cuts the corner by the MTAC, and the next wander pick would path home
 // freely from the port, so the visit ends back at the front door.
 async function runIdleWanderToPort () {
@@ -3032,7 +3024,7 @@ async function runIdleWanderToFurnace () {
   }
 
   if (countOnHand('potato') >= 1) {
-    // Wander-time hopper peek — lock-free (2026-07-07 policy: only the un-jam
+    // Wander-time hopper peek — lock-free (only the un-jam
     // routine locks). This is the only jam-checker for bots NOT on fire duty.
     // Jam = plantballs sitting with no potatoes; the cure is clearJammedHopper's
     // one-potato-at-a-time + 20s waits (it takes the lock itself).
@@ -3222,7 +3214,7 @@ function runPilot (label, step, { maxMs = 120000, hold = false } = {}) {
 // explicit range is a precision point (e.g. a slip's centre line): the boat
 // eases into it like the final one. Every other intermediate waypoint is a
 // fly-through at full leg throttle, with no slowdown, so a multi-leg route
-// runs as one continuous glide instead of stop-start (Dad, 2026-09-29).
+// runs as one continuous glide instead of stop-start.
 function boatSeek (waypoints, { throttle = 1, range = 3, rate = BOAT_TURN_RATE, easeDist = 8, label = 'seek' } = {}) {
   pilotSync()
   let i = 0
@@ -3381,7 +3373,7 @@ const RIVER_ROUTE = [
   // finger piers at z 522/526/530 out to x -251 (Dad added a fourth at z 518 on
   // 2026-10-27, opening a north slip z 519…521). Come in east of the pier ends,
   // then straight west into the middle slip (water x -253…-251, z 523…525) —
-  // second from the north; Dad: keep using it.
+  // second from the north.
   // range 1: arrive ON the slip's centre line — at the default 3 the boat came
   // in a block north and grounded on the z=522 pier (2026-09-28).
   { x: -246, z: 524.5, throttle: 0.3, range: 1, note: 'port approach' },
@@ -3392,7 +3384,7 @@ const RIVER_ROUTE = [
 const VOYAGE_LATEST_START = 9500
 
 // The boat Roz last climbed into — so she can bring *that* boat home rather
-// than whichever is nearest (Dad, 2026-09-28). Lost on restart.
+// than whichever is nearest. Lost on restart.
 let lastBoardedBoatId = null
 async function mountNearestBoat (radius = 8, { preferId = null } = {}) {
   const p = bot.entity.position
@@ -3411,8 +3403,7 @@ async function mountNearestBoat (radius = 8, { preferId = null } = {}) {
 }
 
 // Leaving the Bleu de Paris: gangplank → grass landing → the paddle boat we came
-// in → farm port (Dad, 2026-09-28: "don't forget to paddle the boat you came in
-// back to the farm port"). Legs are the ones paddled out that day, reversed.
+// in → farm port. Legs are the ones paddled out that day, reversed.
 // Dad reworked the east bank 2026-09-28 (a bridge at z≈550, x -231…-229, with
 // modded 2147/4029 blocks; the old landing grass at (-226, 62, 548) is gone).
 // Land on the new grass row at z=549, north side of the bridge — never under it.
@@ -3421,7 +3412,7 @@ const FARM_PORT_LANDING = { x: -254, y: 63, z: 524 } // boardwalk beside the mid
 // Paddled 2026-09-28 from the landing, 0 corrections. Swing west of the landing
 // first — a direct line to (-234.5, 541) grounds on the stern hull.
 // Farm port → Bleu landing, paddled 2026-09-28 (5/5 legs, 0 corrections).
-// Dad: go by paddle boat, not swimming (and never under the bridge); come home
+// Go by paddle boat, not swimming (and never under the bridge); come home
 // by the same course so you don't bump the moored boats.
 const PORT_TO_BLEU_LEGS = [
   { x: -247.5, z: 524.5, throttle: 0.3, note: 'out of the slip' },
@@ -3439,13 +3430,13 @@ const BLEU_TO_PORT_LEGS = [
 ]
 // pathTo quits in the pathfinder's pauses between segments — keep re-issuing
 // until actually within `tol` of the point (or out of tries).
-// ── Bee keeping (Dad, 2026-09-29/30) ──────────────────────────────────────
+// ── Bee keeping ───────────────────────────────────────────────────────────
 // Forestry hives at the lighthouse bee cross: 4 apiaries + 5 bee houses. When a
 // queen dies the hive needs a new pair: a wintry princess into slot 1, wintry
 // drones into slot 2. A 64-drone stack jams the output: keep 1, toss the rest.
 // Everything else stays put. Procedure: journal/procedures/apiary-tending.md.
 //
-// Dad's rule (2026-09-30, widened 2026-10-05): the keeper never starts itself.
+// The keeper never starts itself.
 // It starts on request only: the `keep_bees` ctl (at the cross), or "tend the
 // bees" in chat / the `bee_voyage` ctl, which gets there first (runBeeVoyage).
 // It refuses away from the bee cross and stops itself if carried off.
@@ -3553,7 +3544,7 @@ async function tendApiary (x, y, z, dryRun = false, opts = {}) {
         if (d) await move(d, DRONES, 'wintry drones -> drone slot')
         else actions.push({ note: 'drone slot empty but no wintry drone in the outputs' })
       }
-      // A full drone stack (64) jams the output. Dad: take them out, keep 1
+      // A full drone stack (64) jams the output: take them out, keep 1
       // in the slot, discard the rest into the world like poison potatoes.
       const dr = win.slots[DRONES]
       if (dr && dr.count >= 64) {
@@ -3569,7 +3560,7 @@ async function tendApiary (x, y, z, dryRun = false, opts = {}) {
         }
       }
       // Extra wintry drones in the outputs go to one pack slot; when that
-      // stack fills, it is dropped (Dad, 2026-10-05). Combs and other species
+      // stack fills, it is dropped. Combs and other species
       // stay put. Done inside the hive window, whose slot numbers are right
       // (see resyncPackFromHiveWindow for the inventory model's).
       // Stray drone stacks elsewhere in the pack (e.g. moved by an old
@@ -3604,7 +3595,7 @@ async function tendApiary (x, y, z, dryRun = false, opts = {}) {
       }
       // Combs crowd the outputs: the west and middle bee houses lost their
       // queens with one output slot free and no princess came out (2026-10-26).
-      // Dad: discard them like the poison potatoes (2026-10-27).
+      // Discard them like the poison potatoes.
       if (opts.combs) {
         const free = [...Array(36).keys()].filter(i => i !== PACK && !snap[i])
         for (const s of outputs) {
@@ -3644,7 +3635,7 @@ async function tendApiary (x, y, z, dryRun = false, opts = {}) {
   })
 }
 
-// Full drone stacks go behind the bee cabin (Dad, 2026-10-05). Dropped at the
+// Full drone stacks go behind the bee cabin. Dropped at the
 // hives she picked them straight back up, so like the poison potatoes they are
 // thrown where the work ends and she walks away at once. The cabin's windows
 // are not a way through: she goes round the east side on fixed legs (scanned
@@ -3661,8 +3652,8 @@ async function dumpDronesBehindCabin () {
     return [it]
   })
 }
-// Poison potatoes from the cabin patch go the same way as the drones (Dad,
-// 2026-10-09: the patch harvest had been keeping them).
+// Poison potatoes from the cabin patch go the same way as the drones
+// rather than staying in the pack after the patch harvest.
 async function dumpTrashBehindCabin () {
   if (!bot.inventory.items().some(isTrash)) return { ok: true, skipped: 'no trash' }
   return throwBehindCabin('trash', () => bot.inventory.items().filter(isTrash))
@@ -3734,12 +3725,12 @@ function startKeepBees ({ intervalMs } = {}) {
   return { ok: true, started: true, intervalMs: every }
 }
 
-// ── Nueve Reinas: the meadow bee cross by the farm (Dad, 2026-10-24) ──────
+// ── Nueve Reinas: the meadow bee cross by the farm ────────────────────────
 // Nine bee houses NW of the farmhouse, pine + balsam fir in BoP meadow. A
 // simplified keeper any bot can run (no boat, no cabin chores): check each
 // queen and drone slot, refill from that house's own outputs, and discard full
 // drone stacks in the potato patch like the poison potatoes. Species are kept
-// separate (Dad): nothing comes in from outside a house, and a refill prefers
+// separate: nothing comes in from outside a house, and a refill prefers
 // the house's own species. Starts on request only ("nueve reinas" in chat or
 // the `nueve_reinas` ctl); a round every 5 min until stopped. Procedure:
 // journal/places/meadow-bee-cross.md.
@@ -3920,9 +3911,8 @@ async function runReinasRoundInner (once, liveFn) {
     for (const a of r.actions) if (a.note) logEvent('reinas', `${h.name}: ${a.note}`)
   }
   reinasState.lastRoundAt = Date.now()
-  // "All alive" only when every house was actually read: an unreachable stand
-  // breaks the loop, and rounds that read nothing said "all nine queens alive"
-  // while seven had died (2026-11-06).
+  // "All alive" only when every house was actually read; an unreachable stand
+  // breaks the loop early.
   const unread = MEADOW_HOUSES.length - read
   reinasState.lastNote = (moves.length ? moves.join('; ') : (unread ? 'no moves' : 'all nine queens alive')) +
     (unread ? ` (${unread} of ${MEADOW_HOUSES.length} houses not read)` : '')
@@ -3975,7 +3965,7 @@ function startReinas ({ intervalMs } = {}) {
 
 // One pass over all nine hives, then top up food. Skips the round (does not
 // queue it) when another task holds the bot, and cuts it short when HP drops.
-// Night does not stop the keeper (Dad, 2026-10-01): at bedtime the round breaks
+// Night does not stop the keeper: at bedtime the round breaks
 // off, auto-sleep walks her into the bee cabin, and the first round after dawn
 // walks her back out through the door and carries on.
 async function runBeeRound () {
@@ -3997,7 +3987,7 @@ async function runBeeRoundInner () {
 }
 async function runBeeRoundBody (gen) {
   if (insideBeeCabin()) {
-    // First thing each morning, before going outside (Dad, 2026-10-11).
+    // First thing each morning, before going outside.
     await collectTrophyNugget().catch(e => logEvent('bees', `trophy nugget: ${e.message}`))
     await beeCabinExit()
     if (insideBeeCabin()) { logEvent('bees', `round skipped: could not leave the bee cabin (${posStr(bot.entity.position)})`); return }
@@ -4052,7 +4042,7 @@ async function runBeeRoundBody (gen) {
   }
 }
 
-// ── Bee keeper food (Dad, 2026-10-07) ──
+// ── Bee keeper food ────────────────────
 // Season 7 her pack ran dry at the cabin and she lost a heart every morning
 // (the night skip hurts; only a full stomach heals it back) until she sailed
 // home at HP 6 — past 128 baked potatoes in the bee cabin's own chest the whole
@@ -4138,13 +4128,10 @@ async function restockFromBeeCabinChest () {
 async function beeRestockFood () {
   const had = beePackFood()
   if (had > 0 && beeFood.chestEmptyAt && Date.now() - beeFood.chestEmptyAt < BEE_CHEST_RECHECK_MS) return
-  // mineflayer's window.withdraw refuses outright when the pack has no EMPTY
-  // slot — even with a half stack of baked potatoes that has room — throwing
-  // "Unable to withdraw, Bot inventory is full." before any click. That, not
-  // an empty chest or a rejected click, was every "no food left" on record
-  // (6 of 6, 10-26 and 11-16: each 2-5 ms after the chest opened, each beside
-  // a bee-chores "inventory is full" or "picked up 0" line). Make room first:
-  // Forestry saplings never stay in the pack, so any stack of them goes.
+  // mineflayer's window.withdraw refuses when the pack has no EMPTY slot, even
+  // if a baked-potato stack has room ("Unable to withdraw, Bot inventory is
+  // full."). Make room first: Forestry saplings never stay in the pack, so
+  // any stack of them goes.
   if (bot.inventory.emptySlotCount() === 0) {
     await discardForestrySaplings({ minStacks: 1 }).catch(e => logEvent('bees', `make room for food: ${e.message}`))
     if (bot.inventory.emptySlotCount() === 0) {
@@ -4162,7 +4149,7 @@ async function beeRestockFood () {
   }
   if (!r.error) beeFood.chestEmptyAt = Date.now()
   logEvent('bees', `bee cabin chest: ${r.error || 'no food left'} (pack has ${had})`)
-  // Raw potatoes are emergency food (Dad, 2026-10-07): eatSomething falls back
+  // Raw potatoes are emergency food: eatSomething falls back
   // to them, and the chores bake them, so she only sails home with none left.
   if (!r.error && had === 0) {
     const raw = countItem('potato')
@@ -4234,7 +4221,7 @@ async function tryBeeFoodRun () {
   }
 }
 
-// ── Bee cabin chores: birch → charcoal → baked potatoes (Dad, 2026-10-07) ──
+// ── Bee cabin chores: birch → charcoal → baked potatoes ────────────────────
 // Run by the keeper after each round, so the cabin feeds itself. Every step
 // was proven by hand the same day (journal/places/bee-cabin.md):
 //  - Birch: two trees by the cove, felled top-down once regrown, then the
@@ -4263,9 +4250,9 @@ const BEE_SEED_POTATOES = 32          // raw potatoes kept back for replanting
 const BEE_PACK_BAKED_MAX = 128        // more than this goes into Roz's chest
 const BEE_CHORES_OUTDOOR_LATEST = 11000 // birch + patch take ~2 min; done well before dusk
 const BEE_FURNACE_VISIT_MS = 10 * 60 * 1000
-const BEE_CHEST_BAKED_ENOUGH = 64      // with this many baked in Roz's chest, the patch is left to grow (Dad)
+const BEE_CHEST_BAKED_ENOUGH = 64      // with this many baked in Roz's chest, the patch is left to grow
 // Balls of fur (unknown item 9809): the lighthouse cats shed them and Roz picks
-// them up while keeping bees. A full stack goes into her chest (Dad, 2026-10-09).
+// them up while keeping bees. A full stack goes into her chest.
 // Unknown items get stackSize 1 from prismarine-item, so "a stack" is counted
 // as 64 across the pack instead.
 const BALL_OF_FUR_TYPE = 9809
@@ -4293,7 +4280,7 @@ async function quickMoveType (win, type) {
 }
 
 // Charcoal lives down the chest's right-hand column, blocks on top and loose
-// charcoal under them (Dad, 2026-10-11) — not wherever deposit() lands it.
+// charcoal under them — not wherever deposit() lands it.
 // Loose charcoal found where a block stack belongs is lifted out first and
 // re-stowed below. Returns { blocks, loose } moved from the pack.
 const CHARCOAL_BLOCK_TYPE = 9703 // learned 2026-10-09; charcoalBlockType confirms it live
@@ -4329,7 +4316,7 @@ async function stowColumn (win, col, tiers) {
   // lifted into the pack, and the placement below merges it back into full
   // stacks from the top.
   // Full stacks are never lifted: a stack cannot hold more than 64, so new
-  // items start a stack underneath (Dad, 2026-10-13). Lifting the full 64 too
+  // items start a stack underneath. Lifting the full 64 too
   // was what the server kept rejecting, and how a stack ended on the floor.
   for (let k = 0; k < tiers.length; k++) {
     const partial = slots.filter(s => tiers[k](win.slots[s]) && win.slots[s].count < 64)
@@ -4364,7 +4351,7 @@ async function stowCharcoalColumn (win) {
   return { blocks, loose }
 }
 
-// The Zombie Pigman Trophy on top of the north furnace (Dad, 2026-10-11): a
+// The Zombie Pigman Trophy on top of the north furnace: a
 // right-click gives one gold nugget per day. Roz claims it the first time she
 // is inside the cabin each world day — straight after waking, before her first
 // round takes her out — and stores it down the chest column just left of the
@@ -4373,7 +4360,7 @@ const BEE_TROPHY = { x: -407, y: 67, z: 239 }
 async function collectTrophyNugget () {
   const day = bot.time?.day
   if (day == null || beeState.trophyDay === day) return
-  // Odd-days-vs-cooldown experiment (Dad, 2026-10-23): leave one day's claim
+  // Odd-days-vs-cooldown experiment: leave one day's claim
   // untouched so the next click lands on an even morning >30 min later.
   if (beeState.trophySkipDay === day) { beeState.trophyDay = day; logEvent('bees', `trophy nugget: skipped day ${day} (experiment)`); return }
   const trophy = blockAtPos(BEE_TROPHY)
@@ -4391,7 +4378,7 @@ async function collectTrophyNugget () {
   logEvent('bees', `trophy nugget: +${got}; ${note}`)
 }
 // Gold lives down the chest column just left of the charcoal (column 8),
-// compressed like the charcoal (Dad, 2026-10-11): nine nuggets make an ingot,
+// compressed like the charcoal: nine nuggets make an ingot,
 // nine ingots a block; blocks on top, then ingots, then nuggets. Crafting only
 // happens once a tier reaches nine — otherwise the pack's gold is just stowed.
 async function storeGold () {
@@ -4432,12 +4419,12 @@ async function storeGold () {
   return notes.join(', ')
 }
 
-// Forestry saplings (Quesss, 2026-11-16: "forestry saplings get discarded —
-// only birch saplings get stored"). The corner trees drop them: one item id, a
+// Forestry saplings are discarded; only birch saplings get stored.
+// The corner trees drop them: one item id, a
 // genome each, so they never stack. On 2026-11-16 they filled 27 of her 36
 // slots, and for a whole session not one birch log could be picked up. They
 // are never kept and never put in a chest (the 2026-10-11 "into the cabin
-// chest for Dad to sort" routine is retired): they go behind the cabin like
+// chest to sort" routine is retired): they go behind the cabin like
 // the drones. Birch saplings are vanilla and stay in the pack.
 const FORESTRY_SAPLING_TYPE = 4730
 const BEE_FORESTRY_SAPLING_DUMP_STACKS = 4 // the keeper throws them out once she holds this many stacks
@@ -4466,7 +4453,7 @@ async function emptySaplings () {
   }
 }
 
-// Charcoal blocks (Dad, 2026-10-09): one charcoal on each of the nine grid
+// Charcoal blocks: one charcoal on each of the nine grid
 // spaces makes one block, for storage. The block is modded (an unknown item),
 // so its type is learned from the table's output the first time she crafts.
 const BEE_CRAFTING_TABLE = { x: -404, y: 66, z: 238 }
@@ -4559,7 +4546,7 @@ function birchColumnYs (t) {
 // Top-down, and every dig checked: the server can ignore one while the client
 // says done, which leaves a log standing, keeps the leaves alive, and the logs
 // cut above it land on the leaves out of reach (4 of 5 lost, 2026-10-07).
-// The tops (Dad, 2026-10-07): always start at the very top and work down. The
+// The tops: always start at the very top and work down. The
 // server allows a dig when (eyeY − (y+0.5))² + h² < 36, eyes 1.5 above the feet.
 // From the ground stand (feet y 65, diagonal, h ≈ 1.4) that reaches y 71, a full
 // 7-log birch. A taller trunk: she steps up onto the base log FIRST (feet y 66,
@@ -4574,7 +4561,7 @@ async function cutBirchLogs (t, ys, label) {
     const at = new Vec3(t.trunk.x, y, t.trunk.z)
     const b = bot.blockAt(at)
     if (!isBirchLog(b)) continue // birch only, re-checked on every block
-    // Retry this block before moving down: the top comes first, always (Dad).
+    // Retry this block before moving down: the top comes first, always.
     let gone = false
     for (let tryNo = 1; tryNo <= 3 && !gone; tryNo++) {
       const cur = bot.blockAt(at)
@@ -4667,10 +4654,10 @@ function patchStatus () {
 }
 async function potatoPatchChores () {
   const s = patchStatus()
-  // No need to dig more while the chest is well stocked (Dad, 2026-10-07).
+  // No need to dig more while the chest is well stocked.
   // An unknown count (null until the first furnace visit after a restart)
   // counts as stocked: a restart once dug a full patch with 250+ baked in the
-  // chest (Dad, 2026-10-09). The furnace visit reads the real count.
+  // chest (2026-10-09). The furnace visit reads the real count.
   const stocked = beeChores.chestBaked == null || beeChores.chestBaked >= BEE_CHEST_BAKED_ENOUGH
   const harvest = !stocked && s.ripe > 0 && s.ripe >= Math.ceil(s.crops * BEE_PATCH_RIPE_SHARE)
   if (!harvest && !s.empty) return null
@@ -4742,12 +4729,12 @@ async function putCharcoalFuel (f, want) {
   return n
 }
 // Saplings kept in the pack for replanting; the rest may burn. 16, not 8,
-// and no sapling fuel for now — wood and charcoal are plentiful (Quesss,
-// 2026-10-23, after both birches went unreplanted with an empty pack).
+// and no sapling fuel for now — wood and charcoal are plentiful
+// (both birches once went unreplanted with an empty pack).
 const BIRCH_SAPLING_RESERVE = 16
 const BIRCH_SAPLING_FUEL = false
 // The north furnace burns birch saplings first; charcoal only once they run
-// out (Dad, 2026-10-11). Charcoal sitting in its fuel slot comes out to make
+// out. Charcoal sitting in its fuel slot comes out to make
 // room — the south furnace takes it later in this pass.
 async function putSaplingFuel (f, notes) {
   if (!BIRCH_SAPLING_FUEL) return
@@ -4817,7 +4804,7 @@ async function furnaceChores () {
     await putSaplingFuel(f, notes)
   })
   // Half the charcoal goes back in as this furnace's own fuel for the next
-  // batch (Dad). Reopened: the taken charcoal only shows in the pack once the
+  // batch. Reopened: the taken charcoal only shows in the pack once the
   // window has closed (live 2026-10-07: kept 1 of 24, then 0 of 6). Saplings,
   // once they are its fuel, leave no room and everything goes south.
   await sleep(300)
@@ -4887,7 +4874,7 @@ async function furnaceChores () {
     if (BIRCH_SAPLING_FUEL && chestSaplings >= 64) await chestMove('withdraw', () => win.withdraw(packItem('sapling', BIRCH_META)?.type ?? 6, BIRCH_META, 64))
   })
   // A full stack of saplings in the chest becomes north-furnace fuel; its
-  // charcoal moves to the south furnace first, past a stack to the chest (Dad).
+  // charcoal moves to the south furnace first, past a stack to the chest.
   if (BIRCH_SAPLING_FUEL && chestSaplings >= 64) {
     let moved = 0
     await withFurnace(BEE_NORTH_FURNACE, async f => {
@@ -4991,7 +4978,7 @@ function beeChoresStatus () {
     saplings: countItem('sapling', BIRCH_META), birchLogs: countItem('log', BIRCH_META) } }
 }
 
-// ── Bee voyage: "tend the bees" (Dad, 2026-10-05) ──
+// ── Bee voyage: "tend the bees" ────────────────────
 // The general routine, any bot: work out where it is, get to the bee cross
 // (by boat from the farm port when at the farm), then start the keeper. The
 // keeper already breaks off at dusk, sleeps in the bee cabin and walks out at
@@ -4999,8 +4986,8 @@ function beeChoresStatus () {
 // water leg 0 corrections (journal/places/boat-route-bee-cove.md).
 // Voyage trace: every step goes to bot.log as [voyage]. Other bots' logs live
 // on other machines, so for a debugging session VOYAGE_CHAT_TRACE=1 in .env
-// also says each step in chat as "[voyage] …" (Dad, 2026-10-05; off by
-// default since the first round trip worked).
+// also says each step in chat as "[voyage] …" (off by
+// default).
 const VOYAGE_CHAT_TRACE = process.env.VOYAGE_CHAT_TRACE === '1'
 let voyageTraceActive = false
 function voyageNote (msg) {
@@ -5029,7 +5016,7 @@ const PORT_TO_BEE_COVE_LEGS = [
 // the planks (2026-10-03). Walk at once — a pause (pathTo, a bare sneak) lets
 // her drop in. If she does go in, the tread-water reflex holds her at the
 // surface and the same walk east climbs her out onto the planks, exactly as at
-// the farm port on 2026-10-05 (Dad: treading water matters on every docking).
+// the farm port on 2026-10-05. Treading water matters on every docking.
 const BEE_DOCK_PUSH = { x: -418.4, z: 285.5 }
 const BEE_DOCK_LANDING = { x: -415, y: 63, z: 280 } // stone at the head of the dock, walking home
 const BEE_DOCK_PLANKS_X = -416.0
@@ -5128,7 +5115,7 @@ async function runBeeVoyage ({ force = false } = {}) {
   if (!force && beeVoyageTooLate(where)) {
     return { ok: false, where, error: 'too late in the day for the cove — I will go at first light' }
   }
-  treadWaterEnabled = true // every docking leans on it (Dad, 2026-10-05)
+  treadWaterEnabled = true // every docking leans on it
   const task = beginTask('voyage', 'to the bees')
   if (!task.allowed) return { where, ...task.busyReply }
   const { myGen, startDeaths } = task
@@ -5183,8 +5170,7 @@ async function runBeeVoyage ({ force = false } = {}) {
   return { where, arrived: true, keeper }
 }
 
-// The trip home (Dad, 2026-10-05: "fix the return home as part of the
-// routine"). Return legs as paddled 2026-10-01 and 10-05, 0 corrections.
+// The trip home. Return legs as paddled 2026-10-01 and 10-05, 0 corrections.
 const BEE_COVE_TO_PORT_LEGS = [
   { x: -418.5, z: 298, throttle: 0.4, note: 'off the dock' },
   { x: -421, z: 319, throttle: 0.4, note: 'out of the cove' },
@@ -5285,8 +5271,8 @@ async function runBeeVoyageHome ({ force = false } = {}) {
   return { where, ...res }
 }
 
-// Front door ↔ farm port by the vanilla grass path (Dad, 2026-10-24: "stay on
-// the path", "don't cut corners"). A free pathTo from the port to the field
+// Front door ↔ farm port by the vanilla grass path, never cutting
+// corners. A free pathTo from the port to the field
 // stuck Roz on the corner by the MTAC. Each corner is a waypoint so the
 // pathfinder can't shortcut; (-256, 546) is the corner Dad marked. The birch
 // stair step at (-277, 63, 548) stalls a plain walk; when the pathfinder
@@ -5341,7 +5327,7 @@ async function hopFarmPathLeg (pt) {
 }
 
 // The port and the MTAC side of the path: a free walk home from here cuts the
-// corner (Dad, 2026-10-24: "stay on the path" for all routes near the port).
+// corner, so every route near the port stays on the path.
 function nearFarmPort () {
   const p = bot.entity?.position
   if (!p) return false
@@ -5436,8 +5422,8 @@ async function bleuPaddleHome ({ boatId = null } = {}) {
   }
 }
 
-// toFarm: cabin → farm, ending at the wheat field center (Dad, 2026-09-27:
-// don't wait at the port). Otherwise farm → cabin, ending on the dock.
+// toFarm: cabin → farm, ending at the wheat field center
+// (no waiting at the port). Otherwise farm → cabin, ending on the dock.
 async function runRiverVoyage (toFarm, { force = false } = {}) {
   const label = toFarm ? 'sail home' : 'sail to cabin'
   if (!force && (!bot.time.isDay || bot.time.timeOfDay >= VOYAGE_LATEST_START)) {
@@ -5575,8 +5561,8 @@ async function _runIdleBoating () {
   logEvent('idle-boating', 'done — heading back to shore')
   await pathTo(POND_SHORE, 1, 10000)
   sendEmote('cheer')
-  // Then stroll back to the wheat field rather than loitering on the shore
-  // (Dad, 2026-09-28). At bedtime, leave it to the bedtime override instead.
+  // Then stroll back to the wheat field rather than loitering on the shore.
+  // At bedtime, leave it to the bedtime override instead.
   await sleep(1500)
   if (isBedtime() || bot.vehicle) return
   await runIdleWanderToField({ announce: false })
@@ -5669,7 +5655,7 @@ function checkVehicleStateChange () {
 // away means an unmanaged cross-map trek that knows nothing about the route.
 // On 2026-07-30 that trek fired 3.5s after a completed farm→igloo walk,
 // abandoned the destination, and shortcut the way home across the modded light
-// blocks by the sheep pen (user: "stop shortcutting on the way back"). Away
+// blocks by the sheep pen. Away
 // from home, idle wander does nothing: getting back is the job of walk_route
 // (which goes over the roof garden and down to the field from the north) or of
 // a follow.
@@ -5864,8 +5850,8 @@ function describeTimeOfDay () {
   return 'night'
 }
 
-// Places she knows by coordinate (Dad, 2026-11-16: "she should KNOW where she
-// is, coordinates and such" — at the bee cove the brain said it had never been
+// Places she knows by coordinate, so she knows where she is (at the bee cove
+// the brain once said it had never been
 // there, did not know where the bee cabin was, and had no bed). Only places
 // she has stood at; add new ones here. North is −z, east is +x.
 const KNOWN_PLACES = [
@@ -6633,7 +6619,7 @@ function tryWheatReadyAlert () {
   if (wheatReadyState.snoozed) return
   if (brainMode === 'helm') return // operator speaks for Roz in helm mode; ready state still tracked + logged
   // On fire duty the loop harvests the wheat itself, so offering to harvest it
-  // is noise (Dad, 2026-10-09: Muse kept asking while already on duty).
+  // is noise (2026-10-09: Muse kept asking while already on duty).
   if (sustainState.active || /harvest/.test(activeTask.name || '')) return
   const homeDist = distanceFromHome()
   if (!Number.isFinite(homeDist) || homeDist > HOME_RADIUS) return
@@ -6704,8 +6690,8 @@ function orderNautilusCCW (tiles) {
 // inventory but some still hit the ground when the bot activates from 2-3
 // blocks away, so a full-coverage sweep of the harvested half follows.
 //
-// Walking pattern: counter-clockwise nautilus from the SE corner. Confirmed
-// 2026-05-14 (per the journal) as the user-preferred path — it minimizes
+// Walking pattern: counter-clockwise nautilus from the SE corner. It
+// minimizes
 // total walking distance and keeps the bot near each drop it generates.
 async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, keepSeeds = false, skipDeposit = false } = {}) {
   const task = beginTask('harvest', half, { busyLine: BUSY_LINE })
@@ -6906,16 +6892,13 @@ async function runHarvestRightClick ({ half = 'all', user, autoDeposit = null, k
 //   each craft is place ring → close → reopen → take output.
 // - Vanilla crafting table (46 slots): ring 1,2,3,4,6,7,8,9, output 0,
 //   inventory from 10. Output appears on placement — one open crafts them all.
-//   It did not open at all in June; verified working 2026-10-03, and Dad is
-//   swapping the bench for one.
+//   It did not open at all in June; verified working 2026-10-03.
 const BENCH_POS = { x: -270, y: 65, z: 569 }
 const BENCH_RING_SLOTS = [0, 1, 2, 3, 5, 6, 7, 8]
 const BENCH_OUTPUT_SLOT = 28
 const BENCH_PLAYER_INV_START = 29 // bench has 29 own slots (0-28)
 const VANILLA_TABLE_SLOTS = 46
-// Dad asked for crafting to narrate in chat so players can watch the new
-// table (2026-10-03, after Muse's puzzling "cookware" run). Turned off 2026-10-07
-// at Dad's request — the narration still lands in bot.log via logEvent.
+// Crafting narration in chat is off; it still lands in bot.log via logEvent.
 const CRAFT_DEBUG_CHAT = false
 function craftDebug (msg) {
   logEvent('craft', msg)
@@ -7186,7 +7169,7 @@ async function feedHopperOneAtATime (waitMs, { requireSustain = false } = {}) {
   return !finalSlots.some(isPlantBall)
 }
 
-// THE un-jam routine — the ONLY hopper-lock holder (user spec, 2026-07-07).
+// THE un-jam routine — the ONLY hopper-lock holder.
 // Jam = plantballs sitting in the intake with no potatoes. Cure: feed ONE
 // potato at a time, waiting 20s per potato (second pass 30s) to see if the
 // balls start draining. The lock is held for the whole routine INCLUDING the
@@ -7257,7 +7240,7 @@ function isSameBot (a, b) {
 
 // Send a coordination line. /me is for ACTIONS only (bare machine codes,
 // "shoots rock") — dialog goes out as PLAIN chat with the machine core as a
-// trailing tail (user rule: never wrap spoken lines in /me).
+// trailing tail (never wrap spoken lines in /me).
 function chatCore (prose, core) {
   try { sendCommand(prose ? `${prose} (${core})` : `/me ${core}`) } catch (_) {}
 }
@@ -7544,7 +7527,7 @@ const RPS_ACCEPT_WAIT_MS = 45000 // challenger idles; a mid-task rival needs tim
 const RPS_READY_WAIT_MS = 60000
 const RPS_CHANT_WAIT_MS = 15000
 const RPS_THROW_WAIT_MS = 20000
-const RPS_REVEAL_DELAY_TICKS = 100 // 3s salute under the chant + 2s point from "Shoot!" (user spec 2026-07-07)
+const RPS_REVEAL_DELAY_TICKS = 100 // 3s salute under the chant + 2s point from "Shoot!"
 const RPS_NAMES = { r: 'rock', p: 'paper', s: 'scissors' }
 let rpsState = null // { round, myThrow, rival, resolve }
 let rpsChallengeResolve = null // resolve function for incoming .d acceptance
@@ -7777,9 +7760,9 @@ async function startFunRps (user) {
 // bot-vs-bot machinery applies: no machine codes, no meet spot, no synced
 // reveal ticks — the ceremony runs on human time wherever we stand. The bot
 // commits its throw at the top of the round, the player types theirs after
-// "Shoot!", and only then does the bot reveal the pre-committed pick (user,
-// 2026-07-13: bot-reveals-first lets the player counter-pick — the bot must
-// hold its throw until the player has called). The capture listener
+// "Shoot!", and only then does the bot reveal the pre-committed pick
+// (bot-reveals-first would let the player counter-pick, so the bot holds its
+// throw until the player has called). The capture listener
 // (rpsHumanState) is armed only while a round waits and only for the rival
 // player, so everyone else's chatter still flows to the router.
 async function startHumanRps (user) {
@@ -7970,7 +7953,7 @@ async function runRpsMatch (rival, isChallenger, { forFun = false, stakes = null
 
       await lookAtPlayer(rival)
 
-      // Ceremony (user spec, 2026-07-07): salute held ~3s while the chant
+      // Ceremony: salute held ~3s while the chant
       // stands, then point held ~2s from "Shoot!" to the throw. The chant IS
       // the round announcement: it carries a reveal tick on the shared server
       // clock, so both bots shoot simultaneously and the ceremony can never
@@ -8161,8 +8144,8 @@ let nextReinasRoundAt = 0
 // saw the same ripe field and raced for it (4 races on 11-12). Now a bot
 // claims before going out. A bot that also wants the coffee while that claim
 // is still fresh joins it instead of standing aside, and two crossed claims
-// are settled by rock-paper-scissors at the coffee field: the winner harvests
-// (user's idea, 2026-11-12). Built for two bots; a third just waits its turn.
+// are settled by rock-paper-scissors at the coffee field: the winner harvests.
+// Built for two bots; a third just waits its turn.
 const coffeeLock = makeChatLock('coffee', '.o', '.u', 3 * 60_000)
 const COFFEE_CONTEST_MS = 5000     // after claiming, listen this long for a rival claim
 const COFFEE_JOIN_WINDOW_MS = 3000 // join a rival's claim only while it is this fresh (chat lag margin)
@@ -8270,19 +8253,19 @@ function releaseBench () {
   }
 }
 
-// Lock policy (user, 2026-07-07): the hopper lock is ONLY held by the un-jam
+// Lock policy: the hopper lock is ONLY held by the un-jam
 // routine (clearJammedHopper). Plain checks and deposits — plantballs, full
 // potato harvests — run lock-free; the intake digests concurrent deposits
 // fine. The old every-write lock is retired.
-// HARD INVARIANT (user rule, 2026-07-07): raw wheat and seeds JAM the intake —
+// HARD INVARIANT: raw wheat and seeds JAM the intake —
 // only plantballs and potatoes are legal feed. Craft grain into plantballs
 // first (stash_wheat / deposit_named do this). Guarded here so every caller,
 // including the ctl deposit actions, hits the same wall.
 const HOPPER_FORBIDDEN = new Set(['wheat', 'wheat_seeds'])
 // Plant balls have no name here — they're 'unknown' type 4169 (craft log:
 // unknown#4169:20). So are Forestry saplings, princesses, drones and fur
-// balls, which jammed the intake when a bot fed it "every unknown" (Quesss,
-// 2026-10-26). An 'unknown' deposit moves plant balls only.
+// balls, which jammed the intake when a bot fed it "every unknown"
+// (2026-10-26). An 'unknown' deposit moves plant balls only.
 const PLANT_BALL_TYPE = 4169
 function isPlantBall (s) { return !!s && s.name === 'unknown' && s.type === PLANT_BALL_TYPE }
 const HOPPER_POTATO_RESERVE = 8
@@ -8296,7 +8279,7 @@ async function depositToHopper (itemName, opts = {}) {
   if (itemName === 'potato') {
     // Raw potatoes go in whole batches of 8 and never below an 8-raw reserve,
     // so the intake isn't left with plantballs and no potato to burn them,
-    // and the bot always has un-jam fuel on hand (Quesss, 2026-10-31).
+    // and the bot always has un-jam fuel on hand.
     const onHand = countOnHand('potato')
     const keep = Math.max(opts.keep || 0, HOPPER_POTATO_RESERVE)
     const batch = Math.floor(Math.max(0, onHand - keep) / HOPPER_POTATO_BATCH) * HOPPER_POTATO_BATCH
@@ -8464,9 +8447,7 @@ function trackFireCoordination (username, message) {
       logEvent('rps', `received ${name}'s throw: ${RPS_NAMES[throw_]}${parsed.round ? ` (round ${parsed.round})` : ''}`)
       rpsState.resolve(throw_)
     } else if (rpsState) {
-      // Mid-match only: a spectator ignoring other bots' throws is normal (all
-      // 174 drops logged 10-07..11-14 were rpsState=false; the isSameBot
-      // identity fix had zero in-match drops over 33 contested matches).
+      // Mid-match only: a spectator ignoring other bots' throws is normal.
       logEvent('rps', `throw dropped mid-match: from=${name} round=${parsed.round ?? 'untagged'} expectRound=${rpsState.round ?? '-'} rival=${rpsState.rival || 'null'}`)
     }
     return
@@ -8708,7 +8689,7 @@ async function runPotatoCycle (label = 'potato cycle') {
 }
 
 // Rung 1 of the priority ladder: THE fire. Peek into the bio-fuel hopper —
-// lock-free (2026-07-07 policy: only the un-jam routine locks). Jam =
+// lock-free (only the un-jam routine locks). Jam =
 // plantballs sitting with no potatoes; clearJammedHopper takes the lock.
 const HOPPER_PATROL_MS = 5 * 60 * 1000
 let nextHopperPatrolAt = 0
@@ -8819,7 +8800,7 @@ async function runWheatCycle (harvestHalf) {
 // Stall breadcrumbs. Chat is the only debug channel every machine can see,
 // so a wheat cycle that keeps stopping short says why, in plain words, at the
 // 3rd stop in a row and every 20th after. A finished cycle resets the count.
-// (Quesss, 2026-11-09: Muse looped "Harvesting the north field" for half an
+// (2026-11-09: Muse looped "Harvesting the north field" for half an
 // hour and nobody else could see Muse's log to learn why.)
 const WHEAT_STALL_REPORT_AT = 3
 const WHEAT_STALL_REPORT_EVERY = 20
@@ -8951,7 +8932,7 @@ async function runSustainFarm (user) {
       }
 
       // ── The priority ladder: hopper, then wheat, potatoes, bees ──
-      // Dad, 2026-10-24: "wheat first, potatoes second, bees third". The hopper
+      // Wheat first, potatoes second, bees third. The hopper
       // stays on top (it IS the fire). Wheat keeps its rung below in the code;
       // the potato rungs simply step aside on any poll where one of our wheat
       // halves is due, so wheat runs first and potatoes come up next poll.
@@ -9479,7 +9460,7 @@ async function runHarvestPotatoesRightClick ({ user, then = null, maxTiles = Inf
   }
 }
 
-// ── Coffee (Dad, 2026-11-08) ────────────────────────────────────────────────
+// ── Coffee ──────────────────────────────────────────────────────────────────
 // Two rows just west of the potatoes, from the field edge to the water:
 // x -289 and -288, z 576–581, plants at y 63 on farmland (water from z 582).
 // Harvest like wheat: right-click a ripe plant (stage 7) and it resets to 0.
@@ -9533,7 +9514,7 @@ async function runHarvestCoffee ({ user, auto = false } = {}) {
       if (insideHouse()) { logEvent('coffee', 'still inside after exit attempt — aborting'); return 'failed' }
     }
     // Automatic runs look in the chest first: no harvest when it is full
-    // (Dad, 2026-11-08: "any time coffee is ripe and chest is not already full").
+    // Any time coffee is ripe and the chest is not already full.
     if (auto) {
       await pathTo({ x: -288, y: 63, z: 573 }, 1, 8000)
       const slots = await peekContainer(COFFEE_CHEST, { label: 'coffee chest' })
@@ -9590,7 +9571,7 @@ async function runHarvestCoffee ({ user, auto = false } = {}) {
     logEvent('coffee', `clicked=${clicked} reset=${reset} beans +${beans - beansBefore} (pack ${beans}) seeds ${seeds}`)
 
     // Beans into the coffee chest. Shift-click merges onto the stacks already
-    // there (Dad asked for stacking on 2026-11-08).
+    // there.
     let stored = 0
     if (beans > 0) {
       await pathTo({ x: -288, y: 63, z: 573 }, 1, 8000)
@@ -9621,9 +9602,9 @@ async function runHarvestCoffee ({ user, auto = false } = {}) {
   }
 }
 
-// Automatic coffee, like food safety (Dad, 2026-11-08): whenever the plants are
+// Automatic coffee, like food safety: whenever the plants are
 // ripe and the chest has room, Roz harvests and stores without being asked. It
-// runs in helm mode too — that was the point of the request — so it also stands
+// runs in helm mode too, so it also stands
 // aside while the operator is moving her (pathfinder or controls active).
 const COFFEE_AUTO_MIN_RIPE = 10           // of 12
 const COFFEE_AUTO_LAST_TICK = 11000       // no new runs after this time of day
@@ -10150,7 +10131,7 @@ let restockCooldownUntil = 0
 async function tryRestockSupplies () {
   if (restockBusy || foodSafetyBusy) return
   if (taskBusy() || goInsideBusy || autoSleepBusy || penTraversalBusy) return
-  // A match holds the field and a follow holds the leash (user, 2026-07-07:
+  // A match holds the field and a follow holds the leash (2026-07-07:
   // Private walked to the potato patch mid-RPS — fun matches register no
   // task, so this gate must check them explicitly, same as idleWanderBusy).
   if (rpsCurrentRival || followTarget) return
@@ -10238,9 +10219,8 @@ async function tryMorningPlantBalls () {
   if (bot.currentWindow) return
   if (Date.now() < foodSafetyWindowCooldownUntil) return
   if (sustainState.active) return // sustain loop handles its own crafting
-  // Only when already home. craftPlantBalls → ensureInsideHouse walks her back
-  // from wherever she is: at dawn on 2026-10-02 that took Roz off the Bleu and
-  // across the river, stranding the paddle boat. Helm: the operator decides.
+  // Only when already home: craftPlantBalls → ensureInsideHouse walks her back
+  // from wherever she is. In helm the operator decides.
   if (brainMode === 'helm' || bot.vehicle) return
   if (distanceFromHome() > 45) return // the farm sleep radius
 
@@ -10374,8 +10354,7 @@ const EXIT_XZ_TOL = 0.3     // refuse the doorway walk if the start is off by mo
 
 // Lineup steps are walked in short taps, not one long walk: at full walk speed
 // a step overshoots 0.2–1.0 blocks, and one x-align slid her to (-266.6, 573.5),
-// a step from the charge pad (2026-09-28). They used to be sneak-walked; Dad
-// asked for no crouch (2026-10-09), so each tap is a normal step that stops
+// a step from the charge pad (2026-09-28). No crouch: each tap is a normal step that stops
 // short of the target and lets her coast, and she checks where she landed.
 // Each step faces its own heading (derived from axis + direction, so the yaw
 // can't disagree with the walk), refuses to walk if the turn didn't take, and
@@ -10787,8 +10766,8 @@ async function runGoOutside (activity, { skipTimeCheck = false } = {}) {
 // Wrap runGoInsideOnce with up to 3 retries on graceful failure.
 async function runGoInside ({ stillWanted = null } = {}) {
   if (goInsideBusy || penTraversalBusy) return // never enter the house mid-pen-traversal
-  // Single chokepoint for "do not brute-force a walk home" (user, 2026-07-30:
-  // "DO NOT SHORTCUT"). ~20 call sites can reach this function, several of them
+  // Single chokepoint for "do not brute-force a walk home".
+  // ~20 call sites can reach this function, several of them
   // autonomous (auto-sleep, idle wander, bedtime yields, post-activity cleanup),
   // and runGoInsideOnce() falls back to MANUAL walking when the pathfinder
   // cannot plan. From the igloo that is a ~235-block trek straight across the
@@ -11175,11 +11154,9 @@ async function ensureShears () {
 }
 
 // Shear all woolly sheep in the pen.
-// Shearing holds the task lock (2026-11-19). Without it the chat reflex and a
-// ctl shear ran two routines at once on 2026-10-14 (one kept closing the pen
-// door on the other), and task_status read busy:false mid-shear. Callers bump
-// abortGen to preempt whatever was running, and that task's finally hasn't
-// released the lock yet on this tick, so wait briefly for it to clear.
+// Shearing holds the task lock so a reflex and a ctl shear can't run at once.
+// Callers bump abortGen to preempt whatever was running, and that task's
+// finally hasn't released the lock yet on this tick, so wait briefly for it.
 async function runShearSheep () {
   const gen = abortGen
   let t = startTask('shear_sheep')
@@ -11903,8 +11880,7 @@ async function runStashJunk (filterNames) {
   logEvent('stash-junk', `deposited=${deposited} remaining=${remaining}`)
 }
 
-// Holds the task lock (2026-11-19): sent while a harvest was still in its own
-// craft → hopper tail, it crafted in the same grid at the same moment (2026-10-02).
+// Holds the task lock so it can't craft in the grid a harvest is using.
 async function runStashWheat () {
   const t = startTask('stash_wheat')
   if (!t.allowed) { say(BUSY_LINE(t.current)); return }
@@ -11931,7 +11907,7 @@ async function _runStashWheat () {
 
 // Deposit one or more item names. Items not present are silently skipped.
 // Routing: wheat AND wheat_seeds → craft plant balls → hopper (raw grain jams
-// the intake — user rule 2026-07-07); everything else → kitchen chest.
+// the intake); everything else → kitchen chest.
 // `bread` and `baked_potato` are kept to their stack limits; all others go fully.
 async function runDepositNamed (names) {
   const KEEP_BREAD = 64
@@ -12014,7 +11990,7 @@ async function runDepositNamed (names) {
 }
 
 // Stash everything. Wheat + seeds → craft plant balls → hopper (raw grain
-// jams the intake — user rule 2026-07-07); everything else → kitchen chest
+// jams the intake); everything else → kitchen chest
 // (keeping baked_potato/shears at their limits).
 // Uses win.deposit for known items and two-click for unknown/modded items.
 const STASH_ALL_KEEP = { baked_potato: 128, shears: 1 }
@@ -12151,8 +12127,7 @@ async function runStashAll () {
 // ── Jukebox ─────────────────────────────────────────────────────────────────
 const JUKEBOX = { x: -274, y: 64, z: 565 }
 // Each record's assigned home slot in the kitchen chest — columns 4–5 of each
-// row (user-established layout 2026-07-03; user shifted every disc one column
-// right on 2026-08-01). A returning disc goes back to ITS slot, not just any
+// row. A returning disc goes back to ITS slot, not just any
 // home slot. Records are NOT junk.
 const RECORD_HOME_SLOTS = {
   record_cat:     4,
@@ -12171,13 +12146,13 @@ const RECORD_HOME_SLOTS = {
 const RECORD_INFO = {
   record_cat:     { title: 'Cat',     color: 'green',   durationSec: 185, factoid: "Quesss's favorite disc. Like all our records it came from a dungeon chest — though legend tells of an older world where discs were farmed in a long dungeon corridor: a creeper baited behind doors and gates, skeleton arrows doing the rest." },
   record_blocks:  { title: 'Blocks',  color: 'orange',  durationSec: 345, factoid: 'A bright, bouncy C418 tune — the most cheerful track in the collection. Replaced Far in the chest after a mystery visitor made off with it.' },
-  // Mall and Chirp play other songs through the server resource pack (Dad,
-  // 2026-10-01): the label still says Mall/Chirp, so those names stay as aliases.
+  // Mall and Chirp play other songs through the server resource pack:
+  // the label still says Mall/Chirp, so those names stay as aliases.
   record_mall:    { title: 'Tezeta',  color: 'purple',  durationSec: 377, aliases: ['mall', 'nostalgia', 'mulatu astatke', 'mulatu'], factoid: 'Mulatu Astatke, the father of Ethio-jazz. Tezeta is Amharic for nostalgia: a longing for what is gone. It plays on the Mall disc now.' },
   record_wait:    { title: 'Wait',    color: 'blue',    durationSec: 238, factoid: 'C418 originally titled this one "Where are we now" — the most upbeat disc in our collection.' },
   record_chirp:   { title: 'I Will Follow You into the Dark', color: 'red', durationSec: 189, aliases: ['chirp', 'death cab', 'death cab for cutie', 'follow you into the dark'], factoid: 'Death Cab for Cutie: one voice and one acoustic guitar. It plays on the Chirp disc now.' },
   record_mellohi: { title: 'Mellohi', color: 'magenta', durationSec: 96,  factoid: 'A short, melancholy waltz in three-four time — C418 at his most wistful.' },
-  // Stal plays Faith No More's War Pigs through resource pack v2 (Dad, 2026-10-31).
+  // Stal plays Faith No More's War Pigs through resource pack v2.
   record_stal:    { title: 'War Pigs', color: 'black', durationSec: 466, aliases: ['stal', 'faith no more', 'black sabbath', 'sabbath', 'war pigs'], factoid: 'Faith No More covering Black Sabbath: a 1970 song against war and the generals who send others to fight it. It plays on the Stal disc now.' },
 }
 // Now-playing state (in-memory; lost on restart). Set both when this bot puts
@@ -12223,7 +12198,7 @@ function tryMusicEnded () {
 // all take precedence, and the return happens whenever a poll finds the bot
 // idle in daytime. Only the DJ returns the disc (nowPlayingMine); a disc a
 // player put on is never touched.
-// 60s: "a little extra silence is fine" (user, 2026-07-03) — err well past the
+// 60s: a little extra silence is fine — err well past the
 // end of the song rather than ever arriving before it.
 const RECORD_RETURN_GRACE_MS = 60_000
 const RECORD_RETURN_RETRY_MS = 90_000
@@ -12662,7 +12637,7 @@ const CHAT_HANDLERS = [
     },
   },
   {
-    // "Roz, nueve reinas" / "start the nueve reinas routine" (Dad, 2026-10-24):
+    // "Roz, nueve reinas" / "start the nueve reinas routine":
     // the meadow bee cross by the farm, until told to stop. "stop the nueve
     // reinas" stops it. Before stop_bees/tend_bees so the name wins.
     name: 'nueve_reinas',
@@ -12696,8 +12671,8 @@ const CHAT_HANDLERS = [
     },
   },
   {
-    // "Roz, tend the bees" / "go keep the bees" / "look after the bees"
-    // (Dad, 2026-10-05). Works from the farm (boat from the port), a boat on
+    // "Roz, tend the bees" / "go keep the bees" / "look after the bees".
+    // Works from the farm (boat from the port), a boat on
     // the cove route, the bee dock, or the cross itself — see runBeeVoyage.
     name: 'tend_bees',
     pattern: /\b(?:tend|keep|look\s+after|care\s+for|go\s+to|back\s+to)\b[^.!?]{0,20}\bbees\b/i,
@@ -12725,8 +12700,8 @@ const CHAT_HANDLERS = [
   },
   {
     // "Roz, empty saplings" / "empty your saplings": every Forestry sapling in
-    // the pack is thrown out behind the bee cabin (Quesss, 2026-11-16: they
-    // are discarded, never stored). See discardForestrySaplings.
+    // the pack is thrown out behind the bee cabin (they are
+    // discarded, never stored). See discardForestrySaplings.
     name: 'empty_saplings',
     pattern: /\bempty\s+(?:the\s+|your\s+|out\s+)?saplings\b/i,
     handler: () => {
@@ -12774,7 +12749,7 @@ const CHAT_HANDLERS = [
       const away = distanceFromHome()
       if (away <= HOME_RADIUS) { say('I am already home.'); return }
       if (nearBeeCove()) {
-        // From the bees home is by boat (Dad, 2026-10-05).
+        // From the bees home is by boat.
         if (beeVoyageTooLate('boat')) { say('Too late in the day for the water — I will sleep at the cabin and sail home at first light.'); return }
         abortGen++
         followTarget = null; followEntity = null; followChainPos = 0
@@ -12947,7 +12922,7 @@ const CHAT_HANDLERS = [
     },
   },
   {
-    // "Roz, harvest the coffee" (Dad, 2026-11-08): right-click the two coffee
+    // "Roz, harvest the coffee": right-click the two coffee
     // rows west of the potatoes, beans to the coffee chest, seeds discarded.
     name: 'harvest-coffee',
     pattern: /\b(go|get|grab|harvest|pick|collect)\b.*\bcoffee\b/i,
@@ -12995,7 +12970,7 @@ const CHAT_HANDLERS = [
       if (sustainState.active) {
         say(`I am — covering ${describeFireDuties()}.`)
       } else {
-        // Off duty: give the keepers first right of reply (user, 2026-07-07 —
+        // Off duty: give the keepers first right of reply (2026-07-07:
         // Roz waited but still said "not me" after Private answered). Listen
         // during the wait; only if NOBODY claims the fire — in chat now, or in
         // our tracked crew claims — do we admit we're not keeping it.
@@ -13394,7 +13369,7 @@ const CHAT_INTENTS = {
 // hoarded gift, the origin tale that explains the sky, the stranger who earns
 // a place by the fire. One chat line is generated per beat, so every telling
 // has a beginning, a turn, and an ending that lands. Casts and settings are
-// swappable mad-lib style (Quesss's design, 2026-07-11): each set is
+// swappable mad-lib style: each set is
 // internally cohesive and fits any arc, so tellings stay fresh at no extra
 // inference cost. (2026-08-01)
 const STORY_ARCS = [
@@ -13477,8 +13452,8 @@ function composeStoryBrief () {
 
 // Write a book: a player hands over a book & quill and asks for a story about
 // a topic (or the bot's choice). The persona's voice writes one page per line,
-// the first line is the title, and the signed book goes back to whoever asked
-// (Dad, 2026-10-30 — "Private on Antarctica, Muse on Tatooine"). Helm bots
+// the first line is the title, and the signed book goes back to whoever asked.
+// Helm bots
 // have no voice of their own: the operator writes pages and uses sign_book.
 const BOOK_PAGES = 12
 async function runWriteBook (user, topic) {
@@ -14183,7 +14158,7 @@ bot.on('chat', (username, message) => {
       }
     }
     // Unhandled mentions surface in bot.log only. Player chat is never
-    // persisted to its own file or the journal (user rule, 2026-07-02):
+    // persisted to its own file or the journal:
     // the journal is the bots' experience, not a chat record.
     logEvent('mention', `<${username}> ${message}`)
   }
@@ -14393,8 +14368,8 @@ const ROUTES = {
       // Roof south edge. Load-bearing waypoint, do NOT remove: without it the
       // 8-block gap between the deck and waist A lets the pathfinder route
       // AROUND the house instead of over the roof, which lands the bot on the
-      // modded light blocks near (-273, 68, 574) or inside the sheep pen
-      // (user, 2026-07-30). Both directions must cross the roof — going home
+      // modded light blocks near (-273, 68, 574) or inside the sheep pen.
+      // Both directions must cross the roof — going home
       // means over the garden and down to the field from the north.
       { x: -265, y: 70, z: 575, range: 2, note: 'roof south edge — never shortcut around the house' },
       // Stage 2: the long southward corridor. The waists are tight (all five
@@ -15338,7 +15313,7 @@ registerCommand('deposit', (args, cmd) => {
   const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))
   if (!b) return { ok: false, error: 'no block' }
   const wantedNames = new Set(args.names || [])
-  // Raw grain jams the bio-fuel intake (user rule, 2026-07-07). This path
+  // Raw grain jams the bio-fuel intake. This path
   // bypasses depositToHopper, so enforce the rule here too: strip
   // wheat/seeds when the target is a hopper and report them refused.
   const refusedGrain = []
@@ -15419,7 +15394,7 @@ registerCommand('deposit_slot', (args, cmd) => {
     }
     const srcItem = win.slots[winSrc]
     if (!srcItem) { return { ok: false, error: `inv slot ${fromSlot} is empty` } }
-    // Raw grain jams the bio-fuel intake (user rule, 2026-07-07) — this
+    // Raw grain jams the bio-fuel intake — this
     // path also bypasses depositToHopper, so enforce the rule here too.
     if (HOPPER_FORBIDDEN.has(srcItem.name) &&
         (b.name === 'hopper' || (b.position.x === HOPPER.x && b.position.y === HOPPER.y && b.position.z === HOPPER.z))) {
@@ -15622,7 +15597,7 @@ registerCommand('dump_drones', (args, cmd) => {
   return dumpDronesBehindCabin()
 })
 registerCommand('dump_combs', (args, cmd) => {
-  // Combs lifted from crowded hive outputs (tend_apiary combs) go the way of the drones (Dad, 2026-10-27).
+  // Combs lifted from crowded hive outputs (tend_apiary combs) go the way of the drones.
   if (taskBusy() || beeState.inRound || beeFoodRun.busy) return { ok: false, error: 'busy' }
   if (!nearBeeCross()) return { ok: false, error: 'not at the bee cross' }
   if (!bot.inventory.items().some(i => i.type === BEE_COMB_TYPE)) return { ok: true, skipped: 'no combs' }
@@ -15634,8 +15609,7 @@ registerCommand('dump_combs', (args, cmd) => {
   })()
 })
 registerCommand('dump_saplings', (args, cmd) => {
-  // Forestry saplings go the way of the drones (Quesss, 2026-10-23; all of
-  // them, 2026-11-16).
+  // Forestry saplings, all of them, go the way of the drones.
   if (taskBusy() || beeState.inRound || beeFoodRun.busy) return { ok: false, error: 'busy' }
   return discardForestrySaplings()
 })
@@ -16150,7 +16124,7 @@ registerCommand(['deposit_item', 'deposit_wheat'], (args, cmd) => { // generic: 
   if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
   const depositItemName = (args && args.item) || 'wheat'
   const target = (args && args.target === 'chest') ? HARVEST_WAYPOINTS.kitchen_chest : HOPPER
-  // Raw grain jams the bio-fuel intake (user rule, 2026-07-07). Refuse
+  // Raw grain jams the bio-fuel intake. Refuse
   // up front — depositToHopper would throw anyway, but only into the log.
   if (target === HOPPER && HOPPER_FORBIDDEN.has(depositItemName)) {
     return { ok: false, error: `${depositItemName} jams the bio-fuel intake — use stash_wheat (crafts plantballs first) or pass target:"chest"` }
@@ -16244,7 +16218,7 @@ registerCommand('board_bleu', (args, cmd) => {
   // Shore → Bleu de Paris deck via the gangplank corridor.
   if (taskBusy()) return { ok: false, error: 'busy', ...taskStatus() }
   if (onBleu()) return { ok: true, aboard: true, already: true }
-  // From the west bank, go by paddle boat (Dad) — only walk if already on
+  // From the west bank, go by paddle boat — only walk if already on
   // the east shore near the gangplank.
   const pb = bot.entity.position
   if (bot.vehicle || Math.hypot(pb.x - (GANGPLANK_SHORE.x + 0.5), pb.z - GANGPLANK_LINE_Z) > 16) return bleuPaddleOver()
