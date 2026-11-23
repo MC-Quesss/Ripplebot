@@ -22,7 +22,7 @@ Everything lives in `bot.js` — a single CommonJS module. Key sections (top to 
 
 1. **Connection & error resilience** (lines 1–150) — env config, Forge handshake, `FullPacketParser` patch to survive malformed modded packets, `rawState` shadow for protocol-level position tracking, synthetic `open_window` injection for Forge mod GUIs.
 
-2. **Bot initialization & plugins** (~155–300) — mineflayer createBot, pathfinder (canDig=false, no towers/scaffolding), auto-eat with leak-patched listener, Movements configured for modded terrain (lily-pad solidity, zero-collision patches for specific blocks).
+2. **Bot initialization & plugins** (~155–300) — mineflayer createBot, pathfinder (canDig=false, no towers/scaffolding), auto-eat with leak-patched listener, Movements configured for modded terrain (lily-pad solidity; unnamed modded blocks are solid cubes unless their type is seeded or learned passable — a body seen standing inside one — see `SEED_PASSABLE_MODDED_TYPES`, `data/passable-types.json`, ctl `collision`).
 
 3. **Autonomous behaviors** (~300–850) — auto-sleep (multi-bed fallback), auto-greet (proximity + cooldown), phrase de-duplication across bots, persona system (protocol/roz/unikitty/private line pools with weighted selection), idle wander, ambient actions.
 

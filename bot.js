@@ -455,7 +455,13 @@ function pickAvoidingRecentPhrase (items, toPhrase = x => x) {
 // the meadow bee cross (-298, 63–68, 545), which Muse's bee rung kept walking
 // into the same morning, and Dad's new landscaping west of the port path
 // (trunks at (-259, 63–66, 520) and (-259, 63–66, 526)).
-const SOLID_MODDED_TYPES = new Set([3995, 1458, 1059, 1069, 1079, 622, 623, 1095, 1306, 1085, 383, 388, 587, 688, 690, 1086, 1091, 366]) // 366: grape vine/trellis at the lighthouse vineyard, -8 HP at head height (2026-10-30)
+// 4037 = the wall along the east side of the Library's front steps (x -354).
+// Read as air, it is walked into at head height. 2301 = the Library lobby
+// floor (y 65): read as air, a bot walking on it keeps falling and is pulled
+// back up, so it crawls. 2351 = living rock (Botania), the Library floor
+// past the lobby; same crawl. 3273 = chiseled terracotta (Chisel), a full
+// cube: the Library chimney, its inner walls and the stair landing floor.
+const SOLID_MODDED_TYPES = new Set([3995, 1458, 1059, 1069, 1079, 622, 623, 1095, 1306, 1085, 383, 388, 587, 688, 690, 1086, 1091, 366, 4037, 2301, 2351, 3273]) // 366: grape vine/trellis at the lighthouse vineyard, -8 HP at head height (2026-10-30)
 // Modded slabs — walk on them like oak slabs (half-block collision; metadata
 // bit 8 = top half, as in vanilla). 1744 = modded-tree plank slabs, the
 // Bleu de Paris gangplank.
@@ -469,7 +475,105 @@ const SHORT_MODDED_TYPES = new Map([[1058, 15 / 16]])
 // ascending side; metadata 0-3 = ascends E/W/S/N, bit 4 = upside down).
 // 516 = citrus-wood stairs, bee-cove shore: with no shape
 // Roz hung on the edge half up, half down, and the pathfinder walked around.
-const STAIR_MODDED_TYPES = new Set([516])
+// 4038 = the Library's front steps (x -357…-355, z 482–483, ascend south).
+// Read as a full block, a bot standing on the lower half is embedded and frozen.
+// 502 = the Library's steps down from the living-rock floor to the concrete
+// (x -351, z 499–501, ascend west).
+const STAIR_MODDED_TYPES = new Set([516, 4038, 502])
+function isShapedModded (type) {
+  return SOLID_MODDED_TYPES.has(type) || SHORT_MODDED_TYPES.has(type) ||
+    SLAB_MODDED_TYPES.has(type) || STAIR_MODDED_TYPES.has(type)
+}
+
+// ── Unnamed modded blocks: solid unless shown passable ───────────────────
+// An unnamed block in none of the lists above is treated as a full solid
+// cube. Read wrongly as solid, a block only makes the pathfinder go round or
+// stop; read wrongly as air, it is walked into at head height (suffocation)
+// or sunk into as a floor (the crawl). So "solid" is the safer guess.
+//
+// A type becomes passable when a body is seen standing inside it: the
+// server let it be there, so it has no collision. A body counts when its
+// feet are at a whole-block height (on the ground, not up on a slab or stair)
+// and the block holds its feet or head. Two different players or mobs must be
+// seen inside the type, to rule out one that is glitched into a wall. The bot's own body counts at once: the server put it there,
+// and until the type is learned the bot is frozen inside a "solid" block.
+// The hand-made lists above always win. Learned types persist in
+// PASSABLE_TYPES_FILE; ctl `collision` lists, adds, forgets and surveys.
+//
+// Seed types:
+// 3994 = coffee plant (the coffee field).
+// 3855 = clover, low patches on the roof garden, the hillside and around the
+//        Library; a bot walks under it at the Library's front steps.
+// 4029 = a block whose shape differs everywhere it is used: the ocean
+//        cabin's invisible walls, part of the cabin corridor, the igloo stairs
+//        and the Library stair railings. One type-wide shape cannot fit
+//        all of these, so it stays walk-through and the cabin procedures handle it.
+// 571  = the farm house door (modded, facing west). A cube would shut it even
+//        when open; the door procedures are built around it being walk-through
+//        and open it by its metadata.
+const SEED_PASSABLE_MODDED_TYPES = new Set([3994, 3855, 4029, 571])
+// Entities that pass through walls, so being inside a block proves nothing.
+const NOCLIP_ENTITY_NAMES = new Set(['vex'])
+const PASSABLE_TYPES_FILE = path.join(__dirname, 'data', 'passable-types.json')
+const learnedPassable = new Map() // type -> { via, at, when }
+try {
+  const saved = JSON.parse(fs.readFileSync(PASSABLE_TYPES_FILE, 'utf8'))
+  for (const [k, v] of Object.entries(saved.types || {})) learnedPassable.set(Number(k), v)
+} catch (e) { /* no file yet */ }
+const passableSightings = new Map() // type -> Map(entity id -> { who, at }), until learned
+
+function isPassableModded (type) {
+  return SEED_PASSABLE_MODDED_TYPES.has(type) || learnedPassable.has(type)
+}
+function savePassableTypes () {
+  try {
+    fs.writeFileSync(PASSABLE_TYPES_FILE, JSON.stringify({ types: Object.fromEntries(learnedPassable) }, null, 2) + '\n')
+  } catch (e) { logEvent('collision', `could not save ${PASSABLE_TYPES_FILE}: ${e.message}`) }
+}
+function learnPassable (type, via, at) {
+  if (learnedPassable.has(type) || isShapedModded(type)) return false
+  learnedPassable.set(type, { via, at, when: new Date().toISOString() })
+  passableSightings.delete(type)
+  savePassableTypes()
+  logEvent('collision', `learned type ${type} is passable — ${via} stood inside it at ${at}`)
+  return true
+}
+function notePassableSighting (block, entityId, who, self) {
+  const at = `${block.position.x}, ${block.position.y}, ${block.position.z}`
+  if (self) return learnPassable(block.type, who, at)
+  let seen = passableSightings.get(block.type)
+  if (!seen) { seen = new Map(); passableSightings.set(block.type, seen) }
+  seen.set(entityId, { who, at })
+  if (seen.size < 2) return false
+  const all = [...seen.values()]
+  return learnPassable(block.type, all.map(s => s.who).join(' + '), all.map(s => s.at).join(' and '))
+}
+// Check every body near the bot for an unnamed block it is standing inside.
+function learnPassableFromBodies () {
+  if (!bot.entity?.position || !bot.world) return
+  const bodies = []
+  if (!bot.vehicle) bodies.push({ e: bot.entity, self: true, who: 'I' })
+  for (const e of Object.values(bot.entities)) {
+    if (e === bot.entity || !e.position || e.vehicle) continue
+    if (e.type !== 'player' && e.type !== 'mob') continue
+    if (NOCLIP_ENTITY_NAMES.has(e.name)) continue
+    if (e.position.distanceTo(bot.entity.position) > 48) continue
+    bodies.push({ e, self: false, who: e.username || e.name || `entity ${e.id}` })
+  }
+  for (const { e, self, who } of bodies) {
+    const p = e.position
+    if (p.y - Math.floor(p.y) > 0.02) continue
+    const ys = [Math.floor(p.y)]
+    if ((e.height ?? 1.8) > 1.05) ys.push(Math.floor(p.y) + 1)
+    for (const y of ys) {
+      const b = bot.blockAt(new Vec3(Math.floor(p.x), y, Math.floor(p.z)))
+      if (!b || b.name || b.type === 0) continue
+      if (isPassableModded(b.type) || isShapedModded(b.type)) continue
+      notePassableSighting(b, e.id, who, self)
+    }
+  }
+}
+
 function stairShapes (meta) {
   const top = (meta & 4) !== 0
   const slab = top ? [0, 0.5, 0, 1, 1, 1] : [0, 0, 0, 1, 0.5, 1]
@@ -502,25 +606,28 @@ bot.once('spawn', () => {
   // (2026-10-08). Treat it like carpet — safe to stand in.
   if (mcData.blocksByName.snow_layer) mvts.carpets.add(mcData.blocksByName.snow_layer.id)
 
-  // Modded blocks report empty names on this Forge 1.12.2 server.  Most are
-  // decorative (lights, trim, charging pads) with no real server-side collision.
-  // A few — fertilizer bins, machine blocks — DO have partial collision that
-  // rubber-bands the bot.  Penalise only those known-solid types; everything
-  // else gets a soft cost so the pathfinder prefers air but CAN route through.
+  // Modded blocks report empty names on this Forge 1.12.2 server. Unknown
+  // ones read as solid cubes in getBlock below, so the planner already
+  // treats them as walls; known-solid types are also priced out here in case a
+  // shape slips through. Passable types (plants, clover) get a soft cost, so
+  // the pathfinder prefers air but CAN route through them.
   mvts.exclusionAreasStep.push((block) => {
     if (!block || !block.position || block.name) return 0
     if (SOLID_MODDED_TYPES.has(block.type)) return Infinity
     if (SLAB_MODDED_TYPES.has(block.type) || SHORT_MODDED_TYPES.has(block.type) || STAIR_MODDED_TYPES.has(block.type)) return 0
-    return 3
+    if (isPassableModded(block.type)) return 3
+    return 0
   })
 
   bot.pathfinder.setMovements(mvts)
+  setInterval(() => {
+    try { learnPassableFromBodies() } catch (e) { logEvent('collision', `learn check failed: ${e.message}`) }
+  }, 1000)
 
-  // Empty-name modded blocks: most are decorative with no real server-side
-  // collision — zero their shapes so mineflayer physics lets the bot walk
-  // through.  The few types with real partial collision (fertilizer bins,
-  // machine blocks) are forced to full-solid so the bot bumps off cleanly
-  // instead of rubber-banding into a wedge.
+  // Empty-name modded blocks get the shape their type is known to have:
+  // solid, short, slab or stair from the hand-made lists; none for passable
+  // types (seeded or learned, see SEED_PASSABLE_MODDED_TYPES); a full solid
+  // cube for everything still unknown.
   const _origGetBlock = bot.world.getBlock.bind(bot.world)
   bot.world.getBlock = (pos) => {
     const b = _origGetBlock(pos)
@@ -537,9 +644,12 @@ bot.once('spawn', () => {
       } else if (STAIR_MODDED_TYPES.has(b.type)) {
         b.boundingBox = 'block'
         b.shapes = stairShapes(b.metadata)
-      } else {
+      } else if (isPassableModded(b.type)) {
         b.boundingBox = 'empty'
         b.shapes = []
+      } else {
+        b.boundingBox = 'block'
+        b.shapes = [[0, 0, 0, 1, 1, 1]]
       }
     }
     // Lily-pad-covered water: make the water block appear solid so the
@@ -12761,22 +12871,44 @@ const CHAT_HANDLERS = [
           .finally(() => sustainResume('bee_voyage ended'))
         return
       }
-      // The igloo road is the only walking road home. On 2026-10-05 "come back
-      // to the farm" at the bee cross started it from its nearest leg 330
-      // blocks away, straight across the sea — off the road, refuse.
-      const p0 = bot.entity.position
-      const offRoad = Math.min(...ROUTES.farm_to_igloo.legs.map(l => Math.hypot(p0.x - l.x, p0.z - l.z)))
-      if (offRoad > 40) { say(`I know no walking road home from here — the nearest is ${offRoad.toFixed(0)} blocks off.`); return }
+      // Walking roads home: the igloo road and the Library road. Off both, refuse:
+      // on 2026-10-05 "come back to the farm" at the bee cross started the igloo
+      // road from its nearest leg 330 blocks away, straight across the sea.
+      const road = pickHomeRoute()
+      if (!road) { say('I do not know where I am yet.'); return }
+      if (road.off > 40) { say(`I know no walking road home from here — the nearest is ${road.off.toFixed(0)} blocks off.`); return }
       abortGen++
       followTarget = null; followEntity = null; followChainPos = 0
       sustainPause('walk_route')
-      say(`On my way home — ${away.toFixed(0)} blocks, over the roof and down to the field.`)
-      runWalkRoute('farm_to_igloo', { reverse: true, fromNearest: true })
+      say(road.name === 'farm_to_library'
+        ? `On my way home from the Library — ${away.toFixed(0)} blocks, round the west side and down the long grass.`
+        : `On my way home — ${away.toFixed(0)} blocks, over the roof and down to the field.`)
+      runWalkRoute(road.name, { reverse: true, fromNearest: true })
         .then((r) => {
-          if (r.ok) say('Home again, standing in the wheat field.')
+          if (r.ok) say(road.name === 'farm_to_library' ? 'Home again, at the corner of the wheat field.' : 'Home again, standing in the wheat field.')
           else say(`I got stuck coming home — ${r.error}, at leg ${r.leg ?? '?'}.`)
         })
         .catch(e => logEvent('route', `chat walk home failed: ${e.message}`))
+        .finally(() => sustainResume('walk_route ended'))
+    },
+  },
+  {
+    // "Roz, walk to the Library" / "go visit the Library" / "head up to the
+    // library". Needs a movement verb, like the igloo walk, so talk about the
+    // Library sends nobody anywhere; "from the library" is a trip home, and
+    // walk_home above catches it first. Ends at the top of the inside stairs.
+    name: 'walk_to_library',
+    pattern: /\b(?:go|goto|walk|head|travel|hike|run|visit|set\s*off|make\s+your\s+way)\b(?![^.!?]{0,30}\bfrom\s+the\s+library\b)[^.!?]{0,30}\blibrary\b/i,
+    handler: (user) => {
+      const no = libraryVisitRefusal()
+      if (no) { say(no); return }
+      abortGen++
+      followTarget = null; followEntity = null; followChainPos = 0
+      sustainPause('walk_route')
+      say('Setting off for the Library — round the west side, up the front steps and the stairs. About two minutes.')
+      runWalkRoute('farm_to_library', { fromNearest: true })
+        .then((r) => say(r.ok ? 'I am at the top of the Library stairs.' : `I did not get there — ${r.error}${r.leg ? `, at leg ${r.leg}` : ''}.`))
+        .catch(e => logEvent('route', `chat walk to library failed: ${e.message}`))
         .finally(() => sustainResume('walk_route ended'))
     },
   },
@@ -13124,12 +13256,25 @@ const CHAT_INTENTS = {
     },
   },
   walk_home: {
-    hint: 'come back home / return to the farm from somewhere far away (e.g. from the igloo). Walks the igloo route in reverse, over the roof garden and down to the field from the north',
+    hint: 'come back home / return to the farm from somewhere far away (from the igloo or the Library). Walks whichever road is nearer in reverse',
     run: () => {
       if (distanceFromHome() <= HOME_RADIUS) { say('I am already home.'); return }
+      const road = pickHomeRoute()
+      if (!road) { say('I do not know where I am yet.'); return }
+      if (road.off > 40) { say(`I know no walking road home from here — the nearest is ${road.off.toFixed(0)} blocks off.`); return }
       abortGen++
       followTarget = null; followEntity = null; followChainPos = 0
-      return runWalkRoute('farm_to_igloo', { reverse: true, fromNearest: true })
+      return runWalkRoute(road.name, { reverse: true, fromNearest: true })
+    },
+  },
+  walk_to_library: {
+    hint: 'walk to / visit the Library (the big stone building with the chimney, north-west of the farm) and climb to the top of its inside stairs — a ~2 min walk. NOT for questions about the Library, only for actually going there',
+    run: () => {
+      const no = libraryVisitRefusal()
+      if (no) { say(no); return }
+      abortGen++
+      followTarget = null; followEntity = null; followChainPos = 0
+      return runWalkRoute('farm_to_library', { fromNearest: true })
     },
   },
   harvest_potatoes: {
@@ -14392,6 +14537,158 @@ const ROUTES = {
       { x: -330, y: 63, z: 790, range: 2, note: 'arrival — outside the igloo' },
     ],
   },
+  // Farm ↔ Library. The legs follow the pathfinder trace of a walk from the
+  // Library's front door round its west side (a 2–4 block strip between the
+  // wall and a lake), down the long grass slope and east to the wheat field.
+  // They end on the ground below the front steps. Inside is not pathfinder
+  // country: the steps, the lobby and the stairs to the landing are
+  // fixed-heading walks, run by the route's arrive/leave hooks (see
+  // libraryClimbToLanding). journal/places/library.md has the measurements.
+  farm_to_library: {
+    label: 'farm → Library',
+    legs: [
+      { x: -290, y: 64, z: 548, range: 2, note: 'wheat field, north-west corner' },
+      { x: -315, y: 63, z: 547, range: 3, note: 'west of the field' },
+      { x: -329, y: 64, z: 538, range: 3, note: 'foot of the long grass' },
+      { x: -346, y: 66, z: 526, range: 3, note: 'long grass, mid-slope' },
+      { x: -359, y: 67, z: 517, range: 3, note: 'behind the chimney' },
+      { x: -366, y: 66, z: 509, range: 2, note: 'south-west corner, gravel' },
+      { x: -366, y: 65, z: 502, range: 2, note: 'west strip, between wall and lake' },
+      { x: -365, y: 64, z: 490, range: 2, note: 'west strip, north end' },
+      { x: -356, y: 64, z: 480, range: 1, note: 'front, below the steps' },
+    ],
+    // Already inside counts as being at the far end: no legs, just the climb.
+    atFarEnd: () => libraryZone() !== null,
+    arrive: (myGen) => libraryClimbToLanding(myGen),
+    leave: (myGen) => libraryDescendToSteps(myGen),
+  },
+}
+
+// ── The Library: front steps, lobby and stairs ───────────────────────────
+// Every line here is a straight walk at a fixed heading along a line a bot
+// has walked without damage. The front steps are three wide (x -357…-355)
+// between solid side walls (4037); a crooked climb puts the head into the
+// wall, so the bot lines up on the middle before it starts. The inside
+// stairs are two wide (z 496–497), ascending east to the landing at y 70.
+const LIBRARY = {
+  stepsX: -355.5,        // middle of the front steps; also the lobby walking line
+  belowStepsZ: 479.8,    // walking out: z <= this is the ground below the steps
+  lobbyZ: 485.4,         // climbing in: z >= this is the lobby floor
+  stairZ: 497.0,         // centre line of the inside stairs
+  stairFootX: -355.3,    // walking down: x <= this is the living-rock floor
+  landingX: -349.5,      // climbing up: x >= this is the landing
+}
+// No new visits after this tick: the walk takes about two minutes and the
+// Library has no bed.
+const LIBRARY_LAST_START_TICK = 10000
+
+function libraryZone () {
+  const p = bot.entity?.position
+  if (!p) return null
+  if (p.y >= 68.5 && p.x >= -352 && p.x <= -335 && p.z >= 488 && p.z <= 506) return 'upstairs'
+  // Lobby and living-rock floor, west of the concrete (x -350 and east).
+  if (p.y >= 64.5 && p.y < 68.5 && p.x >= -358 && p.x <= -351 && p.z >= 484 && p.z <= 499) return 'lobby'
+  return null
+}
+
+// Line up on one axis with the door-exit taps (moves at most a few blocks).
+async function libraryAlign (axis, target) {
+  const cur = bot.entity.position[axis]
+  if (Math.abs(cur - target) <= 0.1) return
+  await exitAlignStep(axis, target, cur > target ? 'lte' : 'gte')
+  const off = bot.entity.position[axis] - target
+  if (Math.abs(off) > 0.25) throw new Error(`could not line up on ${axis} ${target} (off by ${off.toFixed(2)})`)
+}
+
+async function libraryWalk (myGen, axis, target, direction, yaw, { jump = false, maxMs = 6000 } = {}) {
+  const faced = await faceYaw(yaw)
+  if (!faced.ok) throw new Error(`turn did not take for the walk to ${axis} ${target}`)
+  if (jump) bot.setControlState('jump', true)
+  let r
+  try {
+    r = await walkUntilAxis({ axis, target, direction, maxMs, bailOnDamage: true, maintainYaw: yaw })
+  } finally {
+    bot.setControlState('jump', false)
+  }
+  checkAbort(myGen)
+  if (!r.reached) {
+    const why = r.died ? 'died' : r.hpDrop ? 'took damage' : r.wrongWay ? 'went the wrong way' : 'timed out'
+    throw new Error(`walk to ${axis} ${target} ${why} at (${r.x}, ${r.y}, ${r.z})`)
+  }
+  return r
+}
+
+// From below the front steps, or anywhere in the lobby, to the landing.
+async function libraryClimbToLanding (myGen) {
+  const zone = libraryZone()
+  if (zone === 'upstairs') return
+  if (zone === 'lobby') {
+    await pathTo({ x: -356, y: 66, z: 490 }, 0, 15000)
+    checkAbort(myGen)
+  } else {
+    await pathTo({ x: -356, y: 64, z: 480 }, 0, 15000)
+    checkAbort(myGen)
+    const p = bot.entity.position
+    if (Math.abs(p.z - 480.5) > 1 || Math.abs(p.y - 64) > 0.6) throw new Error(`not below the front steps (at ${posStr(p)})`)
+    await libraryAlign('x', LIBRARY.stepsX)
+    await libraryWalk(myGen, 'z', LIBRARY.lobbyZ, 'gte', Math.PI, { jump: true })
+  }
+  if (libraryZone() !== 'lobby') throw new Error(`not in the lobby (at ${posStr(bot.entity.position)})`)
+  await libraryAlign('x', LIBRARY.stepsX)
+  // Stop a little short; the taps settle onto the centre line.
+  await libraryWalk(myGen, 'z', LIBRARY.stairZ - 0.3, 'gte', Math.PI)
+  await libraryAlign('z', LIBRARY.stairZ)
+  await libraryWalk(myGen, 'x', LIBRARY.landingX, 'gte', -Math.PI / 2, { jump: true })
+  if (libraryZone() !== 'upstairs') throw new Error(`did not reach the landing (at ${posStr(bot.entity.position)})`)
+  logEvent('library', `on the landing at ${posStr(bot.entity.position)}`)
+}
+
+// From upstairs or the lobby to the ground below the front steps.
+async function libraryDescendToSteps (myGen) {
+  const zone = libraryZone()
+  if (!zone) return
+  if (zone === 'upstairs') {
+    await pathTo({ x: -350, y: 70, z: 497 }, 0, 15000)
+    checkAbort(myGen)
+    if (libraryZone() !== 'upstairs') throw new Error(`lost the landing (at ${posStr(bot.entity.position)})`)
+    await libraryAlign('z', LIBRARY.stairZ)
+    await libraryWalk(myGen, 'x', LIBRARY.stairFootX, 'lte', Math.PI / 2)
+    if (libraryZone() !== 'lobby') throw new Error(`not down the stairs (at ${posStr(bot.entity.position)})`)
+  } else {
+    await pathTo({ x: -356, y: 66, z: 490 }, 0, 15000)
+    checkAbort(myGen)
+  }
+  await libraryAlign('x', LIBRARY.stepsX)
+  await libraryWalk(myGen, 'z', LIBRARY.belowStepsZ, 'lte', 0, { maxMs: 8000 })
+  if (bot.entity.position.y > 64.6) throw new Error(`not down the front steps (at ${posStr(bot.entity.position)})`)
+  logEvent('library', `out the front door at ${posStr(bot.entity.position)}`)
+}
+
+// Why a Library walk should not start now, or null if it can.
+function libraryVisitRefusal () {
+  if (taskBusy()) return `I am in the middle of ${activeTask.name} — tell me to stop first.`
+  if (libraryZone() === 'upstairs') return 'I am already at the top of the Library stairs.'
+  const t = bot.time?.timeOfDay ?? 0
+  if (!bot.time?.isDay || t >= LIBRARY_LAST_START_TICK) return 'Too late in the day to walk to the Library — I will go in the morning.'
+  const p = bot.entity?.position
+  if (!p) return 'I do not know where I am yet.'
+  if (!libraryZone()) {
+    const off = Math.min(...ROUTES.farm_to_library.legs.map(l => Math.hypot(p.x - l.x, p.z - l.z)))
+    if (off > 40) return `I know no walking road to the Library from here — the nearest is ${off.toFixed(0)} blocks off.`
+  }
+  return null
+}
+
+// The walking road home from here: the one with a leg nearest to us.
+// Inside the Library counts as on the Library road.
+function pickHomeRoute () {
+  const p = bot.entity?.position
+  if (!p) return null
+  if (libraryZone()) return { name: 'farm_to_library', off: 0 }
+  const nearest = (r) => Math.min(...ROUTES[r].legs.map(l => Math.hypot(p.x - l.x, p.z - l.z)))
+  const lib = nearest('farm_to_library')
+  const igloo = nearest('farm_to_igloo')
+  return lib < igloo ? { name: 'farm_to_library', off: lib } : { name: 'farm_to_igloo', off: igloo }
 }
 
 // Walk a named route leg by leg. Reports per-leg outcomes instead of a single
@@ -14420,33 +14717,44 @@ async function runWalkRoute (routeName, { reverse = false, maxLegs = 0, fromNear
   if (!task.allowed) return task.busyReply
   const { myGen, startDeaths } = task
   let legs = reverse ? [...route.legs].reverse() : route.legs
-  // fromNearest drops the legs already behind us, so "come home" works from
-  // anywhere along the route instead of only from the far end. Without it, a
-  // reverse walk started halfway would first trek back to the igloo to reach
-  // leg 1.
-  if (fromNearest && legs.length) {
-    const p = bot.entity?.position
-    if (p) {
-      let best = 0
-      let bestDist = Infinity
-      legs.forEach((l, i) => {
-        const d = Math.hypot(p.x - l.x, p.z - l.z)
-        if (d < bestDist) { bestDist = d; best = i }
-      })
-      if (best > 0) {
-        logEvent('route', `starting at leg ${best + 1}/${legs.length} — nearest to us (${bestDist.toFixed(0)}b), skipping the rest`)
-        legs = legs.slice(best)
-      }
-    }
-  }
-  // maxLegs walks only a prefix of the chain — for testing one rung of the
-  // ladder at a time instead of committing to the whole 235-block walk.
-  if (maxLegs > 0 && maxLegs < legs.length) legs = legs.slice(0, maxLegs)
+  let truncated = false
   const results = []
-  hopAssistScope = `walk_route:${routeName}`
-  logEvent('route', `walking ${route.label}${reverse ? ' reversed' : ''} — ${legs.length} legs, hop assist on`)
   if (isBedtime()) logEvent('route', 'starting after bedtime — walking through the night by design')
   try {
+    // A route whose far end is indoors (the Library) first walks out to
+    // where its legs begin. Hop assist stays off indoors: its jump pulses
+    // would undo the line-up taps.
+    if (reverse && route.leave) {
+      await route.leave(myGen)
+      checkAbort(myGen)
+    }
+    // fromNearest drops the legs already behind us, so "come home" works from
+    // anywhere along the route instead of only from the far end. Without it, a
+    // reverse walk started halfway would first trek back to the igloo to reach
+    // leg 1.
+    if (!reverse && route.atFarEnd?.()) {
+      logEvent('route', `already at the far end of ${route.label} — no legs to walk`)
+      legs = []
+    } else if (fromNearest && legs.length) {
+      const p = bot.entity?.position
+      if (p) {
+        let best = 0
+        let bestDist = Infinity
+        legs.forEach((l, i) => {
+          const d = Math.hypot(p.x - l.x, p.z - l.z)
+          if (d < bestDist) { bestDist = d; best = i }
+        })
+        if (best > 0) {
+          logEvent('route', `starting at leg ${best + 1}/${legs.length} — nearest to us (${bestDist.toFixed(0)}b), skipping the rest`)
+          legs = legs.slice(best)
+        }
+      }
+    }
+    // maxLegs walks only a prefix of the chain — for testing one rung of the
+    // ladder at a time instead of committing to the whole 235-block walk.
+    if (maxLegs > 0 && maxLegs < legs.length) { legs = legs.slice(0, maxLegs); truncated = true }
+    hopAssistScope = `walk_route:${routeName}`
+    logEvent('route', `walking ${route.label}${reverse ? ' reversed' : ''} — ${legs.length} legs, hop assist on`)
     // A route that starts outdoors cannot be walked from indoors: the
     // pathfinder cannot cross this server's door, so leg 1 would be planned
     // straight through a wall. Waking up in bed and setting off is the normal
@@ -14512,6 +14820,10 @@ async function runWalkRoute (routeName, { reverse = false, maxLegs = 0, fromNear
         logEvent('route', `stopping: ${off.toFixed(1)} blocks off leg ${i + 1} — lost, not sloppy`)
         return { ok: false, error: 'lost', leg: i + 1, off: +off.toFixed(1), results }
       }
+    }
+    if (!reverse && route.arrive && !truncated) {
+      hopAssistScope = null
+      await route.arrive(myGen)
     }
     logEvent('route', `${route.label}${reverse ? ' reversed' : ''} complete — ${legs.length} legs`)
     return { ok: true, route: routeName, reverse, legs: legs.length, results }
@@ -15882,6 +16194,58 @@ registerCommand('block_at', (args, cmd) => {
   const b = bot.blockAt(bot.entity.position.offset(args.dx ?? 0, args.dy ?? 0, args.dz ?? 0))
   if (!b) return { ok: false, error: 'no block' }
   return { ok: true, name: b.name, displayName: b.displayName, metadata: b.metadata, type: b.type, x: b.position.x, y: b.position.y, z: b.position.z }
+})
+// Lift the bot onto the top face of the block its feet are sunk into, when it
+// is sunk by no more than max_depth (default 0.3). A bot left slightly inside
+// a block that it now reads as solid cannot move: every neighbour is a wall.
+// The server accepts a small upward correction.
+registerCommand('unembed', (args, cmd) => {
+  const maxDepth = Number(args.max_depth ?? 0.3)
+  const p = bot.entity.position
+  const b = bot.blockAt(new Vec3(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z)))
+  if (!b || !b.shapes || !b.shapes.length) return { ok: false, error: 'no solid block at feet', y: p.y }
+  const top = b.position.y + Math.max(...b.shapes.map(s => s[4]))
+  const depth = top - p.y
+  if (depth <= 0) return { ok: true, moved: false, y: +p.y.toFixed(3), top }
+  if (depth > maxDepth) return { ok: false, error: 'sunk too deep', depth: +depth.toFixed(3), top }
+  p.y = top
+  bot.entity.velocity.y = 0
+  bot.entity.onGround = true
+  return { ok: true, moved: true, depth: +depth.toFixed(3), y: top, type: b.type }
+})
+registerCommand('collision', (args, cmd) => {
+  // args: { passable?: [type], forget?: [type], survey?: radius }
+  // Lists how unnamed modded types are treated; marks types passable by hand,
+  // forgets learned ones, and with `survey` counts the unnamed types within
+  // that radius that are still treated as solid only because they are unknown.
+  let changed = false
+  for (const t of (Array.isArray(args.passable) ? args.passable : [])) {
+    if (learnPassable(Number(t), 'ctl', 'by hand')) changed = true
+  }
+  for (const t of (Array.isArray(args.forget) ? args.forget : [])) {
+    if (learnedPassable.delete(Number(t))) { changed = true; logEvent('collision', `forgot type ${t} (ctl)`) }
+  }
+  if (changed) savePassableTypes()
+  const out = {
+    ok: true,
+    seed: [...SEED_PASSABLE_MODDED_TYPES],
+    learned: Object.fromEntries(learnedPassable),
+    pending: Object.fromEntries([...passableSightings].map(([t, m]) => [t, [...m.values()]])),
+  }
+  if (args.survey) {
+    const r = Math.min(Number(args.survey) || 12, 24)
+    const c = bot.entity.position.floored()
+    const unknown = {}
+    for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) for (let dz = -r; dz <= r; dz++) {
+      const b = bot.blockAt(c.offset(dx, dy, dz))
+      if (!b || b.name || b.type === 0 || isShapedModded(b.type) || isPassableModded(b.type)) continue
+      const u = unknown[b.type] || (unknown[b.type] = { count: 0, samples: [] })
+      u.count++
+      if (u.samples.length < 3) u.samples.push(`${b.position.x}, ${b.position.y}, ${b.position.z}`)
+    }
+    out.unknownNearby = unknown
+  }
+  return out
 })
 registerCommand('block_at_abs', (args, cmd) => {
   const b = bot.blockAt(new Vec3(Number(args.x), Number(args.y), Number(args.z)))

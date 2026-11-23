@@ -11,6 +11,29 @@ Reverse-chronological. Raw observations land here first; canonical facts get pro
 
 ## Recent sessions
 
+### 2026-11-23 (later) — helm: walking home from the Library (day 59482–59483)
+
+- **Start:** spawned upstairs in the [[../places/library|Library]] at (-344, 70, 497), HP 20, food 20, deaths 0, day 59482 tick 1212. Helm mode, with only Quesss online.
+- **Walked home alone** for the first time: down the inside stairs (first proven descent), straight out the front steps, round the west side and down the long grass to the wheat field. No damage. The route and its measurements are in [[../places/library]]. The west side is a narrow strip along a **lake** nobody had noted before.
+- **`walk_home` refused at the Library:** its only road was the igloo road, 88 blocks off. Now fixed: `pickHomeRoute()` picks the nearer of the igloo and Library roads.
+- **New routine `walk_to_library`** (reflex and LLM intent), plus `ROUTES.farm_to_library` with `arrive`/`leave` hooks for the indoor walks. Quesss asked for it so bots can visit the top of the Library stairs outside helm.
+- **Coffee auto-harvest in helm:** it fired on its own (12/12 ripe, 38 beans stored). Quesss confirmed that is wanted unless the chest is full. Not a bug.
+- **Counting lesson:** Roz reported six cows from a truncated entity list; there were nine. Count before reporting.
+- **Unnamed modded blocks are now SOLID by default** (Quesss's idea, day 59491). Before, they were air, and every wrong guess cost a suffocation or a floor crawl (all 22 entries in `SOLID_MODDED_TYPES`). Now a type becomes passable only when a body is seen standing inside it: Roz herself once, or two different players or mobs. Seeds: 3994 coffee, 3855 clover, 4029 (shape varies), **571 the house door**. Learned types are saved in `data/passable-types.json`; ctl `collision` lists them and surveys.
+  - **Near miss on the first deploy:** the house door is unnamed type 571 and read as a solid cube, open or closed. A survey caught it before bedtime, and it is now a seed. Doors must always be seeded.
+  - **Counting bug, fixed:** one creeper's feet and head counted as two sightings. Sightings now count per entity.
+  - **Verified live:** auto-sleep walk to bed, `go_outside` (1.9 s, 0 snags) and `come_inside` (1.8 s, door opened, 0 snags). Learned so far: 1703 and 1707, underground cave types (creeper + bat, creeper + spider).
+  - **Survey of the farm house, r 16:** 38 unknown types are now walls, mostly floors (401, 253), walls, roof plants (1534–1541, the lighthouse crop family) and decor. Not yet walked under the new rules: the coffee rows, potato patch, hopper and furnace corner, bee cabin, cabin corridor, Library route.
+
+### 2026-11-23 — helm at the bee cross (hive season #11, day 59434–59452)
+
+- **Start:** spawned at the bee cabin (-405.5, 66, 239.5), HP 20, food 20, deaths 0, day 59434 tick 8769. Helm mode; only Quesss online with Roz.
+- **Night skips on Roz alone:** with two online, one bed is 50%, so every night skipped the moment the bee cabin bed took her (16 nights, all clean). Auto-sleep's first click sometimes lands a few ticks early ("You can only sleep at night"), and the retry 2 s later succeeds.
+- **Wake-up HP blip:** right after a skip, `pos` has twice read HP 19.67–19.83, back to 20 within 1.5 s with no entity in 8 blocks and a single `[hurt] HP now 20/20` line. A health resync on waking, not damage.
+- **Bees:** Quesss asked for the bees; the tend_bees reflex started the keeper at 01:02Z (no ctl). 27 rounds, no queen gap: apiaries turn over about every 16 min, bee houses on their own clocks. A bee house can show a live queen with an empty drone slot ("no wintry drone in the outputs"); it fills when that queen dies and her drones land in the outputs. Drone pack stack filled to 64 twice and was thrown behind the cabin. Rounds that start at dusk are cut short ("bedtime", up to 9 of 9 hives not read); the next morning round catches up.
+- **Balls of fur → chest verified live:** at Quesss's request, `bee_chores {force:true}` moved all 65 to the cabin chest. See [[../places/bee-cabin]].
+- **Wheat at the farm** reported 108/108 mature at 01:38Z; left alone (no harvest requested).
+
 ### 2026-11-20 — helm at the farm
 
 - **Muse wedges in the sheep pen door**, not the house door: inside the door block at (-278, 64, 574) while its chat says it is indoors. One right-click from the outside pad freed it, and that click left the door open; a second click closed it (lower half meta 5 = open, 1 = closed). Check the meta after every pen-door click.
