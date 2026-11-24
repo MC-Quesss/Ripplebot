@@ -277,3 +277,13 @@ Leave the farm in the morning; walk in by the east door; gaze at the fire; climb
 **In code:** `runLibraryWander` in bot.js. ctl `library_wander` goes now; `library_wander_auto` (`enabled`) toggles the automatic run, once a game day between ticks 1000 and 4000 when Roz is home and free, never in helm mode. Each stop lasts 30 s. After tick 8000 it skips the stops and heads straight home. If it fails outside the walls, it walks home; if it fails inside, it stops and logs that it needs a hand.
 
 **First run of the code — 2026-11-24, day 59601, Quesss watching:** started at tick 118 from the farmhouse, home at tick 2698: **2 min 9 s, every axis walk OK with 0 snags, no damage, no help needed.** House to the fire 29 s; fire 30 s; climb 1.6 s; books 30 s; down, south, out the door and home about 33 s. The door walks drifted to z 501.30 going in and still passed; centring is still worth keeping.
+
+### Stranded after a restart (2026-11-24, day 59604) — and the fix
+
+Muse set off on the automatic wander, dropped off the server 43 s later, and came back **standing in the Library with no trip running**. Nothing brought it home: the wander does not resume after a restart, the automatic start only fires within 60 blocks of the farm, and the ordinary walk home refuses from that far out. It then took up fire duty from there and told Quesss it was "at the meadow bee cross"; it had no idea where it was. Quesss found it by the fire and led it out with "follow me".
+
+The fix in bot.js (written the same evening; **not yet run live**):
+- `insideLibrary()` / `libraryUpstairs()`: a box, x -361.5 to -333.2, z 484.5 to 510.5, y 64 to 82 (upstairs from y 69). The east door cell and the patio are outside it. `describeWhereabouts` now says "inside the Library, on the ground floor / upstairs among the bookshelves … the way home is out the east door", and the Library is in `KNOWN_PLACES`.
+- `runLibraryReturn`: from anywhere inside, down the stairs if upstairs (landing, centre line, down, south first), or off the stairs' foot to the south, then the fireplace spot, the east door, the field corner, inside. ctl `library_return`.
+- `tryLibraryReturn` in the 5 s timer: inside the Library, idle, daytime before tick 11500, not following anyone, not in helm mode. It runs during fire duty too (the duty loop waits while it is busy). After a failure it waits 10 minutes.
+- The walk out and the stairs descent are now shared by the wander and the return (`libraryComeDown`, `libraryLeaveAndGoHome`).

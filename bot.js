@@ -1359,6 +1359,7 @@ function startAutoSleep () {
     tryFoodSafety()
     tryCoffeeAuto()
     tryLibraryWander()
+    tryLibraryReturn()
     tryBeeFoodRun()
     tryCollectBake()
     tryRestockSupplies()
@@ -5976,6 +5977,7 @@ const KNOWN_PLACES = [
   { name: 'the bee cove birches', x: -425, y: 65, z: 267 },
   { name: 'the ocean cabin', x: -125, y: 65, z: 332 },
   { name: 'the igloo', x: -325, y: 65, z: 796 },
+  { name: 'the Library (fireplace and bookshelves; east door on its east side)', x: -345, y: 65, z: 500 },
 ]
 function compassFrom (dx, dz) {
   const names = ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest']
@@ -6002,6 +6004,9 @@ function describeWhereabouts () {
   if (insideBeeCabin()) return 'inside the bee cabin at the bee cove (your bed here is beside you)'
   if (nearBeeCross()) return 'at the bee cross at the bee cove, where you keep the bees; the bee cabin with your bed is a few steps north'
   if (onBeeDock()) return 'on the dock at the bee cove; the bee cross and the bee cabin are up the shore to the north'
+  if (insideLibrary()) return libraryUpstairs()
+    ? 'inside the Library, upstairs among the bookshelves, about 90 blocks northwest of the farmhouse; the way home is down the stairs and out the east door'
+    : 'inside the Library, on the ground floor (the fireplace is on the south wall), about 90 blocks northwest of the farmhouse; the way home is out the east door'
   if (distanceFromHome() > HOME_RADIUS) {
     const near = knownPlacesFromHere()[0]
     const wet = bot.entity?.isInWater ? 'in the water, ' : ''
@@ -10018,14 +10023,19 @@ function unembedFeet (maxDepth = 0.3) {
   return { ok: true, moved: true, depth: +depth.toFixed(3), y: top, type: b.type }
 }
 
-async function runLibraryWander ({ user = null, auto = false } = {}) {
-  const task = beginTask('library_wander', auto ? 'morning' : user, { busyLine: auto ? null : BUSY_LINE })
-  if (!task.allowed) return { ok: false, ...task.busyReply }
-  const { myGen } = task
-  const log = (m) => logEvent('library-wander', m)
-  const tod = () => bot.time?.timeOfDay ?? 0
+// Inside the Library's walls, by position. The east door cell (x -333) and
+// the patio beyond it are outside; upstairs is the second floor (y 69 up).
+function insideLibrary () {
+  const p = bot.entity?.position
+  return !!p && p.x > -361.5 && p.x < -333.2 && p.z > 484.5 && p.z < 510.5 && p.y > 64 && p.y < 82
+}
+function libraryUpstairs () { return insideLibrary() && bot.entity.position.y >= 69 }
+
+// Movement helpers shared by the wander and the walk home. Each one checks
+// for a stop or a death after it moves, and throws when a leg falls short.
+function libraryMoves (task) {
   const step = (what) => {
-    checkAbort(myGen)
+    checkAbort(task.myGen)
     if (task.died()) throw new Error(`died ${what}`)
   }
   // An axis walk that must arrive; a short one is a wall or a wrong line.
@@ -10047,22 +10057,60 @@ async function runLibraryWander ({ user = null, auto = false } = {}) {
     if (z < LIBRARY_DOOR_Z) await leg(Math.PI, 'z', LIBRARY_DOOR_Z, 'gte', 1500, 'centring on the east door')
     else await leg(0, 'z', LIBRARY_DOOR_Z, 'lte', 1500, 'centring on the east door')
   }
+  return { step, leg, reach, centreOnDoor }
+}
+
+// From anywhere upstairs: to the landing, down the flight on its centre
+// line, then south off the stairs' foot to the fireplace spot. South first:
+// a straight path from the stairs' foot to the door snags on the bottom step.
+async function libraryComeDown (m) {
+  const what = 'coming down the stairs'
+  await m.reach(LIBRARY_LANDING, 0, 1.0, what, 10000)
+  if (bot.entity.position.z > 497.1) await m.leg(0, 'z', 497.05, 'lte', 1500, what)
+  await m.leg(Math.PI / 2, 'x', -349.5, 'lte', 3000, what)
+  await m.leg(Math.PI / 2, 'x', -355.3, 'lte', 5000, what)
+  if (bot.entity.position.y > 67) throw new Error(`${what}: still on the stairs (y ${bot.entity.position.y.toFixed(2)})`)
+  await m.leg(Math.PI, 'z', 499.6, 'gte', 3000, what)
+  await m.reach(LIBRARY_FIRE_SPOT, 0, 1.0, what)
+}
+
+// From the fireplace spot (or anywhere the pathfinder can reach the door
+// from): out by the east door and back to the farmhouse.
+async function libraryLeaveAndGoHome (m) {
+  let what = 'going out by the east door'
+  await m.reach(LIBRARY_EAST_INSIDE, 0, 1.0, what)
+  await m.centreOnDoor()
+  await m.leg(-Math.PI / 2, 'x', -331.4, 'gte', 4000, what)
+  await m.leg(Math.PI, 'z', 503.5, 'gte', 3000, what)
+  await m.leg(-Math.PI / 2, 'x', -329.5, 'gte', 3000, what)
+  what = 'walking home'
+  await m.reach(LIBRARY_FIELD_CORNER, 1, 2.0, what, 20000)
+  await runGoInside()
+  m.step(what)
+}
+
+async function runLibraryWander ({ user = null, auto = false } = {}) {
+  const task = beginTask('library_wander', auto ? 'morning' : user, { busyLine: auto ? null : BUSY_LINE })
+  if (!task.allowed) return { ok: false, ...task.busyReply }
+  const m = libraryMoves(task)
+  const { leg, reach } = m
+  const log = (msg) => logEvent('library-wander', msg)
+  const tod = () => bot.time?.timeOfDay ?? 0
   const dwell = async (look, what) => {
     await bot.look(look.yaw, look.pitch, true)
     log(`${what} (tick ${tod()})`)
     const until = Date.now() + LIBRARY_DWELL_MS
-    while (Date.now() < until) { await sleep(1000); step(what) }
+    while (Date.now() < until) { await sleep(1000); m.step(what) }
   }
   const late = () => tod() >= LIBRARY_SKIP_STOPS_TICK || isBedtime()
   let stage = 'leaving home'
-  let inside = false // inside the Library walls
   try {
     if (!bot.time?.isDay || isBedtime()) { log('not daytime — not going'); return { ok: false, error: 'not daytime' } }
     log(`start (tick ${tod()}, ${auto ? 'auto' : `asked by ${user || 'ctl'}`})`)
     if (auto && brainMode !== 'helm' && banalPlatitudesOk()) say('Going to the Library for a while. Back before dark.')
     if (insideHouse()) {
       await runGoOutside('the Library')
-      step(stage)
+      m.step(stage)
       if (insideHouse()) throw new Error('still inside the house after the exit attempt')
     }
 
@@ -10075,9 +10123,8 @@ async function runLibraryWander ({ user = null, auto = false } = {}) {
     stage = 'going in by the east door'
     await leg(Math.PI / 2, 'x', -331.4, 'lte', 4000, stage)
     await leg(0, 'z', 501.6, 'lte', 4000, stage)
-    await centreOnDoor()
+    await m.centreOnDoor()
     await leg(Math.PI / 2, 'x', -335.5, 'lte', 4000, stage)
-    inside = true
 
     stage = 'walking to the fireplace'
     await reach(LIBRARY_FIRE_SPOT, 0, 1.0, stage)
@@ -10106,31 +10153,13 @@ async function runLibraryWander ({ user = null, auto = false } = {}) {
       if (!late()) await dwell(LIBRARY_BOOKS_LOOK, 'looking at the books')
 
       stage = 'coming down the stairs'
-      await reach(LIBRARY_LANDING, 0, 1.0, stage, 10000)
-      if (bot.entity.position.z > 497.1) await leg(0, 'z', 497.05, 'lte', 1500, stage)
-      await leg(Math.PI / 2, 'x', -349.5, 'lte', 3000, stage)
-      await leg(Math.PI / 2, 'x', -355.3, 'lte', 5000, stage)
-      if (bot.entity.position.y > 67) throw new Error(`${stage}: still on the stairs (y ${bot.entity.position.y.toFixed(2)})`)
-      // South before east: a straight path from the stairs' foot to the
-      // door snags on the bottom step.
-      await leg(Math.PI, 'z', 499.6, 'gte', 3000, stage)
-      await reach(LIBRARY_FIRE_SPOT, 0, 1.0, stage)
+      await libraryComeDown(m)
     } else {
       log(`late (tick ${tod()}) — skipping the upstairs`)
     }
 
-    stage = 'going out by the east door'
-    await reach(LIBRARY_EAST_INSIDE, 0, 1.0, stage)
-    await centreOnDoor()
-    await leg(-Math.PI / 2, 'x', -331.4, 'gte', 4000, stage)
-    await leg(Math.PI, 'z', 503.5, 'gte', 3000, stage)
-    await leg(-Math.PI / 2, 'x', -329.5, 'gte', 3000, stage)
-    inside = false
-
-    stage = 'walking home'
-    await reach(LIBRARY_FIELD_CORNER, 1, 2.0, stage, 20000)
-    await runGoInside()
-    step(stage)
+    stage = 'going home'
+    await libraryLeaveAndGoHome(m)
     log(`home (tick ${tod()})`)
     libraryWanderLast = { at: new Date().toISOString(), result: 'done' }
     return { ok: true }
@@ -10139,16 +10168,55 @@ async function runLibraryWander ({ user = null, auto = false } = {}) {
     libraryWanderLast = { at: new Date().toISOString(), result: aborted ? 'stopped' : 'failed', stage, error: aborted ? null : e.message }
     if (!aborted) log(`failed ${stage}: ${e.message}`)
     // Outside the walls and not stopped: the way home is open ground.
-    if (!aborted && !inside && !task.died() && distanceFromHome() > HOME_RADIUS) {
+    // Inside, the walk-home watcher picks it up (tryLibraryReturn).
+    if (!aborted && !insideLibrary() && !task.died() && distanceFromHome() > HOME_RADIUS) {
       try {
         if (await pathToSure(LIBRARY_FIELD_CORNER, 1, 2.0, 3, 20000)) await runGoInside()
       } catch (e2) { log(`walk home after failure: ${e2.message}`) }
     }
-    if (inside && !aborted) log(`stuck inside the Library at ${posStr(bot.entity.position)} — needs a hand`)
     return { ok: false, error: e.message, stage }
   } finally {
     bot.setControlState('sneak', false)
     bot.setControlState('jump', false)
+    task.end()
+  }
+}
+
+// Walk home from wherever she stands inside the Library: down the stairs if
+// she is upstairs, off the stairs' foot to the south, then out by the east
+// door. For a bot that finds itself there with no trip running (a restart
+// mid-wander, a failed leg, being led there).
+let libraryReturnCooldownUntil = 0
+let libraryReturnLast = null
+async function runLibraryReturn ({ user = null, auto = false } = {}) {
+  if (!insideLibrary()) return { ok: false, error: 'not in the Library' }
+  const task = beginTask('library_return', auto ? 'found herself in the Library' : user, { busyLine: auto ? null : BUSY_LINE })
+  if (!task.allowed) return { ok: false, ...task.busyReply }
+  const m = libraryMoves(task)
+  const log = (msg) => logEvent('library-wander', msg)
+  const p = bot.entity.position
+  log(`walk home: start at ${posStr(p)} (${libraryUpstairs() ? 'upstairs' : 'ground floor'}, tick ${bot.time?.timeOfDay}, ${auto ? 'auto' : `asked by ${user || 'ctl'}`})`)
+  try {
+    if (libraryUpstairs()) {
+      await libraryComeDown(m)
+    } else {
+      // Beside the stairs' foot: step south off it before pathing east.
+      if (p.x <= -352.5 && p.z < 499.6) await m.leg(Math.PI, 'z', 499.6, 'gte', 3000, 'stepping south of the stairs')
+      await m.reach(LIBRARY_FIRE_SPOT, 0, 1.0, 'walking to the fireplace')
+    }
+    await libraryLeaveAndGoHome(m)
+    log(`walk home: home (tick ${bot.time?.timeOfDay})`)
+    libraryReturnLast = { at: new Date().toISOString(), result: 'done' }
+    return { ok: true }
+  } catch (e) {
+    const aborted = e.name === 'AbortError'
+    libraryReturnLast = { at: new Date().toISOString(), result: aborted ? 'stopped' : 'failed', error: aborted ? null : e.message }
+    if (!aborted) {
+      libraryReturnCooldownUntil = Date.now() + 10 * 60_000
+      log(`walk home failed: ${e.message}${insideLibrary() ? ' — still inside the Library, needs a hand' : ''}`)
+    }
+    return { ok: false, error: e.message }
+  } finally {
     task.end()
   }
 }
@@ -10170,6 +10238,21 @@ async function tryLibraryWander () {
   if (distanceFromHome() > HOME_RADIUS) return
   libraryWanderLastDay = t.day
   await runLibraryWander({ auto: true })
+}
+
+// Inside the Library with nothing running, by day: walk home. Runs on fire
+// duty too (the duty loop waits while this task is active). Not in helm
+// mode, and not while someone is leading her (follow).
+async function tryLibraryReturn () {
+  if (brainMode === 'helm' || !insideLibrary()) return
+  if (taskBusy() || goInsideBusy || autoSleepBusy || penTraversalBusy || coffeeAutoBusy) return
+  if (foodSafetyBusy || restockBusy || beeState.inRound || reinasState.inRound) return
+  if (rpsCurrentRival || followTarget || storyTimeActive) return
+  if (!bot.entity || !bot.world || bot.isSleeping || bot.vehicle || bot.currentWindow) return
+  if (!bot.time?.isDay || (bot.time.timeOfDay ?? 0) >= 11500) return
+  if (Date.now() < libraryReturnCooldownUntil) return
+  if (bot.pathfinder?.isMoving?.()) return
+  await runLibraryReturn({ auto: true })
 }
 
 // Bake any raw potatoes in inventory using the kitchen furnace.
@@ -16789,6 +16872,10 @@ registerCommand('coffee_auto', (args, cmd) => {
 // pauses the once-a-morning automatic outing.
 registerCommand('library_wander', (args, cmd) => {
   return startAsync('library-wander', () => runLibraryWander({ user: args.user || 'ctl' }))
+})
+registerCommand('library_return', (args, cmd) => {
+  if (!insideLibrary()) return { ok: false, error: 'not in the Library', last: libraryReturnLast }
+  return startAsync('library-wander', () => runLibraryReturn({ user: args.user || 'ctl' }))
 })
 registerCommand('library_wander_auto', (args, cmd) => {
   if (typeof args.enabled === 'boolean') libraryWanderAuto = args.enabled

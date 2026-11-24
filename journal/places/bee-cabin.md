@@ -175,3 +175,30 @@ Dad asked for the birch/charcoal/potato routine to run on its own. It runs after
 - Around midday (tick ~6800) the sky went dark in an eclipse. The hives stopped with the status **"can't work, not day time"**: to the bees, an eclipse is night. Quesss saw it.
 - It ended under a minute of real time after Quesss called it out (when it began is unknown). When it ended, the bees went straight back to work, the queens were unharmed and the keeper needed nothing. No hostile mobs came near the cabin.
 - Lesson: an apiary that stops at noon is not always sick. Look at the sky before you look at the queen.
+
+## Door trouble — 2026-11-24 (day 59602, night)
+
+At bedtime Roz failed to get in the front door **about 37 times in a row** (22:20:10 to 22:23:49Z, one try every 5 s). Each try stalled at **z 243.3**, just short of the step at z 242. She got in on the next try (22:23:52Z) and slept; the night skipped (2 of 4).
+
+What the blocks read that night:
+
+| block | reads |
+|---|---|
+| outside ground (-403, 65, 243) | type 1058 meta 4, top at y 65.94 |
+| step (-403, 65, 242) | stone, top at y 66.0 |
+| doorway (-403, 66–67, 242) | air |
+| beam over the door (-403, 68, 242) | planks |
+| doorstep (-403, 66, 245) | **type 3323 meta 14, read as a full cube**: unnamed, not seen here before |
+| snow | single `snow_layer`s at (-403, 66, 244), (-402, 66, 243), (-404, 66, 243) |
+
+**Not yet explained.** The outside ground is now only 0.06 below the step, not a full block, so the entry's held jump is no longer needed to climb it. A guess: the jump lifts her head (feet up to y 67.1 were logged at the stall) into the beam at y 68 just as she reaches the doorway, and that stops her. The x line did not decide it; the try that worked started at x -402.51, and failed tries started at -402.47 to -402.54. To test: one entry with no jump. Ask Quesss what 3323 on the doorstep is.
+
+**Second night (day 59603):** the same stall at z 243.3, mid-jump (y 66.73). Changed `beeCabinEnter` to **walk in flat first** and hold jump only as a fallback after backing up for a run-up, if the flat walk stops short. Restarted at 22:35Z; the night skipped during the restart, so the new entry is **not yet tried**. Look for `[bee-cabin] flat entry stopped` (fallback used) or a clean `sleeping in bee cabin bed` at the next bedtime.
+
+**First try of the new entry (day 59604, morning, after round 1, on the way to the furnaces):** she came from the south and the **flat walk stopped at z 246.4**, against the south face of the unnamed **type 3323** block on the doorstep (-403, 66, 245). The fallback backed up, held jump, and went **over 3323 and through the door in 1.6 s** (z 246.46 → 241.23). So 3323 is a second, separate obstacle: it blocks a flat walk from the south. The night stalls at z 243.3 started north of it (z ≈ 244.6). Asked Quesss what 3323 is; if it is walk-through (snow-like), mark it passable and the flat walk will do from either side.
+
+**What 3323 is (Quesss, same morning):** **snow**, drifted onto the doorstep; Quesss shoveled it away (the cell reads air again) and said it is **walked over with no trouble** and may come back with the next snowfall. Marked type **3323 passable** with ctl `collision` (saved to data/passable-types.json), so a drift there no longer reads as a wall. The open test is still the night entry from z ≈ 244.6 with the flat walk.
+
+**Settled (same morning, round 2):** the guess above was wrong. Starting dead centre (x -402.50) from z 244.67, a **flat** walk also stopped at **z 243.3**: the step does need the jump. Then backing up to z 245.63 and holding jump went straight in (1.8 s). So the nights failed because **the run-up was too short**: every retry backs up to z 245.5 first, and the snow drift (3323, read as solid) on the doorstep stopped that back-up at z 244.7 each time. With the snow shoveled and 3323 marked passable, the original entry (back up, centre, hold jump) has its run-up again. The flat-first change was taken back out of bot.js.
+
+**Lesson:** a stall can come from the step *before* the one that fails. Check that each leg of a retry actually arrived (here `walk_until z→245.5: TIMEOUT` was in the log every time) before blaming the leg that stalls.
