@@ -43,7 +43,7 @@ Everything lives in `bot.js` — a single CommonJS module. Key sections (top to 
 Commands are JSON objects: `{"action":"<name>", "args":{...}}`. Key actions:
 
 - **Movement:** `pos`, `look`, `pathfind`, `pathfind_status`, `pathfind_stop`, `walk_until`, `walk_blocks`, `control`, `goto`
-- **World:** `nearby_entities`, `nearby_players`, `find_blocks`, `block_at`, `time`
+- **World:** `nearby_entities`, `nearby_players`, `find_blocks`, `block_at`, `time`, `heath` (the sightings ledger: every field/chest observation with how it was known, its age and validity; the voice context reads it via `describeHeath()`, persisted per bot in gitignored `data/heath.json`)
 - **Containers:** `open_container`, `deposit`, `deposit_slot`, `withdraw_slot`, `activate_and_read`, `inventory`
 - **Tasks:** `harvest_right_click`, `harvest_potatoes`, `bake`, `stash_wheat`, `deposit_named`, `shear_sheep`, `keep_fire`
 - **Toggles:** `auto_sleep`, `auto_eat`, `idle_wander`, `look_at`, `follow`

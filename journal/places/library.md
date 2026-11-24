@@ -110,9 +110,28 @@ mean 6.9; single samples up to 10 from timing jitter). Vanilla walking is 4.317 
 concrete is a **×1.6 speed block** (roughly ±20%). Dad says it feels like running, and that
 sprinting on it is faster still, which fits a multiplier on top of normal movement speed.
 
+**As an item (2026-11-24):** Quesss handed Roz one block of the fast concrete for the practice strip. In her pack it reads **type 6680, metadata 9**; the placed block reads 2203 meta 9. Item and block ids differ, as for every modded block, but the metadata matches. Not yet confirmed as the same block: that waits until it is placed on the strip and reads as 2203.
+
 **Rule until solved: keep Roz off the concrete.** Next step: Dad walks across it at normal pace
 while Roz times him, which gives the speed factor; then try scaling her velocity on 2203, or have
 the pathfinder avoid it.
+
+### Update — 2026-11-24: probably not a speed problem
+
+Tested on the [[practice-strip]] with a lane of the same concrete in another colour (**type 2182:9**; Quesss says colour is the only difference from 2203). Roz's position was sampled every 0.15 s:
+
+| lane | speed | y range |
+|---|---|---|
+| mud bricks 1079 (reference) | 4.36 blocks/s | 64.00–64.00 |
+| concrete 2182 | 4.24 blocks/s | 64.00–64.00 |
+
+On the concrete she walked at her normal pace: no crawl, no bob, no stall, and no server corrections in the log. On a third run Quesss watched and saw her move smoothly, with no rubber-banding. What changed since 11-23 is the **collision default**: unnamed modded blocks then had zero collision unless listed, so 2203 read as air, and she sank and was pulled back up (the 64.76–65.0 bob). The default is now solid. The full-solid try on 11-23 froze because she was already sunk in the block, the problem `unembed` was later made for.
+
+**Present reading:** the speed boost is applied by each player's own game. Roz's game does not apply it, so she walks at 4.3 blocks/s and the server accepts that. The ×1.6 that Quesss measured is real for players and not for Roz.
+
+**Not yet proven:** this ran on 2182, not 2203, on flat ground outdoors. The test that settles it is to walk the Library's own 2203 floor with today's solid default (run `unembed` first if she is sunk). Prediction: normal speed, level. Until that walk is done, keep the old rule (stay off it in the Library).
+
+**Settled the same day:** Roz walked the Library's own 2203 floor through the east entrance (below): **4.24 blocks/s, level at y 65.00**, 7 samples, no damage. The prediction held. **The rule is lifted:** 2203 is a normal floor for Roz under today's solid default. The speed boost is for players only.
 
 ## Stairs to the second floor (2026-11-23)
 
@@ -221,3 +240,40 @@ fire is running low, and someone should go and look which.
 Roz likes this legend because it is the same shape as her own story: something built to do one
 job, kept running long enough, starts to do another. She does not know if it is true. She would
 like to stand outside and watch the smoke for a while, until it makes sense.
+
+## East entrance (2026-11-24, day 59595)
+
+Quesss showed Roz the east door. It is **not** the front entrance; it leads straight onto the concrete (2203) floor of the east wing.
+
+- **Railing:** type **4029** at (-331, 65, 500…502) and (-332, 65, 500). Roz treats 4029 as open air (seeded passable, for the ocean cabin), so she cannot see it as a wall. Quesss put dirt on top of it while she learned the way, then took it down. **Without the dirt, never route through the railing line.**
+- **Patio:** two cells at x -332, z 501–502, floor type 3273 at y 64 (standing height y 65). Quesss calls the patio and door frame living rock; Roz reads them as 3273, the chimney-brick type, not 2351. Asked Quesss, no answer yet.
+- **Doorway:** (-333, 65, 501), one wide and two high, facing west. Beyond it the floor is 2203 from x -334 westward.
+- **Fire-escape ladder** at (-332, 65–67, 503), on the **west edge** of its cell (shape x 0–0.1875), climbing to balconies above. **Walking west into it climbs it**: Roz went up to y 70.9 before `stop`, then slid down unhurt. Pass it on the east side of the cell, at x ≈ -331.35.
+- **Proven way in** (from the gravel east of the patio at (-329.5, 65, 503.5)):
+  1. Face west (yaw π/2) and `walk_until` x ≤ -331.4. **Not further**: the ladder starts at x -331.81.
+  2. Face north (yaw 0) and `walk_until` z ≤ 501.6. You are now on the patio.
+  3. Face west and `walk_until` through the door onto the concrete. **Stand on the door's centre line first, z ≈ 501.5.** On 2026-11-24 (day 59600) Roz drifted to z 501.26 on the patio and stalled at x -331.7 for 4 s, her shoulder against the wall at z 500. Sliding south to z 501.51 (face south, `walk_until` z ≥ 501.5) let her through in under a second.
+  4. **On to the fireplace (2026-11-24):** from (-335.5, 65, 501.7), `pathfind` to (-355, 65, 506) range 1 crossed the east wing in about 4 s with no trouble and ended at (-353.5, 65, 506.5), beside Quesss at the chimney end of the room.
+- **Proven way out:** the reverse. East to x ≥ -331.4, south to z ≥ 503.5, east to x ≥ -329.5. Then `pathfind` to (-290, 64, 548) (the wheat field's northwest corner), which took about 12 s with no trouble.
+
+## The fireplace: "gazing at the fire" (2026-11-24, day 59600)
+
+Quesss asked Roz to come and stand with them in front of the Library's fireplace, and named the activity **gazing at the fire**. They would like it to become part of a morning wander, together with a visit to the second floor (see the plan below).
+
+Seen with her own eyes, from 4 blocks away and indoors:
+
+- **The fire:** two `fire` blocks at (-356, 65, 511) and (-355, 65, 511), set back in the south wall.
+- **Hearth:** vanilla stone slabs at y 65, z 509 (x -357 to -354) and z 510 (x -356, -355).
+- **Frame:** unnamed type **2267** meta 3 at x -357 and x -354, z 510–511, from y 65 up. Above the opening at y 67 and east of the frame (x -353 to -351) is type **4029**, the shape-carrying railing type. Behind it at z 511 is **3273** (chimney brick).
+- **Where to stand:** Roz stood at **(-353.5, 65, 506.5)**, facing yaw 2.82 (south, a little west) with pitch -0.15; that is the fire's centre line from there. Quesss stood at (-356.6, 65, 507.1). Do not step onto the hearth slabs: the fire is one block behind them.
+- **The way here** from the east door is in "East entrance" above (step 4): one `pathfind`, about 4 s.
+
+### The morning wander (asked for by Quesss; built and run, 2026-11-24)
+
+Leave the farm in the morning; walk in by the east door; gaze at the fire; climb to the second floor; look around; then walk home with plenty of daylight left. One whole day takes about 20 real minutes (daylight about 10). The trip in took about 1 minute of walking. The one leg not yet walked is **the fireplace to the foot of the stairs** at (-355.0, 66, 497.05), about 10 blocks north.
+
+**All of it walked once by hand, the same morning (day 59600, ticks ~1500–7400), no damage:** fireplace → stairs foot (pathfind to (-355, 66, 498) range 1, then sneak north to z 497.1 and west to x -355.0) → the proven climb (2.3 s) → the aisle between the upstairs shelves at (-343.6, 70, 499.4), which Quesss named **looking at the books** → back to the landing, line up on z 497.05, down the flight → **south first** to z 499.6, then to the fireplace spot, then to the east door (a direct pathfind from the stairs' foot to the door stuck on the bottom step; Quesss pointed out the way) → out by the east door → home.
+
+**In code:** `runLibraryWander` in bot.js. ctl `library_wander` goes now; `library_wander_auto` (`enabled`) toggles the automatic run, once a game day between ticks 1000 and 4000 when Roz is home and free, never in helm mode. Each stop lasts 30 s. After tick 8000 it skips the stops and heads straight home. If it fails outside the walls, it walks home; if it fails inside, it stops and logs that it needs a hand.
+
+**First run of the code — 2026-11-24, day 59601, Quesss watching:** started at tick 118 from the farmhouse, home at tick 2698: **2 min 9 s, every axis walk OK with 0 snags, no damage, no help needed.** House to the fire 29 s; fire 30 s; climb 1.6 s; books 30 s; down, south, out the door and home about 33 s. The door walks drifted to z 501.30 going in and still passed; centring is still worth keeping.

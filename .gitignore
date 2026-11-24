@@ -15,3 +15,6 @@ mentions.log
 .claude/skills/buddy
 .claude/skills/tara
 .claude/skills/richard
+
+# Heath sightings ledger (per-bot runtime state)
+data/heath.json

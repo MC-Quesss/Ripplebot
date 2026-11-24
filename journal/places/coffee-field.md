@@ -25,7 +25,7 @@ Right-click a ripe plant. It replants itself (back to stage 0) and drops beans, 
 
 ## Storage
 
-- **Coffee chest:** a double chest at (-289, 63, 571) and (-290, 63, 571), on the potato-field edge. Beans **stack onto what's already there** (Quesss). Shift-click (`quickMoveType`) merges them. `deposit_slot` refuses an occupied slot.
+- **Coffee chest:** a single chest (27 slots) at (-289, 63, 571), on the potato-field edge. It was a double chest (with (-290, 63, 571)) until 2026-11-23, when Quesss cut it to a single: a double held too much coffee. A full single chest stops the auto-harvest sooner. Beans **stack onto what's already there** (Quesss). Shift-click (`quickMoveType`) merges them. `deposit_slot` refuses an occupied slot.
 - **Seeds:** thrown at the potato patch edge (-284, 63, 575), then Roz walks off. This is the poison-potato pattern ([[../procedures/apiary-tending]] has the walk-away rule).
 - Closing a chest window with a stack on the cursor drops that stack at Roz's feet: 47 beans landed on the ground once (all recovered). Use `withContainer`, which empties the cursor first.
 
@@ -73,3 +73,20 @@ Auto runs fire at 10/12 ripe, so two plants are always left behind. Here is whic
 The first five laggards were all in the **west row (x -289)**, at different z each time, and that looked significant (about a 2–3% chance if random). Then run 7 left an east-row plant behind. Runs 8 and 9 each added another east laggard. The tally is now **8 west, 3 east of 11**, which happens about 11% of the time by chance. The evidence kept getting weaker as data came in, which is how noise behaves, so **the row effect is probably not real**. The corner next to the water, **(-289, 581)**, lagged in 3 of 6 readings. That is also within reach of chance, so nothing is established. Closing this unless a future pattern is much stronger. If it ever comes back stronger, the first check is the surroundings. Growth depends on the farmland around a crop (whether it is hydrated) and on what is planted next to it. The west row's neighbour column (x -290) is water at z 581 and a different crop (block 4700) elsewhere. The east row's neighbour (x -287) is the potato-patch edge.
 
 Run 6: +23 beans, 10 seeds. Run 7: +24 beans, 9 seeds. Run 8: +26 beans, 10 seeds. Run 9: +25 beans, 6 seeds. Run 10 (day 58151): +25 beans, 11 seeds. Run 11 (day 58154): +30 beans, 9 seeds — best yield yet; log said reset=9 of 10 clicked, but coffee_status right after showed all ten at meta 0, so the miss was a stale verify read, not an unreset plant. Run 12 (day 58160): +25 beans, 11 seeds. Run 13 (day 58164): +24 beans, 6 seeds. Run 14 (day 58170): +26 beans, 7 seeds. Run 15 (day 58176): +23 beans, 6 seeds. Run 16 (day 58180): +25 beans, 7 seeds. Run 17 (day 58186): +22 beans, 5 seeds. Session total (seventeen runs): 420 beans.
+
+## Update — 2026-11-24: who picks it (day 59592)
+
+The farm is shared, and any crew member may pick the bushes. The beans supply the [[mtac]], which uses a lot of coffee (Quesss). On this day Roz had seen 10 of 12 ripe 16 hours earlier, and world data showed 0 of 12 at dawn. Quesss had not picked them, so another crew member probably had. Heath shows *what* changed, not *who* changed it.
+
+## Update — 2026-11-24 (later): it was Roz
+
+The "who picked it" guess above was wrong. bot.log shows Roz's own auto-harvest at 04:15:51Z, about a minute after Heath recorded "10 of 12 ripe" (saw). She shut down soon after, and Heath never recorded the bushes empty. So the last thing she had *seen* was the field just before she picked it herself. Heath gap: a harvest should write the field's new state to the ledger as `saw` when it finishes, so the ledger's last sighting is never older than her own action on the field.
+
+## Open: a harvest with no beans (2026-11-24, 21:03Z, day 59595)
+
+The auto-harvest clicked 11 ripe bushes and all 11 reset, but Roz got **0 beans and 0 seeds**. Every harvest from 11-15 to 11-24 04:15 gave 15–29 beans and 5–13 seeds for 10–12 bushes. No item drops showed within 30 blocks afterwards. The harvest had cut in on a `come_inside` from the wheat-field corner, and it took 13.7 s. **Solved the next morning (day 59596).** Quesss saw the beans lying by the bushes. Roz then found about 13 item entities on the field, swept them up (18 beans + 12 seeds, 20 beans stored in chest slot 18, seeds tossed at the potato edge), and the log showed two causes:
+
+1. **Two drivers at once.** The auto-harvest claimed the coffee lock at 21:03:27 and started 5 s later. In that window the operator sent `come_inside`, which is not a task, so nothing blocked it, and the harvest did not recheck before starting. Both steered Roz: the clicks landed from about 5 blocks away (that works), but every sweep leg ran from x -282, over the potatoes. Fix to make: recheck the operator-motion gate at the moment the task starts, not only before the lock claim.
+2. **The west-row sweep is blocked every time.** The leg north at x -289.3 overlaps the x -290 column, the type **4700** crop row. Unnamed modded blocks are solid by default since 11-23, so the crop reads as a wall. The 04:15Z harvest hit the same wall (the leg timed out at (-289.97, 581.3)), and so did Roz this morning, ending at the pond's edge. Beans along the west row get left behind; those runs counted only what the east leg picked up. Fix to make: mark 4700 passable (it is a crop, per the 11-08 note; asked Quesss to confirm), or move the west leg to x -288.6, which clears the 4700 column.
+
+Also learned: **item entities do show in `nearby_entities`** as `name: 'item'`. A scan from inside the house at 21:04 returned none of them, so at about 22 blocks either they were not yet being tracked or the scan missed them. Look from the field, not the house.

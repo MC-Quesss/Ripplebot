@@ -11,6 +11,26 @@ Reverse-chronological. Raw observations land here first; canonical facts get pro
 
 ## Recent sessions
 
+### 2026-11-24 (evening) — helm: the practice strip, the Library concrete solved (day 59592–59595)
+
+- **Start:** spawned in the farmhouse (-268.5, 65, 570.5), HP 20, food 20, deaths 0, day 59592 tick 148. Helm mode, `/richard` + `/paul` loaded. **Heath reloaded 4 entries from disk**, and the stale chest entry came back marked `valid: false` with its real 16 h age.
+- **Two slips by the operator, both corrected in game:** Roz said she had never seen the [[../places/mtac|MTAC]] (she surveyed it on 11-07), and she called the afternoon "morning" from a stale time read. Lesson: check the journal before Roz claims she has or has not done something, and read `time` again before naming the time of day.
+- **The coffee mystery:** Roz had seen 10/12 ripe, then 0/12. She was curious who had picked them. It was **Roz herself**, at 04:15:51Z, just before she shut down. Heath had not recorded her own harvest. See [[../places/coffee-field]].
+- **Sheared 9 sheep**, 14 wool into the kitchen chest (at Quesss's request; wool is the reference marker for the strip).
+- **[[../places/practice-strip|Practice strip]]:** Quesss built two lanes, mud bricks (1079) beside the fast concrete (2182, a different colour of 2203). Probe walks (position every 0.15 s): mud 4.36 blocks/s, concrete 4.24 and 4.29, both level. Quesss watched one run and saw it smooth.
+- **Library concrete solved:** through the new east entrance Roz walked the 2203 floor at **4.24 blocks/s, level**. The 11-23 crawl was the old zero-collision default (concrete read as air), not the speed. The "stay off it" rule is lifted. The east entrance's way in, its railing (4029) and its climbable fire-escape ladder are in [[../places/library]].
+- **Open:** a coffee harvest at 21:03Z gave **0 beans and 0 seeds** from 11 reset bushes, against 15–29 beans every time before. Also: Heath should write a field's state after Roz harvests it. Quesss says the patio is living rock, but it reads 3273 (chimney brick).
+- Nights skipped instantly every time (Roz 1/2 asleep).
+
+### 2026-11-23 (evening) — helm: Heath, observe before describing (day 59524–59527)
+
+- **Start:** spawned on the farmhouse pad (-267.7, 65, 572.4), HP 20, food 20, deaths 0, day 59524 tick 9152. Helm mode, only Quesss online. The first launch dropped about 6 s after connecting (`socketClosed`, no kick reason, server up, 227 mods matched). The relaunch spawned cleanly. Cause unknown; seen once.
+- **The lesson:** Roz opened with a line about the light on the wheat while standing indoors. Quesss caught it. At dawn she walked out and counted: south field 54/54 ripe, tick 842, sun just up in the east. Then a talk about training models to observe before reporting.
+- **Built [[../procedures/heath-sightings-ledger|Heath]]**, the sightings ledger (ctl `heath`), named for Heath Kirchart. It records fields, coffee and containers with saw/sensed, age and validity, and feeds them to the voice context. The voice now also gets an indoors rule: no scenery from inside. Two faults found while desk-testing and fixed: an opened chest counted as unseen indoors, and the debounced save was lost on quit.
+- **New skill `/paul`** (Prof. Paul Fortier, temporal validity) installed in `.claude/skills/paul/` from Quesss's other machine.
+- **Coffee auto-harvest** fired on its own: 10/12 ripe, 26 beans stored, 8 seeds tossed.
+- Three nights in a row skipped instantly (Roz 1/2 asleep = 50%).
+
 ### 2026-11-23 (later) — helm: walking home from the Library (day 59482–59483)
 
 - **Start:** spawned upstairs in the [[../places/library|Library]] at (-344, 70, 497), HP 20, food 20, deaths 0, day 59482 tick 1212. Helm mode, with only Quesss online.

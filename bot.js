@@ -1358,6 +1358,7 @@ function startAutoSleep () {
     tryMorningExclamation()
     tryFoodSafety()
     tryCoffeeAuto()
+    tryLibraryWander()
     tryBeeFoodRun()
     tryCollectBake()
     tryRestockSupplies()
@@ -2429,6 +2430,7 @@ async function withContainer (target, fn, opts = {}) {
   const win = await openContainerAt(target, opts)
   try { return await fn(win) } finally {
     try { await emptyCursor(win) } catch (_) {}
+    try { heathRecordContainer(target, win, opts.label) } catch (e) { logEvent('heath', `container record failed: ${e.message}`) }
     try { win.close() } catch (_) {}
   }
 }
@@ -6010,11 +6012,148 @@ function describeWhereabouts () {
   return 'outside on the farm'
 }
 
+// ── Heath: the sightings ledger ─────────────────────────────────────────────
+// Every fact about the world is a temporally scoped assertion: what was
+// observed, how (seen from close by and outdoors, or sensed from world data),
+// where she stood, when (wall clock + game day/tick), and how long it stays
+// valid. The voice context reads Heath with ages, so she reports observations
+// instead of memory, and says "when I last looked" once an entry goes stale.
+// A scan with unloaded tiles is skipped, never written as a partial count.
+// Persisted to data/heath.json so a restart starts from stale entries rather
+// than an empty or falsely fresh view.
+const HEATH_FILE = path.join(__dirname, 'data', 'heath.json')
+const HEATH_SIGHT_RANGE = 16 // blocks; closer than this and outdoors counts as seen
+const HEATH_VALID_MS = {
+  crop: 10 * 60 * 1000,      // a game day: crops grow and get harvested
+  container: 10 * 60 * 1000, // other bots and players use the same chests
+}
+const HEATH_SAVE_DEBOUNCE_MS = 60 * 1000
+const heath = new Map() // key → entry
+let heathSaveTimer = null
+function heathLoad () {
+  try {
+    const raw = JSON.parse(fs.readFileSync(HEATH_FILE, 'utf8'))
+    for (const [k, v] of Object.entries(raw)) heath.set(k, v)
+    logEvent('heath', `loaded ${heath.size} entries from ${HEATH_FILE}`)
+  } catch (e) {
+    if (e.code !== 'ENOENT') logEvent('heath', `could not load ${HEATH_FILE}: ${e.message}`)
+  }
+}
+function heathSaveNow () {
+  if (heathSaveTimer) { clearTimeout(heathSaveTimer); heathSaveTimer = null }
+  if (!heath.size) return
+  try { fs.writeFileSync(HEATH_FILE, JSON.stringify(Object.fromEntries(heath), null, 1)) } catch (e) { logEvent('heath', `could not save ${HEATH_FILE}: ${e.message}`) }
+}
+function heathSaveSoon () {
+  if (heathSaveTimer) return
+  heathSaveTimer = setTimeout(heathSaveNow, HEATH_SAVE_DEBOUNCE_MS)
+}
+// The debounced write would be lost on quit; write what is pending on exit.
+process.on('exit', () => { if (heathSaveTimer) heathSaveNow() })
+heathLoad()
+function indoorsAnywhere () { return insideHouse() || insideCabinBedroom() || insideBeeCabin() }
+// Record one observation. `at` is where the observed thing is; it decides
+// whether this counts as seen (outdoors, within sight range) or sensed.
+// `inHand` marks an observation made by opening the thing itself (a chest
+// window), which is seen wherever she stands.
+function heathRecord (key, { subject, fact, kind, at, inHand = false }) {
+  const p = bot.entity?.position
+  if (!p || !HEATH_VALID_MS[kind]) return
+  const dist = at ? Math.hypot(at.x - p.x, at.z - p.z) : Infinity
+  const how = inHand || (!indoorsAnywhere() && dist <= HEATH_SIGHT_RANGE) ? 'saw' : 'sensed'
+  const now = Date.now()
+  const prev = heath.get(key)
+  const entry = {
+    subject, fact, kind, how,
+    at: at ? { x: Math.round(at.x), y: Math.round(at.y), z: Math.round(at.z) } : null,
+    from: describeWhereabouts(),
+    seenAtMs: now,
+    day: bot.time?.day ?? null,
+    tick: bot.time?.timeOfDay ?? null,
+    // The last time she saw it herself, kept across sensed refreshes.
+    sawAtMs: how === 'saw' ? now : prev?.sawAtMs ?? null,
+    sawFact: how === 'saw' ? fact : prev?.sawFact ?? null,
+  }
+  const changed = !prev || prev.fact !== fact || prev.how !== how
+  heath.set(key, entry)
+  if (changed) logEvent('heath', `${subject}: ${fact} (${how})`)
+  heathSaveSoon()
+}
+// A container's contents as they were when it closed: item totals, biggest
+// first, plus free slots. Named by its label, or by the nearest known place.
+function heathRecordContainer (target, win, label = null) {
+  const b = target && typeof target.getProperties === 'function' ? target : blockAtPos(target)
+  const pos = b?.position || target
+  if (!pos || typeof pos.x !== 'number') return
+  const slots = win.slots.slice(0, win.slots.length - 36)
+  const totals = new Map()
+  let free = 0
+  for (const it of slots) {
+    if (!it) { free++; continue }
+    const name = it.displayName || it.name || `item ${it.type}`
+    totals.set(name, (totals.get(name) || 0) + it.count)
+  }
+  const items = [...totals.entries()].sort((a, c) => c[1] - a[1])
+  const shown = items.slice(0, 6).map(([n, c]) => `${c} ${n}`)
+  if (items.length > 6) shown.push(`${items.length - 6} other kinds`)
+  const near = KNOWN_PLACES
+    .map(k => ({ k, d: Math.hypot(k.x - pos.x, k.z - pos.z) }))
+    .sort((a, c) => a.d - c.d)[0]
+  const kindName = label || (b?.name && b.name !== 'unknown' ? b.name.replace(/_/g, ' ') : 'container')
+  const where = near && near.d <= 12 ? ` at ${near.k.name.replace(/ \(.*\)$/, '')}` : ''
+  heathRecord(`container:${pos.x},${pos.y},${pos.z}`, {
+    subject: `the ${kindName}${where} (${pos.x}, ${pos.y}, ${pos.z})`,
+    fact: shown.length ? `${shown.join(', ')}; ${free} of ${slots.length} slots free` : `empty (${slots.length} slots)`,
+    kind: 'container',
+    at: pos,
+    inHand: true,
+  })
+}
+function heathValid (entry, now = Date.now()) {
+  return now - entry.seenAtMs <= (HEATH_VALID_MS[entry.kind] ?? 0)
+}
+function heathAge (ms) {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 90) return 'just now'
+  const m = Math.round(s / 60)
+  if (m < 90) return `${m} min ago`
+  const h = Math.round(m / 60)
+  if (h < 36) return `${h} h ago`
+  return `${Math.round(h / 24)} days ago`
+}
+function heathSnapshot () {
+  const now = Date.now()
+  return [...heath.entries()].map(([key, e]) => ({
+    key, ...e,
+    ageSec: Math.round((now - e.seenAtMs) / 1000),
+    valid: heathValid(e, now),
+    validForSec: Math.round((HEATH_VALID_MS[e.kind] ?? 0) / 1000),
+  })).sort((a, b) => a.ageSec - b.ageSec)
+}
+function describeHeath () {
+  const now = Date.now()
+  const lines = heathSnapshot().map(e => {
+    const how = e.how === 'saw' ? 'seen with your own eyes' : 'sensed from world data, not seen'
+    let line = `- ${e.subject}: ${e.fact} (${how}, ${heathAge(now - e.seenAtMs)}`
+    line += e.valid ? ')' : `; STALE: it may have changed since)`
+    if (e.how !== 'saw' && e.sawAtMs) line += `; last seen with your own eyes ${heathAge(now - e.sawAtMs)}: ${e.sawFact}`
+    return line
+  })
+  if (!lines.length) return 'Heath, your ledger of observations, is empty: you have not observed the fields or chests yet. You do not know their current state; say so, or offer to go and look.'
+  return [
+    'Heath, your ledger of what you have actually observed, with how you know it and how old it is:',
+    ...lines,
+    'Rules: state the condition of things only from Heath or from what is around you right now. If a thing is not in Heath, you do not know its current state; say so. A STALE line is "when I last looked": give its age, or offer to go and look. Describe how something looks (light, colour, motion) only if you saw it with your own eyes in the last few minutes; give sensed facts plainly, as facts.',
+  ].join('\n')
+}
+
 function buildExpressiveContext (situation) {
   const parts = []
   const atCabin = nearCabin() || insideCabinBedroom()
   const farFromHome = !atCabin && distanceFromHome() > HOME_RADIUS
   parts.push(`It is ${describeTimeOfDay()}${bot.isRaining ? ' and raining' : ''}. You are ${describeWhereabouts()}.`)
+  if (indoorsAnywhere()) parts.push('You are indoors. From here you cannot see outside: not the fields, the animals, the sky, or the light. Do not describe how anything outside looks right now.')
+  parts.push(describeHeath())
   if (farFromHome) parts.push('You are too far from the farm to see it. You CANNOT see the wheat field, the sheep pen, the farmhouse, the jukebox, or any of the farm surroundings. You know the farm from memory and agricultural instinct — you may sense that crops might need tending based on experience — but you cannot see or directly observe anything at the farm from here.')
   // Where things are, from where she stands. She has been to every one of
   // these; she must never say she does not know where they are.
@@ -6424,19 +6563,33 @@ function scanKnownWheatFieldsUncached (fieldFilter = null) {
   let loaded = 0
   let wheat = 0
   let mature = 0
+  const perField = new Map() // 'north field' → counts, for Heath
   for (const section of WHEAT_CROP_ROWS) {
     if (fieldFilter && !section.label.startsWith(`${fieldFilter} field`)) continue
+    const field = section.label.replace(/ field .*/, ' field')
+    const f = perField.get(field) || { expected: 0, loaded: 0, wheat: 0, mature: 0, xSum: 0, zSum: 0 }
+    perField.set(field, f)
     for (const z of section.zs) {
       for (let x = section.xMin; x <= section.xMax; x++) {
-        expected++
+        expected++; f.expected++; f.xSum += x; f.zSum += z
         const block = bot.blockAt(new Vec3(x, 64, z))
         if (!block) continue
-        loaded++
+        loaded++; f.loaded++
         if (block.name !== 'wheat') continue
-        wheat++
-        if (block.metadata === 7) mature++
+        wheat++; f.wheat++
+        if (block.metadata === 7) { mature++; f.mature++ }
       }
     }
+  }
+  for (const [field, f] of perField) {
+    if (f.loaded < f.expected) continue
+    const unplanted = f.expected - f.wheat
+    heathRecord(`wheat:${field}`, {
+      subject: `the ${field} wheat`,
+      fact: `${f.mature} of ${f.expected} tiles ripe${unplanted ? `, ${unplanted} unplanted` : ''}`,
+      kind: 'crop',
+      at: { x: f.xSum / f.expected, y: 64, z: f.zSum / f.expected },
+    })
   }
   const maturePct = expected > 0 ? (mature / expected) * 100 : 0
   return {
@@ -6465,6 +6618,14 @@ function scanKnownPotatoFieldUncached () {
       potatoes++
       if (block.metadata === 7) mature++
     }
+  }
+  if (loaded === expected) {
+    heathRecord('potatoes', {
+      subject: 'the potato field',
+      fact: `${mature} of ${potatoes} potato plants ripe${expected - potatoes ? `, ${expected - potatoes} tiles without a plant` : ''}`,
+      kind: 'crop',
+      at: { x: (POTATO_BOUNDS.xMin + POTATO_BOUNDS.xMax) / 2, y: POTATO_BOUNDS.y, z: (POTATO_BOUNDS.zMin + POTATO_BOUNDS.zMax) / 2 },
+    })
   }
   const maturePct = potatoes > 0 ? (mature / potatoes) * 100 : 0
   return {
@@ -9585,14 +9746,26 @@ const COFFEE_SEED_TYPE = 9814
 const COFFEE_ROWS_X = [-289, -288]
 const COFFEE_Z = [576, 577, 578, 579, 580, 581]
 const COFFEE_Y = 63
-const COFFEE_CHEST = { x: -289, y: 63, z: 571 } // double chest, (-289..-290, 63, 571)
+const COFFEE_CHEST = { x: -289, y: 63, z: 571 } // single chest (27 slots)
 const COFFEE_STAND = { x: -288, y: 63, z: 575 }  // grass at the field's north edge
 const COFFEE_DISCARD = { x: -284, y: 63, z: 575 } // potato patch edge, off the coffee path
 function coffeeTiles () {
   const out = []
+  let loaded = 0
   for (const z of COFFEE_Z) for (const x of COFFEE_ROWS_X) {
     const b = bot.blockAt(new Vec3(x, COFFEE_Y, z))
+    if (b) loaded++
     if (b && b.type === COFFEE_PLANT_TYPE) out.push({ x, z, meta: b.metadata })
+  }
+  const expected = COFFEE_ROWS_X.length * COFFEE_Z.length
+  if (loaded === expected) {
+    const ripe = out.filter(t => t.meta === COFFEE_RIPE_META).length
+    heathRecord('coffee', {
+      subject: 'the coffee bushes',
+      fact: `${ripe} of ${out.length} bushes ripe${expected - out.length ? `, ${expected - out.length} spots without a bush` : ''}`,
+      kind: 'crop',
+      at: { x: (COFFEE_ROWS_X[0] + COFFEE_ROWS_X[COFFEE_ROWS_X.length - 1]) / 2, y: COFFEE_Y, z: (COFFEE_Z[0] + COFFEE_Z[COFFEE_Z.length - 1]) / 2 },
+    })
   }
   return out
 }
@@ -9801,6 +9974,202 @@ async function tryCoffeeAuto () {
     coffeeContest = null
     if (coffeeLock.holder === myFireName()) releaseChatLock(coffeeLock)
   }
+}
+
+// ── Library wander ──────────────────────────────────────────────────────────
+// A morning outing to the Library: in by the east door, gaze at the fire,
+// up the stairs to look at the books, back down and out the same door, home.
+// Every leg is a pathfind between known points or an axis walk on a known
+// line; see journal/places/library.md (East entrance, The fireplace).
+// The Library is outside HOME_RADIUS, so the routine never relies on
+// runGoInside or a bedtime yield from there: it carries its own clock and
+// turns for home early instead.
+const LIBRARY_FIELD_CORNER = { x: -290, y: 64, z: 548 }  // wheat field NW corner, inside HOME_RADIUS
+const LIBRARY_EAST_GRAVEL = { x: -330, y: 65, z: 503 }   // gravel east of the patio
+const LIBRARY_EAST_INSIDE = { x: -336, y: 65, z: 501 }   // concrete just inside the east door
+const LIBRARY_FIRE_SPOT = { x: -354, y: 65, z: 506 }     // in front of the hearth
+const LIBRARY_FIRE_LOOK = { yaw: 2.82, pitch: -0.15 }
+const LIBRARY_STAIRS_FOOT = { x: -355, y: 66, z: 498 }   // living rock beside the stairs
+const LIBRARY_BOOKS_SPOT = { x: -344, y: 70, z: 500 }    // aisle between the upstairs shelves
+const LIBRARY_BOOKS_LOOK = { yaw: -Math.PI / 2, pitch: 0.1 }
+const LIBRARY_LANDING = { x: -348, y: 70, z: 497 }       // top of the stairs
+const LIBRARY_DOOR_Z = 501.5                             // the east door's centre line
+const LIBRARY_DWELL_MS = 30_000                          // per stop: fire, books
+const LIBRARY_AUTO_FIRST_TICK = 1000                     // morning window for automatic starts
+const LIBRARY_AUTO_LAST_TICK = 4000
+const LIBRARY_SKIP_STOPS_TICK = 8000                     // past this, no more stops: straight home
+let libraryWanderAuto = true
+let libraryWanderLastDay = null
+let libraryWanderLast = null
+
+// Lift the bot onto the top face of the block at its feet when it has sunk
+// into it by no more than maxDepth (a floor that read as air while she stood on it).
+function unembedFeet (maxDepth = 0.3) {
+  const p = bot.entity.position
+  const b = bot.blockAt(new Vec3(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z)))
+  if (!b || !b.shapes || !b.shapes.length) return { ok: false, error: 'no solid block at feet', y: p.y }
+  const top = b.position.y + Math.max(...b.shapes.map(s => s[4]))
+  const depth = top - p.y
+  if (depth <= 0) return { ok: true, moved: false, y: +p.y.toFixed(3), top }
+  if (depth > maxDepth) return { ok: false, error: 'sunk too deep', depth: +depth.toFixed(3), top }
+  p.y = top
+  bot.entity.velocity.y = 0
+  bot.entity.onGround = true
+  return { ok: true, moved: true, depth: +depth.toFixed(3), y: top, type: b.type }
+}
+
+async function runLibraryWander ({ user = null, auto = false } = {}) {
+  const task = beginTask('library_wander', auto ? 'morning' : user, { busyLine: auto ? null : BUSY_LINE })
+  if (!task.allowed) return { ok: false, ...task.busyReply }
+  const { myGen } = task
+  const log = (m) => logEvent('library-wander', m)
+  const tod = () => bot.time?.timeOfDay ?? 0
+  const step = (what) => {
+    checkAbort(myGen)
+    if (task.died()) throw new Error(`died ${what}`)
+  }
+  // An axis walk that must arrive; a short one is a wall or a wrong line.
+  const leg = async (yaw, axis, target, direction, maxMs, what) => {
+    const r = await walkLeg(yaw, axis, target, direction, maxMs)
+    step(what)
+    if (!r.reached) throw new Error(`${what}: stopped at ${posStr(bot.entity.position)}`)
+  }
+  const reach = async (pt, range, tol, what, waitMs = 15000) => {
+    const ok = await pathToSure(pt, range, tol, 3, waitMs)
+    step(what)
+    if (!ok) throw new Error(`${what}: did not reach ${pt.x},${pt.y},${pt.z} (at ${posStr(bot.entity.position)})`)
+  }
+  // Step north or south onto the east door's centre line; a body off it
+  // catches its shoulder on the wall beside the doorway.
+  const centreOnDoor = async () => {
+    const z = bot.entity.position.z
+    if (Math.abs(z - LIBRARY_DOOR_Z) <= 0.15) return
+    if (z < LIBRARY_DOOR_Z) await leg(Math.PI, 'z', LIBRARY_DOOR_Z, 'gte', 1500, 'centring on the east door')
+    else await leg(0, 'z', LIBRARY_DOOR_Z, 'lte', 1500, 'centring on the east door')
+  }
+  const dwell = async (look, what) => {
+    await bot.look(look.yaw, look.pitch, true)
+    log(`${what} (tick ${tod()})`)
+    const until = Date.now() + LIBRARY_DWELL_MS
+    while (Date.now() < until) { await sleep(1000); step(what) }
+  }
+  const late = () => tod() >= LIBRARY_SKIP_STOPS_TICK || isBedtime()
+  let stage = 'leaving home'
+  let inside = false // inside the Library walls
+  try {
+    if (!bot.time?.isDay || isBedtime()) { log('not daytime — not going'); return { ok: false, error: 'not daytime' } }
+    log(`start (tick ${tod()}, ${auto ? 'auto' : `asked by ${user || 'ctl'}`})`)
+    if (auto && brainMode !== 'helm' && banalPlatitudesOk()) say('Going to the Library for a while. Back before dark.')
+    if (insideHouse()) {
+      await runGoOutside('the Library')
+      step(stage)
+      if (insideHouse()) throw new Error('still inside the house after the exit attempt')
+    }
+
+    stage = 'walking to the Library'
+    await reach(LIBRARY_FIELD_CORNER, 1, 2.0, stage)
+    await reach(LIBRARY_EAST_GRAVEL, 0, 1.0, stage, 20000)
+
+    // East door in. Stop short of x -331.81 going west: the fire-escape
+    // ladder hangs on that cell's west edge and climbs when walked into.
+    stage = 'going in by the east door'
+    await leg(Math.PI / 2, 'x', -331.4, 'lte', 4000, stage)
+    await leg(0, 'z', 501.6, 'lte', 4000, stage)
+    await centreOnDoor()
+    await leg(Math.PI / 2, 'x', -335.5, 'lte', 4000, stage)
+    inside = true
+
+    stage = 'walking to the fireplace'
+    await reach(LIBRARY_FIRE_SPOT, 0, 1.0, stage)
+    if (!late()) await dwell(LIBRARY_FIRE_LOOK, 'gazing at the fire')
+
+    if (!late()) {
+      // The proven climb: sneak onto the stairs' centre line at the foot,
+      // then face east and hold jump up the vanilla flight.
+      stage = 'climbing the stairs'
+      await reach(LIBRARY_STAIRS_FOOT, 1, 1.6, stage, 10000)
+      bot.setControlState('sneak', true)
+      try {
+        await leg(0, 'z', 497.1, 'lte', 5000, stage)
+        await leg(Math.PI / 2, 'x', -355.0, 'lte', 3000, stage)
+      } finally { bot.setControlState('sneak', false) }
+      bot.setControlState('jump', true)
+      try {
+        await leg(-Math.PI / 2, 'x', -349.5, 'gte', 6000, stage)
+      } finally { bot.setControlState('jump', false) }
+      await sleep(400)
+      unembedFeet()
+      if (bot.entity.position.y < 69.5) throw new Error(`${stage}: not on the landing (y ${bot.entity.position.y.toFixed(2)})`)
+
+      stage = 'walking to the books'
+      await reach(LIBRARY_BOOKS_SPOT, 1, 1.6, stage, 10000)
+      if (!late()) await dwell(LIBRARY_BOOKS_LOOK, 'looking at the books')
+
+      stage = 'coming down the stairs'
+      await reach(LIBRARY_LANDING, 0, 1.0, stage, 10000)
+      if (bot.entity.position.z > 497.1) await leg(0, 'z', 497.05, 'lte', 1500, stage)
+      await leg(Math.PI / 2, 'x', -349.5, 'lte', 3000, stage)
+      await leg(Math.PI / 2, 'x', -355.3, 'lte', 5000, stage)
+      if (bot.entity.position.y > 67) throw new Error(`${stage}: still on the stairs (y ${bot.entity.position.y.toFixed(2)})`)
+      // South before east: a straight path from the stairs' foot to the
+      // door snags on the bottom step.
+      await leg(Math.PI, 'z', 499.6, 'gte', 3000, stage)
+      await reach(LIBRARY_FIRE_SPOT, 0, 1.0, stage)
+    } else {
+      log(`late (tick ${tod()}) — skipping the upstairs`)
+    }
+
+    stage = 'going out by the east door'
+    await reach(LIBRARY_EAST_INSIDE, 0, 1.0, stage)
+    await centreOnDoor()
+    await leg(-Math.PI / 2, 'x', -331.4, 'gte', 4000, stage)
+    await leg(Math.PI, 'z', 503.5, 'gte', 3000, stage)
+    await leg(-Math.PI / 2, 'x', -329.5, 'gte', 3000, stage)
+    inside = false
+
+    stage = 'walking home'
+    await reach(LIBRARY_FIELD_CORNER, 1, 2.0, stage, 20000)
+    await runGoInside()
+    step(stage)
+    log(`home (tick ${tod()})`)
+    libraryWanderLast = { at: new Date().toISOString(), result: 'done' }
+    return { ok: true }
+  } catch (e) {
+    const aborted = e.name === 'AbortError'
+    libraryWanderLast = { at: new Date().toISOString(), result: aborted ? 'stopped' : 'failed', stage, error: aborted ? null : e.message }
+    if (!aborted) log(`failed ${stage}: ${e.message}`)
+    // Outside the walls and not stopped: the way home is open ground.
+    if (!aborted && !inside && !task.died() && distanceFromHome() > HOME_RADIUS) {
+      try {
+        if (await pathToSure(LIBRARY_FIELD_CORNER, 1, 2.0, 3, 20000)) await runGoInside()
+      } catch (e2) { log(`walk home after failure: ${e2.message}`) }
+    }
+    if (inside && !aborted) log(`stuck inside the Library at ${posStr(bot.entity.position)} — needs a hand`)
+    return { ok: false, error: e.message, stage }
+  } finally {
+    bot.setControlState('sneak', false)
+    bot.setControlState('jump', false)
+    task.end()
+  }
+}
+
+// Once a game day, in the morning, when she is home and free. Not in helm
+// mode: there the operator decides when she leaves the house.
+async function tryLibraryWander () {
+  if (!libraryWanderAuto || brainMode === 'helm') return
+  if (!idleWanderEnabled || sustainState.active) return
+  if (taskBusy() || goInsideBusy || autoSleepBusy || penTraversalBusy || coffeeAutoBusy) return
+  if (foodSafetyBusy || restockBusy || beeState.inRound || reinasState.inRound) return
+  if (rpsCurrentRival || followTarget || storyTimeActive) return
+  if (!bot.entity || !bot.world || bot.isSleeping || bot.vehicle || bot.currentWindow) return
+  const t = bot.time
+  if (!t?.isDay || t.thunder) return
+  if (t.timeOfDay < LIBRARY_AUTO_FIRST_TICK || t.timeOfDay >= LIBRARY_AUTO_LAST_TICK) return
+  if (libraryWanderLastDay === t.day) return
+  if (bot.pathfinder?.isMoving?.()) return
+  if (distanceFromHome() > HOME_RADIUS) return
+  libraryWanderLastDay = t.day
+  await runLibraryWander({ auto: true })
 }
 
 // Bake any raw potatoes in inventory using the kitchen furnace.
@@ -15373,6 +15742,12 @@ registerCommand('whoami', (args, cmd) => {
     voice: { name: personaSpec.name, systemPrompt: personaSpec.systemPrompt, exemplars: personaSpec.exemplars }
   }
 })
+registerCommand('heath', (args, cmd) => {
+  // Heath, the sightings ledger: every recorded observation with how it was
+  // known (saw / sensed), its age, and whether it is still within its
+  // validity window. `text` is the block the voice context reads.
+  return { ok: true, entries: heathSnapshot(), text: describeHeath() }
+})
 registerCommand('deaths', (args, cmd) => {
   return { ok: true, count: deathCount }
 })
@@ -16200,18 +16575,7 @@ registerCommand('block_at', (args, cmd) => {
 // a block that it now reads as solid cannot move: every neighbour is a wall.
 // The server accepts a small upward correction.
 registerCommand('unembed', (args, cmd) => {
-  const maxDepth = Number(args.max_depth ?? 0.3)
-  const p = bot.entity.position
-  const b = bot.blockAt(new Vec3(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z)))
-  if (!b || !b.shapes || !b.shapes.length) return { ok: false, error: 'no solid block at feet', y: p.y }
-  const top = b.position.y + Math.max(...b.shapes.map(s => s[4]))
-  const depth = top - p.y
-  if (depth <= 0) return { ok: true, moved: false, y: +p.y.toFixed(3), top }
-  if (depth > maxDepth) return { ok: false, error: 'sunk too deep', depth: +depth.toFixed(3), top }
-  p.y = top
-  bot.entity.velocity.y = 0
-  bot.entity.onGround = true
-  return { ok: true, moved: true, depth: +depth.toFixed(3), y: top, type: b.type }
+  return unembedFeet(Number(args.max_depth ?? 0.3))
 })
 registerCommand('collision', (args, cmd) => {
   // args: { passable?: [type], forget?: [type], survey?: radius }
@@ -16420,6 +16784,15 @@ registerCommand('coffee_auto', (args, cmd) => {
   if (typeof args.enabled === 'boolean') coffeeAutoEnabled = args.enabled
   if (args.reset_cooldown) coffeeAutoCooldownUntil = 0
   return { ok: true, enabled: coffeeAutoEnabled, busy: coffeeAutoBusy, cooldownMs: Math.max(0, coffeeAutoCooldownUntil - Date.now()), last: coffeeAutoLast }
+})
+// {"action":"library_wander"} goes now. {"action":"library_wander_auto","args":{"enabled":false}}
+// pauses the once-a-morning automatic outing.
+registerCommand('library_wander', (args, cmd) => {
+  return startAsync('library-wander', () => runLibraryWander({ user: args.user || 'ctl' }))
+})
+registerCommand('library_wander_auto', (args, cmd) => {
+  if (typeof args.enabled === 'boolean') libraryWanderAuto = args.enabled
+  return { ok: true, enabled: libraryWanderAuto, lastDay: libraryWanderLastDay, last: libraryWanderLast, busy: activeTask.name === 'library_wander' }
 })
 registerCommand('harvest_potatoes_brute', (args, cmd) => {
   return startAsync('harvest-potato-error', () => runHarvestPotatoes({ user: 'ctl' }))

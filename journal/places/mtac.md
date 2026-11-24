@@ -37,3 +37,9 @@ Roz surveyed it by block reads from the path at (-269, 63, 545.5), outside the b
 - **Type 690 runs through the frame** from y 65 to at least y 83. It matches the type of the trunk read at the [[meadow-bee-cross]] on 2026-11-06, which fits the cedar coming from there, as Quesss says.
 - **Type 4029 appears on most layers.** At the [[ocean-cabin]] that type behaves as an invisible wall, so do not assume open-looking spaces here are walkable.
 - **Limits:** the survey hit its edges (x -280, z 544, y 83), so the building may extend beyond them. Bounds in the frontmatter date from the dirt mock-up. Roz has not been inside.
+
+## Update — 2026-11-24: it runs on coffee (day 59592)
+
+Quesss says the MTAC uses a lot of coffee. The whole crew picks the [[coffee-field]] to supply it, so empty bushes there are expected, not a fault.
+Each hotel room has its own coffee machine (Quesss, 2026-11-24).
+Plan (Quesss, 2026-11-24): first Roz gets the hang of the [[library]], then Quesss shows her inside the MTAC, including a swim in the pool.
