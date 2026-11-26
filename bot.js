@@ -13932,7 +13932,9 @@ const CHAT_INTENTS = {
     run: (user) => { snoozeWheatReadyAlerts(user); return Promise.resolve() },
   },
   play_record: {
-    hint: 'play a record / put on music / use the jukebox; args.title (cat|far|mall|wait|chirp|mellohi) or args.color when they ask for a specific disc ("play Cat", "put on the green one")',
+    // Built from RECORD_INFO so the classifier sees every disc we own,
+    // including the resource-pack titles and their label names.
+    hint: `play a record / put on music / use the jukebox; args.title (${Object.entries(RECORD_INFO).map(([n, r]) => [r.title.toLowerCase(), ...(r.aliases || []), n.replace(/^record_/, '')]).flat().filter((v, i, a) => a.indexOf(v) === i).join('|')}) or args.color (${Object.values(RECORD_INFO).map(r => r.color).join('|')}) when they ask for a specific disc ("play Cat", "put on the green one", "play Harvest Moon")`,
     // Registered as a short task so it can't fight an in-flight harvest for
     // the pathfinder; fire duty waits it out and resumes on its own.
     run: async (_user, args) => {
