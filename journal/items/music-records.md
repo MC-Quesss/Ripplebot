@@ -140,3 +140,7 @@ Per-disc stories still welcome — reviewed so far: **Cat** (Quesss's favorite).
 - [[../chests/house-kitchen-chest]] — record home slots
 - Requesting a specific disc works by title or color: "play Cat", "put on the green one"
   (`play_record` intent, `args.title` / `args.color`)
+
+## Update 2026-11-26: Strad (Harvest Moon) added to `RECORD_INFO`
+
+`record_strad` is in the kitchen chest, but it was missing from `RECORD_INFO`, so a bot asked for "Harvest Moon" or "the white one" answered "I don't know that disc". It is now listed as **Harvest Moon**, white, 303 s, with aliases `strad`, `neil young`, `harvest moon`. It has no `RECORD_HOME_SLOTS` entry (like Stal), so after playing it goes back to any free slot. Each bot needs the change pulled and a restart before it knows the disc.

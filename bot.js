@@ -1170,13 +1170,23 @@ async function beeCabinEnter () {
   // the west jamb on the lip and the entry stalled (Dad spotted it, 2026-10-04).
   // Checked twice — before the walk to the door and again at it, because the
   // first leg can drift her ~0.25 sideways (x -402.56 → -402.81, 2026-10-08).
+  // After a sideways step, wait for the sideways momentum to die before the
+  // walk north: carried into the jump through the lip, it slides her ~0.5
+  // west into the jamb. Then re-check, since the slide itself can undo the line-up.
+  const settleSideways = async () => {
+    const t0 = Date.now()
+    while (Date.now() - t0 < 800 && Math.abs(bot.entity?.velocity?.x ?? 0) > 0.01) await sleep(50)
+  }
   const alignOnDoor = async () => {
-    const px = bot.entity?.position?.x
-    if (px == null || Math.abs(px - BEE_CABIN_OUTSIDE_DOOR.x) <= 0.2) return
-    const east = px < BEE_CABIN_OUTSIDE_DOOR.x
-    const yaw = east ? -Math.PI / 2 : Math.PI / 2
-    await bot.look(yaw, 0, true)
-    await walkUntilAxis({ axis: 'x', target: BEE_CABIN_OUTSIDE_DOOR.x + (east ? -0.1 : 0.1), direction: east ? 'gte' : 'lte', maxMs: 1500, maintainYaw: yaw }).catch(() => false)
+    for (let i = 0; i < 2; i++) {
+      const px = bot.entity?.position?.x
+      if (px == null || Math.abs(px - BEE_CABIN_OUTSIDE_DOOR.x) <= 0.2) return
+      const east = px < BEE_CABIN_OUTSIDE_DOOR.x
+      const yaw = east ? -Math.PI / 2 : Math.PI / 2
+      await bot.look(yaw, 0, true)
+      await walkUntilAxis({ axis: 'x', target: BEE_CABIN_OUTSIDE_DOOR.x + (east ? -0.1 : 0.1), direction: east ? 'gte' : 'lte', maxMs: 1500, maintainYaw: yaw }).catch(() => false)
+      await settleSideways()
+    }
   }
   await alignOnDoor()
   await bot.look(0, 0, true)
@@ -12716,6 +12726,8 @@ const RECORD_INFO = {
   record_mellohi: { title: 'Mellohi', color: 'magenta', durationSec: 96,  factoid: 'A short, melancholy waltz in three-four time — C418 at his most wistful.' },
   // Stal plays Faith No More's War Pigs through resource pack v2.
   record_stal:    { title: 'War Pigs', color: 'black', durationSec: 466, aliases: ['stal', 'faith no more', 'black sabbath', 'sabbath', 'war pigs'], factoid: 'Faith No More covering Black Sabbath: a 1970 song against war and the generals who send others to fight it. It plays on the Stal disc now.' },
+  // Strad plays Neil Young's Harvest Moon through the server resource pack.
+  record_strad:   { title: 'Harvest Moon', color: 'white', durationSec: 303, aliases: ['strad', 'neil young', 'harvest moon'], factoid: 'Neil Young, 1992: a slow, gentle love song about still wanting to dance with the same person after many years. It plays on the Strad disc now.' },
 }
 // Now-playing state (in-memory; lost on restart). Set both when this bot puts
 // a disc on AND when another bot's "Now playing" announce is heard — so every

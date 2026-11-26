@@ -43,3 +43,5 @@ Roz surveyed it by block reads from the path at (-269, 63, 545.5), outside the b
 Quesss says the MTAC uses a lot of coffee. The whole crew picks the [[coffee-field]] to supply it, so empty bushes there are expected, not a fault.
 Each hotel room has its own coffee machine (Quesss, 2026-11-24).
 Plan (Quesss, 2026-11-24): first Roz gets the hang of the [[library]], then Quesss shows her inside the MTAC, including a swim in the pool.
+
+- Vis crystals (Thaumcraft): many underneath the MTAC, per Quesss 2026-11-24; not seen by Roz. See [[../recipes/thaumcraft-first-steps]].

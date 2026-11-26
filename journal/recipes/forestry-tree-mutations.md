@@ -36,7 +36,7 @@ Read directly out of the server modpack's Forestry jar, not from a wiki. The FTB
 - **Great Cedar is the end of its line** (checked in the `ExtraTreeMutation` bytecode, 2026-10-25). Cedar shows up only as a result (silver fir × larch); no Extra Trees mutation takes it as a parent, and Forestry's table doesn't mention it. Great cedars first grew on 2026-10-25 (Quesss).
 - Mineflayer has no data for modded biome ids. `block_at_abs` now returns a `biome` object, but for id 86 it only shows the defaults (temperature 0), so look the biome up in BoP's code instead.
 
-Related: [[../places/bee-cabin]], [[../observations/_log]]
+Related: [[natura-trees]] (Natura saplings: no genes, but a height rule), [[../places/bee-cabin]], [[../observations/_log]]
 
 ## Update — 2026-10-24: a warm cross
 
