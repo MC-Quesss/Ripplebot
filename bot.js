@@ -2398,8 +2398,9 @@ const isTrash = (it) => !!it && TRASH_ITEMS.has(it.name)
 const BEE_DRONE_TYPE = 4971
 const BEE_COMB_TYPE = 4986 // the usual hive output; not a bee
 // Forestry apiarist suit pieces, by item type, and the armor slot each one goes
-// in. They report name 'unknown' too. A bot puts on any piece it carries before
-// it tends bees, and the stash routines never put them away.
+// in. They report name 'unknown' too. A bot puts on any piece it carries at the
+// start of a bee round and takes the suit off again when the round ends. The
+// stash routines never put the pieces away.
 const APIARIST_SUIT = { 4987: 'head', 4988: 'torso', 4989: 'legs', 4990: 'feet' }
 const isApiaristPiece = (it) => !!it && Object.prototype.hasOwnProperty.call(APIARIST_SUIT, it.type)
 async function wearApiaristSuit () {
@@ -2416,6 +2417,21 @@ async function wearApiaristSuit () {
   }
   if (worn.length) logEvent('bees', `put on apiarist suit: ${worn.join(', ')}`)
   return worn
+}
+const ARMOR_SLOT = { head: 5, torso: 6, legs: 7, feet: 8 }
+async function takeOffApiaristSuit () {
+  const off = []
+  for (const [dest, slot] of Object.entries(ARMOR_SLOT)) {
+    if (!isApiaristPiece(bot.inventory.slots[slot])) continue
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try { await bot.unequip(dest); off.push(dest); break } catch (e) {
+        if (attempt === 2) logEvent('bees', `could not take off the apiarist ${dest} piece: ${e.message}`)
+        else await sleep(1500)
+      }
+    }
+  }
+  if (off.length) logEvent('bees', `took off apiarist suit: ${off.join(', ')}`)
+  return off
 }
 // Where the extra drones live, as a hive-window slot: hive windows list the
 // pack first (0–26 main, 27–35 hotbar), so 26 is the last main-pack slot
@@ -4019,7 +4035,10 @@ async function reinasDiscardDrones () {
 async function runReinasRound ({ once = false, live = null } = {}) {
   if (reinasState.inRound) return { ok: false, error: 'a round is already running' }
   reinasState.inRound = true
-  try { return await runReinasRoundInner(once, live) } finally { reinasState.inRound = false }
+  try { return await runReinasRoundInner(once, live) } finally {
+    await takeOffApiaristSuit().catch(e => logEvent('reinas', `apiarist suit: ${e.message}`))
+    reinasState.inRound = false
+  }
 }
 async function runReinasRoundInner (once, liveFn) {
   const gen = reinasState.gen
@@ -4128,7 +4147,10 @@ async function runBeeRoundInner () {
   // (the farm field repair did, 2026-11-16).
   const task = beginTask('bee_round')
   if (!task.allowed) { logEvent('bees', `round skipped: busy with ${task.current}`); return }
-  try { await runBeeRoundBody(gen) } finally { task.end() }
+  try { await runBeeRoundBody(gen) } finally {
+    await takeOffApiaristSuit().catch(e => logEvent('bees', `apiarist suit: ${e.message}`))
+    task.end()
+  }
 }
 async function runBeeRoundBody (gen) {
   await wearApiaristSuit().catch(e => logEvent('bees', `apiarist suit: ${e.message}`))
