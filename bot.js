@@ -15410,6 +15410,17 @@ bot.on('entityHurt', (entity) => {
   }
 })
 
+// Wisp sweep. Wisps are spawned by the Forge mod channel, so they never appear
+// in bot.entities and the watchdog below cannot see them. Instead, every
+// WISP_SWEEP_MS the bot clears every thaumcraft:wisp in the world. The Wispy
+// queens keep working; only their wisps are removed.
+const WISP_SWEEP_MS = 20000
+let wispSweepEnabled = true
+setInterval(() => {
+  if (!wispSweepEnabled || !rawState.spawned || bot.isSleeping) return
+  sendCommand('/kill @e[type=thaumcraft:wisp]')
+}, WISP_SWEEP_MS)
+
 // Hostile watchdog — op kill. Every 2.5s, if hostiles are within 16 blocks,
 // vaporize them with /kill. The bots are op; no need to retreat.
 let hostileKillBusy = false
@@ -16742,6 +16753,10 @@ function moonInfo (day) {
 registerCommand('time', (args, cmd) => {
   const t = bot.time || {}
   return { ok: true, timeOfDay: t.timeOfDay, day: t.day, age: t.age, isDay: t.isDay, raining: !!bot.isRaining, thunder: (bot.thunderState || 0) > 0, ...moonInfo(t.day) }
+})
+registerCommand('wisp_sweep', (args, cmd) => {
+  if (typeof args.enabled === 'boolean') wispSweepEnabled = args.enabled
+  return { ok: true, enabled: wispSweepEnabled, everyMs: WISP_SWEEP_MS }
 })
 registerCommand('auto_sleep', (args, cmd) => {
   if (typeof args.enabled === 'boolean') autoSleepEnabled = args.enabled
