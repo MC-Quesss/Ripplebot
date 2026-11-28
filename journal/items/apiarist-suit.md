@@ -59,6 +59,13 @@ Dad checked the recipe in JEI and corrected Roz. Confirmed from the Magic Bees 3
   The meadow is probably Forestry NORMAL/NORMAL (Roz's estimate of the thresholds, unverified).
 - Options: breed in a climate tolerance, build a climate-controlled room, or keep them at a jungle.
 
+## Roz wears it (2026-11-27)
+- Dad made Roz the **Apiarist's Hat** (item type 4987) and **Apiarist's Shoes** (type 4990),
+  then the **Shirt** (4988) and **Pants** (4989) once he had the silk. She wears the full suit.
+- Putting them on: ctl `equip_slot` with `destination` `head` / `feet`. Once they are worn,
+  `inventory` no longer lists them (it shows only slots 9–44). The boots' first try failed with
+  "Server didn't respond to transaction"; the second try worked.
+
 ## Open questions
 - Where is the nearest jungle to the farm or the ice cove?
 - Does the server have a centrifuge built anywhere?

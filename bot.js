@@ -2397,6 +2397,26 @@ const isTrash = (it) => !!it && TRASH_ITEMS.has(it.name)
 // stack only when it fills (see tendApiary).
 const BEE_DRONE_TYPE = 4971
 const BEE_COMB_TYPE = 4986 // the usual hive output; not a bee
+// Forestry apiarist suit pieces, by item type, and the armor slot each one goes
+// in. They report name 'unknown' too. A bot puts on any piece it carries before
+// it tends bees, and the stash routines never put them away.
+const APIARIST_SUIT = { 4987: 'head', 4988: 'torso', 4989: 'legs', 4990: 'feet' }
+const isApiaristPiece = (it) => !!it && Object.prototype.hasOwnProperty.call(APIARIST_SUIT, it.type)
+async function wearApiaristSuit () {
+  const worn = []
+  for (const it of bot.inventory.items().filter(isApiaristPiece)) {
+    const dest = APIARIST_SUIT[it.type]
+    // The server sometimes drops the first armor click; one retry covers it.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try { await bot.equip(it, dest); worn.push(dest); break } catch (e) {
+        if (attempt === 2) logEvent('bees', `could not put on the apiarist ${dest} piece: ${e.message}`)
+        else await sleep(1500)
+      }
+    }
+  }
+  if (worn.length) logEvent('bees', `put on apiarist suit: ${worn.join(', ')}`)
+  return worn
+}
 // Where the extra drones live, as a hive-window slot: hive windows list the
 // pack first (0–26 main, 27–35 hotbar), so 26 is the last main-pack slot
 // (player-window slot 35), clear of the hotbar food.
@@ -4007,6 +4027,7 @@ async function runReinasRoundInner (once, liveFn) {
   if (distanceFromHome() > HOME_RADIUS) { if (!once) stopReinas('away from the farm'); return { ok: false, error: 'not at the farm' } }
   if (taskBusy()) { logEvent('reinas', `round skipped: busy with ${activeTask.name}`); return { ok: false, error: `busy with ${activeTask.name}` } }
   if (bot.isSleeping) return { ok: false, error: 'asleep' }
+  await wearApiaristSuit().catch(e => logEvent('reinas', `apiarist suit: ${e.message}`))
   // Bedtime: the cross is outside the farm's auto-sleep radius, so walk her
   // in; auto-sleep takes it from the house. The first round after dawn walks out.
   if (isBedtime()) {
@@ -4110,6 +4131,7 @@ async function runBeeRoundInner () {
   try { await runBeeRoundBody(gen) } finally { task.end() }
 }
 async function runBeeRoundBody (gen) {
+  await wearApiaristSuit().catch(e => logEvent('bees', `apiarist suit: ${e.message}`))
   if (insideBeeCabin()) {
     // First thing each morning, before going outside.
     await collectTrophyNugget().catch(e => logEvent('bees', `trophy nugget: ${e.message}`))
@@ -12346,7 +12368,7 @@ async function eatSomething () {
 // Deposit all 'unknown'-named items from the bot's inventory into the kitchen
 // chest. Used to clear modded items that auto-eat / equip-by-name can't handle.
 async function runStashUnknown () {
-  const unknowns = bot.inventory.items().filter(i => i.name === 'unknown')
+  const unknowns = bot.inventory.items().filter(i => i.name === 'unknown' && !isApiaristPiece(i))
   if (!unknowns.length) { logEvent('stash', 'no unknown items'); return }
   logEvent('stash', `stashing ${unknowns.length} unknown stack(s)`)
   await ensureInsideHouse()
@@ -12367,7 +12389,7 @@ async function runStashUnknown () {
   const unknownInvSlots = []
   for (let i = invStart; i < win.slots.length; i++) {
     const it = win.slots[i]
-    if (it && it.name === 'unknown') unknownInvSlots.push(i)
+    if (it && it.name === 'unknown' && !isApiaristPiece(it)) unknownInvSlots.push(i)
   }
   for (const src of unknownInvSlots) {
     const it = win.slots[src]
@@ -12637,6 +12659,7 @@ async function runStashAll () {
       if (!it) continue
       if (isTrash(it)) continue // skip trash; tossed when outside
       if (it.type === BEE_DRONE_TYPE) continue // the bee keeper's drone slot; it manages its own stack
+      if (isApiaristPiece(it)) continue // the bee suit stays with the bot
       if (it.name === 'wheat' || it.name === 'wheat_seeds') continue // already routed to hopper above
 
       const keepLimit = STASH_ALL_KEEP[it.name] ?? 0
