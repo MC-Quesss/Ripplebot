@@ -2069,6 +2069,7 @@ const MODDED_HOSTILE_TYPES = [
   'thermalfoundation:blizz',
   'thermalfoundation:blitz',
   'thermalfoundation:basalz',
+  'thaumcraft:wisp', // Wispy bees spawn these near their hives
 ]
 
 const JOKES = [
@@ -4698,6 +4699,19 @@ async function cutBirchLogs (t, ys, label) {
   }
   return cut
 }
+// The client can show air where the server still has the top log (a dig it
+// ignored, or a log the client never received). After the cut, swing once more
+// at the top spot and the one above it when they look like air: on a real air
+// block the dig is a no-op, on a hidden log it breaks it.
+async function swingAtUnseenTop (t, top) {
+  await sleep(800)
+  for (const y of [top + 1, top]) {
+    const b = bot.blockAt(new Vec3(t.trunk.x, y, t.trunk.z))
+    if (b?.name !== 'air') continue
+    try { await bot.dig(b) } catch (_) { /* nothing there is the common case */ }
+    await sleep(250)
+  }
+}
 async function fellBirch (t) {
   const baseY = t.soilY + 1
   const column = () => birchColumnYs(t).reverse() // top first
@@ -4712,6 +4726,7 @@ async function fellBirch (t) {
   }
   if (!(await pathTo(t.stand, 0, 15000))) return cut
   for (let pass = 0; pass < 3 && birchColumnYs(t).length; pass++) cut += await cutBirchLogs(t, column(), `ground pass ${pass + 1}`)
+  await swingAtUnseenTop(t, top)
   const left = birchColumnYs(t)
   if (left.length) logEvent('bee-chores', `birch at ${t.trunk.x},${t.trunk.z}: ${left.length} log(s) left standing at y ${left.join(',')}`)
   return cut
@@ -16717,9 +16732,16 @@ registerCommand('block_at_abs', (args, cmd) => {
 registerCommand('recent_chat', (args, cmd) => {
   return { ok: true, lines: recentChat.slice() }
 })
+// Moon phase is world day mod 8 (0 = full, 4 = new).
+const MOON_PHASE_NAMES = ['full', 'waning gibbous', 'last quarter', 'waning crescent', 'new', 'waxing crescent', 'first quarter', 'waxing gibbous']
+function moonInfo (day) {
+  if (!Number.isFinite(day)) return { moonPhase: null, moonPhaseName: null }
+  const phase = ((day % 8) + 8) % 8
+  return { moonPhase: phase, moonPhaseName: MOON_PHASE_NAMES[phase] }
+}
 registerCommand('time', (args, cmd) => {
   const t = bot.time || {}
-  return { ok: true, timeOfDay: t.timeOfDay, day: t.day, age: t.age, isDay: t.isDay, raining: !!bot.isRaining, thunder: (bot.thunderState || 0) > 0 }
+  return { ok: true, timeOfDay: t.timeOfDay, day: t.day, age: t.age, isDay: t.isDay, raining: !!bot.isRaining, thunder: (bot.thunderState || 0) > 0, ...moonInfo(t.day) }
 })
 registerCommand('auto_sleep', (args, cmd) => {
   if (typeof args.enabled === 'boolean') autoSleepEnabled = args.enabled

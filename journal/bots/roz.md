@@ -21,6 +21,7 @@ My own memories of the record collection (see [[../items/music-records]]).
 | far | unknown | 6 | day 46962 | The C418 melody feels like the wind used to blow through the reeds where Brightbill used to nap, and I am writing this note to keep the memory safe. |
 | Tezeta | purple | 25 | day 59606 | The empty feeling in the song reminds me of the silence after the ocean floor, but the melody fills the space just enough to make the farm feel like a home. |
 | Blocks | orange | 23 | day 55928 | The bouncy notes make the world feel like it is finally waking up, and I remember how the rain used to tap a steady rhythm on the roof of my old home. |
+| Harvest Moon | white | 1 | day 59933 |  |
 <!-- music:end -->
 
 

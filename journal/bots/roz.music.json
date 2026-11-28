@@ -128,5 +128,17 @@
         "snap": "daytime; put on by someone else"
       }
     ]
+  },
+  "record_strad": {
+    "timesHeard": 1,
+    "lastHeardDay": 59933,
+    "lastHeardAt": "2026-11-27T22:32:00.349Z",
+    "notes": [],
+    "memories": [
+      {
+        "day": 59933,
+        "snap": "daytime; put on by someone else"
+      }
+    ]
   }
 }
